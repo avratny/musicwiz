@@ -88,12 +88,14 @@ Vier Kategorien bestimmen Zielordner und Kommentar-Tag; entschieden ist ein neue
 | --- | --- |
 | LIB | `library/artists/{Buchstabe}/{Ordner-Interpret}/{Album} ({Jahr})/{Nr} - {Titel}.ext` |
 | BLACKHOLE | `blackhole/artists/{Buchstabe}/{Ordner-Interpret}/{Album} ({Jahr})/{Nr} - {Titel}.ext` |
-| LIB COMPILATION | `library/sampler/{Album} ({Jahr})/{Nr} - {Interpret} - {Titel}.ext` |
-| BLACKHOLE COMPILATION | `blackhole/sampler/{Album} ({Jahr})/{Nr} - {Interpret} - {Titel}.ext` |
+| LIB COMPILATION | `library/sampler/{Album-Buchstabe}/{Album} ({Jahr})/{Nr} - {Interpret} - {Titel}.ext` |
+| BLACKHOLE COMPILATION | `blackhole/sampler/{Album-Buchstabe}/{Album} ({Jahr})/{Nr} - {Interpret} - {Titel}.ext` |
 
 - **`{Nr}`:** Tracknummer immer zweistellig (`05`). Hat das Album mehrere CDs, steht die CD-Nummer davor (`2-05`), bei einer CD nicht. Mehrere CDs erkennt die App an der Gesamtzahl im Tag (z. B. `1/2`) oder daran, dass im Album verschiedene CD-Nummern vorkommen. Ohne Tracknummer entfällt ` {Nr} -  `.
 - **`({Jahr})`:** fällt weg, wenn kein Jahr im Tag steht; fehlt das Album, heißt der Ordner „Kein Album“.
 - **Compilation-Flag folgt immer der Kategorie:** Bei LIB COMPILATION und BLACKHOLE COMPILATION setzt die App das Flag (`TCMP=1` bzw. `COMPILATION=1`) und Album-Interpret = „Various Artists“. Bei LIB und BLACKHOLE entfernt sie das Flag; steht dann noch „Various Artists“ als Album-Interpret, weist die App darauf hin.
+- **Sampler erkennen:** Compilation-Flag bei mehr als der Hälfte der Titel oder eine Schreibweise von „Various Artists“ im Album-Interpreten („V.A.“, „V/A“, „Diverse“, „Verschiedene Interpreten“, „Artistes divers“, „AA.VV.“ … – verglichen nach Normalisierung: klein, ohne Akzente, ohne Klammer-Zusatz am Ende, ohne Punkte/Bindestriche/Leerzeichen; nur bei vollständiger Gleichheit). Geprüft wird nur der Album-Interpret, der Interpret der Titel bleibt immer unverändert. Im Sampler-Ordner wird die Schreibweise auf genau „Various Artists“ gebracht (Aufräumen „Sampler ohne Various Artists oder Flag“); liegt ein so erkannter Sampler im Künstler-Ordner, meldet das Aufräumen ihn nur („Sampler im Künstler-Ordner“) – entschieden wird im Album-Editor. In der Inbox wird dann die Sampler-Kategorie vorausgewählt.
+- **Platzhalter** wie „Unknown Artist“, „[unknown]“, „Unbekannter Interpret“ sind ein fehlendes Tag, kein Sampler: nur als „prüfen“ unter „Fehlende Tags“.
 - BLACKHOLE ist der Ordner für Musik, die Andreas nicht hört. Dorthin wird nur verschoben – sonst interessiert nicht, was dort liegt: eigener Bereich mit eigenem Scan, nicht in der Lib, kein Aufräumen (auch keine Duplikate) und keine Automatiken, kein Abgleich beim Einordnen („schon in der Lib?“), zählt nicht für Künstler, Genres und Schreibweisen. Die Seite **Blackhole** bietet nur eine Suche; ein Album oder einzelne Titel lassen sich von dort zurück in die Inbox holen (Tags bleiben, als Aktion im Verlauf, rückgängig machbar). Bearbeitet wird im Blackhole nichts.
 - Ohne Interpret wird nichts eingeordnet; die App fragt nach. Existiert eine Zieldatei schon, zeigt die App das vor dem Verschieben an; eine vorhandene cover.jpg wandert mit.
 - **Bestand umstellen:** Die rund 15.500 vorhandenen Dateien folgen noch dem alten MediaMonkey-Schema. Die Umstellung läuft über die Aufräum-Prüfung „Datei liegt nicht am Regelort“, einmal mit Vorschau; vorher Roon-Backup, danach liest Roon neu ein.
@@ -105,7 +107,7 @@ Kein Pfad ist fest im Code: Alles wird auf einer Einstellungsseite gepflegt und 
 - **Basis:** Wurzel des Musik-Shares im Container (z. B. `/music`).
 - **Inbox:** genau ein Inbox-Ordner.
 - **Feste Kategorien:** Lib und Blackhole mit je einem Ordner für Künstler und einem für Sampler; einstellbar sind Name (= Wert im Kommentar-Tag), Zielordner und Dateinamen-Muster.
-- **Muster mit Platzhaltern:** `{buchstabe}`, `{ordner_interpret}`, `{album}`, `{nr}`, `{interpret}`, `{jahr}, {titel}`, `{ext}`, z. B. `{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}`.
+- **Muster mit Platzhaltern:** `{buchstabe}` (Ordner-Interpret), `{album_buchstabe}` (Album, für Sampler – deren Interpret „Various Artists“ würde sonst alles unter `V` legen), `{ordner_interpret}`, `{album}`, `{nr}`, `{interpret}`, `{jahr}, {titel}`, `{ext}`, z. B. `{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}`.
 - **Weitere Werte:** Text für fehlendes Album („Kein Album“), Ordner für Nicht-Buchstaben (`0-9`), Album-Interpret für Sampler („Various Artists“), Ersatzzeichen für `:` und `/`, Papierkorb-Ordner, Ordner für Künstlerbilder, Zugangsdaten für Discogs und Fanart.tv, Genre-Liste.
 - **Live-Vorschau:** Beim Ändern eines Musters zeigt die App an Beispieldateien, wie die Pfade aussehen würden.
 - Ein geändertes Muster gilt für neue Einordnungen; den Bestand verschiebt die App nur, wenn Andreas das ausdrücklich mit Vorschau startet.
@@ -197,16 +199,26 @@ Der Bereich Aufräumen prüft den ganzen Bestand und zeigt je Prüfung, wie viel
 | Kombi-Interpreten ohne `ARTISTS` | `ARTISTS` erzeugen, Ordner nach erstem Künstler |
 | Album mit uneinheitlichem Album-Interpret oder Album-Namen | Werte fürs ganze Album vereinheitlichen |
 | Sampler ohne „Various Artists“ oder Compilation-Flag | Tags setzen |
-| Fehlende Tags: Interpret, Album, Tracknummer, Kategorie-Kommentar | im Editor nachtragen |
+| Sampler im Künstler-Ordner (Flag oder „Various Artists“-Schreibweise) | nur melden, im Editor entscheiden |
+| Fehlende Tags: Interpret, Album, Tracknummer, Kategorie-Kommentar; Platzhalter wie „Unknown Artist“ | im Editor nachtragen |
 | Fehlendes oder sehr kleines Cover | Cover hochladen |
 | Mögliche Duplikate: gleicher Interpret, Titel und Länge, Dateien mit `  (2) `, gleiche Aufnahme als MP3 und FLAC | eine Version behalten, die andere aussortieren |
 | Leere Ordner und Reste wie `-Interpret@1-`, `.DS_Store` | entfernen |
 | Uneinheitliche Endungen wie `.Mp3` | umbenennen in `.mp3` |
 
+Weitere Prüfungen: **Beschädigte Audiodaten** (per Knopf „Audiodaten prüfen“ wird jede Lib-Datei einmal komplett mit ffmpeg dekodiert, danach nur Neues und Geändertes; Behebung: Papierkorb), **Album unvollständig** (Lücken in den Tracknummern bzw. weniger Titel als `TRACKTOTAL`, nur melden), **ReplayGain fehlt** (EBU R128 über ffmpeg, Bezug −18 LUFS; gemessen wird erst beim Ausführen, Album-Wert nach Länge gewichtet) und **Songtext fehlt** (LRCLIB, synchronisiert bevorzugt, in FLAC `LYRICS` bzw. MP3 `USLT`; nicht gefundene Titel 30 Tage nicht erneut).
+
 Dazu kommen Genre-Prüfungen: Genres, die nicht auf der Liste stehen (Behebung über die Zuordnungstabelle), Alben mit gemischten Genres, Alben ohne Genre und Electronic-Alben ohne Unterstil; außerdem Künstler ohne Bild.
 
 - **Nichts wird endgültig gelöscht:** Aussortiertes wandert in einen einstellbaren Papierkorb-Ordner auf dem Share, den Andreas selbst leert.
 - Die Prüfungen laufen auf den Scan-Daten in SQLite, nicht direkt auf dem Share.
+
+## Weitere Funktionen
+
+- **Inbox beobachten** (Einstellung, standardmäßig aus): prüft jede Minute, ob sich Musikdateien in der Inbox geändert haben, und startet dann einen Inbox-Scan. Nur lesen.
+- **Titelliste abgleichen** im Album-Editor: Titelliste eines MusicBrainz-Treffers mit dem Album vergleichen – fehlende Titel, abweichende Titelnamen, Nummern für Titel ohne Nummer; alles nur als Vorschlag.
+- **Am Fingerabdruck erkennen** im Album-Editor (mit AcoustID-Schlüssel): Titel ohne Tags über AcoustID erkennen und Titel, Interpret und ggf. Album vorschlagen.
+- **Statistik:** Kennzahlen, Vollständigkeit (Cover, Genre, ReplayGain, Songtext, Bewertung), Formate, MP3-Bitraten, Genres, Jahrzehnte, neu je Monat, Kandidaten für FLAC.
 
 ## Umsetzung in Schritten
 
@@ -228,6 +240,6 @@ Gebaut wird in sechs Schritten, jeweils erst mit den Demodateien; jeder Schritt 
 
 * [x] Zu tun: Im Projekt-Root ein Bash-Skript `dev.sh` anlegen, um den Container während der Entwicklung zu starten und zu stoppen.
 
-- [ ] Discogs-Token und Fanart.tv-API-Key anlegen.
+- [ ] Discogs-Token, Fanart.tv- und AcoustID-Schlüssel anlegen.
 - [ ] Genre-Liste nach dem ersten Scan mit den echten Genre-Werten abgleichen und festlegen.
 - [ ] Navidrome einrichten und `ArtistImageFolder` auf den Künstlerbilder-Ordner setzen (sobald der Musikserver kommt).

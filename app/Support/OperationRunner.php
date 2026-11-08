@@ -286,6 +286,41 @@ class OperationRunner
                 $op->entries()->create(['kind' => 'delete', 'old_path' => $p]);
                 break;
 
+            case 'replaygain':
+                // ein Album: erst alle Titel messen, dann schreiben (Album-Wert braucht alle Messungen)
+                $measured = [];
+                foreach ($a['paths'] as $path => $duration) {
+                    if (! is_file($path)) {
+                        throw new RuntimeException('Datei fehlt: '.$path);
+                    }
+                    $m = app(Loudness::class)->measure($path);
+                    if (! $m) {
+                        throw new RuntimeException('Lautheit nicht messbar ('.basename($path).') – Album übersprungen');
+                    }
+                    $measured[$path] = $m + ['duration' => (float) $duration];
+                }
+                foreach (Loudness::tags($measured) as $path => $tags) {
+                    $this->touch($path);
+                    $this->writeTags($op, $path, $tags, null);
+                }
+                break;
+
+            case 'lyrics':
+                $path = $a['path'];
+                if (! is_file($path)) {
+                    throw new RuntimeException('Datei fehlt: '.$path);
+                }
+                usleep(300_000); // LRCLIB ist ein freier Dienst – nicht im Takt der Festplatte abfragen
+                $text = app(Lyrics::class)->find((string) $a['artist'], (string) $a['title'], (string) ($a['album'] ?? ''), (float) ($a['duration'] ?? 0));
+                if ($text === null) {
+                    Lyrics::markMissing($path);
+                    $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $path, 'error' => 'kein Songtext gefunden']));
+                    break;
+                }
+                $this->touch($path);
+                $this->writeTags($op, $path, ['lyrics' => $text], null);
+                break;
+
             case 'rename_image':
                 $to = $this->files->target($a['from'], $a['to'], 'skip');
                 $this->logged($op, ['kind' => 'move', 'old_path' => $a['from'], 'new_path' => $to], fn () => $this->files->move($a['from'], $to, 'skip'));

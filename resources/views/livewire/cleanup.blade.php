@@ -1,5 +1,5 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
-<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching) wire:poll.2s @endif>
+<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false)) wire:poll.2s @endif>
     <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
     @foreach ($autoHeld as $heldCheck => $h)
         <div class="mx-6 mt-3 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
@@ -35,6 +35,20 @@
                     <div class="font-medium">{{ $defs[$check][0] }}</div>
                     <div class="text-xs text-zinc-500">{{ $defs[$check][1] }} {{ $total }} Fund(e).</div>
                 </div>
+                @if ($check === 'integrity')
+                    <div class="text-right text-xs text-zinc-500">
+                        @if ($integrity['running'] ?? false)
+                            Prüfe {{ $integrity['done'] ?? 0 }}{{ isset($integrity['total']) ? ' von '.$integrity['total'] : '' }} …{{ ! empty($integrity['current']) ? ' ('.$integrity['current'].')' : '' }}
+                        @elseif (! empty($integrity['error']))
+                            <span class="text-red-300">Abgebrochen: {{ $integrity['error'] }}</span>
+                        @elseif (! empty($integrity['finished_at']))
+                            Zuletzt geprüft {{ \Illuminate\Support\Carbon::parse($integrity['finished_at'])->diffForHumans() }} ({{ $integrity['done'] ?? 0 }} Dateien)
+                        @else
+                            Noch nie geprüft.
+                        @endif
+                    </div>
+                    <button wire:click="startIntegrity" class="btn-ghost btn-sm" @disabled($integrity['running'] ?? false) title="Jede Lib-Datei einmal komplett dekodieren – beim ersten Mal dauert das Stunden, danach nur noch Neues und Geändertes">Audiodaten prüfen</button>
+                @endif
                 @if ($check === 'encoding')
                     <a href="{{ route('text-repair') }}" wire:navigate class="btn-ghost btn-sm" title="Codepage, verlorene Zeichen und alles andere einzeln entscheiden – auch in der Inbox">Zeichen-Assistent …</a>
                 @endif
@@ -222,10 +236,11 @@
                     @endif
                     @foreach ($shown as $ai => $a)
                         <div class="border-b border-zinc-800/70 py-1.5">
-                            <span class="mr-2 inline-block w-20 text-violet-300">{{ ['apply' => 'Tags', 'move' => 'Verschieben', 'trash' => 'Papierkorb', 'delete_junk' => 'Entfernen', 'album_files' => 'Cover mit'][$a['type']] ?? $a['type'] }}</span>
+                            <span class="mr-2 inline-block w-20 text-violet-300">{{ ['apply' => 'Tags', 'move' => 'Verschieben', 'trash' => 'Papierkorb', 'delete_junk' => 'Entfernen', 'album_files' => 'Cover mit', 'replaygain' => 'ReplayGain', 'lyrics' => 'Songtext'][$a['type']] ?? $a['type'] }}</span>
                             <span class="text-zinc-400">{{ $rel($a['path'] ?? $a['from_dir'] ?? '') }}</span>
                             @if (! empty($a['target']) || ! empty($a['to_dir']))<div class="ml-22 text-blue-300">→ {{ $rel($a['target'] ?? $a['to_dir']) }}</div>@endif
                             @if (isset($preview['notes'][$ai]))<div class="ml-22 text-amber-300">⚠ Ziel belegt: {{ $onConflict === 'best' ? $preview['notes'][$ai] : ($onConflict === 'number' ? 'wird mit „(2)“ daneben abgelegt' : 'wird übersprungen') }}</div>@endif
+                            @if (! empty($a['note']))<div class="ml-22 text-zinc-300">{{ $a['note'] }}</div>@endif
                             @if (! empty($a['embed_from']))<div class="ml-22 text-zinc-300">Cover einbetten ({{ basename($a['embed_from']) }})</div>@endif
                             @if (! empty($a['tags']))
                                 <div class="ml-22 text-zinc-300">@foreach ($a['tags'] as $k => $v){{ strtoupper($k) }} = {{ is_array($v) ? implode(' ; ', $v) : (is_bool($v) ? ($v ? '1' : '–') : $v) }}&nbsp;&nbsp; @endforeach</div>

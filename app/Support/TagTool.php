@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use Illuminate\Contracts\Process\ProcessResult;
+use Illuminate\Process\Pool;
 use Illuminate\Support\Facades\Process;
 use RuntimeException;
 
@@ -21,10 +23,17 @@ class TagTool
         if ($paths === []) {
             return [];
         }
-        $out = $this->run('read', ['files' => array_values($paths)]);
+        $paths = array_values($paths);
+        // mehrere Prozesse gleichzeitig: beim Lesen über das Netzwerk wartet ein einzelner Prozess fast nur auf Antworten
+        $workers = max(1, min((int) config('musicwiz.scan_workers', 4), intdiv(count($paths) + 9, 10)));
+        $outputs = $workers === 1
+            ? [$this->run('read', ['files' => $paths])]
+            : $this->runParallel('read', array_map(fn ($chunk) => ['files' => $chunk], array_chunk($paths, (int) ceil(count($paths) / $workers))));
         $results = [];
-        foreach ($out['results'] ?? [] as $r) {
-            $results[$r['path']] = $r;
+        foreach ($outputs as $out) {
+            foreach ($out['results'] ?? [] as $r) {
+                $results[$r['path']] = $r;
+            }
         }
 
         return $results;
@@ -70,6 +79,26 @@ class TagTool
         $result = Process::timeout(600)
             ->input(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
             ->run(['python3', $this->script(), $cmd]);
+
+        return $this->decode($result);
+    }
+
+    /** @param  list<array>  $payloads  @return list<array> */
+    private function runParallel(string $cmd, array $payloads): array
+    {
+        $results = Process::pool(function (Pool $pool) use ($cmd, $payloads) {
+            foreach ($payloads as $i => $payload) {
+                $pool->as((string) $i)->timeout(600)
+                    ->input(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES))
+                    ->command(['python3', $this->script(), $cmd]);
+            }
+        })->start()->wait();
+
+        return array_map(fn ($i) => $this->decode($results[(string) $i]), array_keys($payloads));
+    }
+
+    private function decode(ProcessResult $result): array
+    {
         if (! $result->successful()) {
             throw new RuntimeException('Tag-Tool fehlgeschlagen: '.trim($result->errorOutput() ?: $result->output()));
         }

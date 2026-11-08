@@ -8,6 +8,7 @@ use App\Models\Track;
 use App\Support\AutoCleanup;
 use App\Support\DataVersion;
 use App\Support\Genres;
+use App\Support\InboxWatch;
 use App\Support\PathBuilder;
 use App\Support\Settings;
 use App\Support\SettingsBackup;
@@ -89,6 +90,7 @@ class SettingsPage extends Component
         $values['id3_version'] = (int) $values['id3_version'];
         $values['scan_throttle_ms'] = (int) $values['scan_throttle_ms'];
         $values['small_cover_px'] = (int) $values['small_cover_px'];
+        $values['inbox_watch'] = (bool) ($values['inbox_watch'] ?? false);
         $values['inbox'] = rtrim(trim($values['inbox']), '/');
         // feste Rollen: gespeichert werden nur Name, Zielordner und Muster
         $values['categories'] = collect($values['categories'])->mapWithKeys(fn ($c) => [$c['role'] => ['name' => trim($c['name']), 'folder' => trim($c['folder'], '/ '), 'pattern' => trim($c['pattern'])]])->all();
@@ -101,6 +103,7 @@ class SettingsPage extends Component
         }
         $settings->set($values);
         $this->load($settings);
+        app(InboxWatch::class)->ensure();
         session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; die Lib wird über „Aufräumen“ verschoben'
             .(app(AutoCleanup::class)->isEnabled('misplaced') ? ' – bzw. von der Automatik „falscher Ort“ nach dem nächsten Scan (höchstens '.AutoCleanup::LIMIT.' Schritte ohne Nachfrage).' : '.'));
     }

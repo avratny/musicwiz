@@ -10,7 +10,10 @@ write erwartet {"files": [{"path": ..., "tags": {...}, "cover": "/pfad.jpg"|null
 Nur Schlüssel, die in "tags" vorkommen, werden geändert. Leere Werte ("" / [] / null) löschen das Feld.
 Schlüssel: title artist artists album albumartist albumartists track tracktotal
            disc disctotal year genres comment compilation rating (0–5 Sterne, 0 = keine)
+           rg_track_gain rg_track_peak rg_album_gain rg_album_peak (ReplayGain, z. B. "-6.62 dB" / "0.988")
+           lyrics (Songtext, auch synchronisiert im LRC-Format "[00:12.34] …"; FLAC: LYRICS, MP3: USLT)
 Gelesen werden zusätzlich: source (Herkunft, z. B. YouTube) und rating.
+read liefert außerdem "info": {duration, bitrate, cover_embedded, cover_size} – so muss der Scan jede Datei nur einmal öffnen.
 Ausgabe: JSON {"results": [{"path": ..., "ok": true|false, "error": ...}]}
 
 Geschrieben wird nie direkt ins Original: erst in eine Kopie im selben Ordner, die wird geprüft und ersetzt das Original
@@ -21,13 +24,17 @@ import os
 import shutil
 import sys
 
-from mutagen.mp3 import MP3
+from mutagen.mp3 import MP3, HeaderNotFoundError
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (ID3, ID3NoHeaderError, APIC, COMM, POPM, TALB, TCMP, TCON,
-                         TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX)
+                         TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX, USLT)
 
 LIST_KEYS = {"artists", "albumartists", "genres"}
+
+# ReplayGain: Schlüssel im Tag-Tool → Feldname (FLAC: Vorbis-Kommentar, MP3: TXXX-Beschreibung)
+REPLAYGAIN = {"rg_track_gain": "REPLAYGAIN_TRACK_GAIN", "rg_track_peak": "REPLAYGAIN_TRACK_PEAK",
+              "rg_album_gain": "REPLAYGAIN_ALBUM_GAIN", "rg_album_peak": "REPLAYGAIN_ALBUM_PEAK"}
 
 
 def as_list(v):
@@ -134,6 +141,8 @@ FLAC_SIMPLE = {
     "disctotal": ["DISCTOTAL", "TOTALDISCS"],
     "year": ["DATE"],
     "comment": ["COMMENT"],
+    "lyrics": ["LYRICS", "UNSYNCEDLYRICS"],
+    **{k: [v] for k, v in REPLAYGAIN.items()},
 }
 FLAC_LIST = {"artists": "ARTISTS", "albumartists": "ALBUMARTISTS", "genres": "GENRE"}
 
@@ -150,6 +159,8 @@ def flac_read(f):
         "artists": list(t.get("ARTISTS", [])), "albumartists": list(t.get("ALBUMARTISTS", [])),
         "genres": list(t.get("GENRE", [])), "compilation": g("COMPILATION") == "1",
         "source": g("SOURCE"), "rating": flac_rating_to_stars(g("RATING")),
+        "lyrics": g("LYRICS") or g("UNSYNCEDLYRICS"),
+        **{k: g(v) for k, v in REPLAYGAIN.items()},
     }
     return out
 
@@ -237,6 +248,19 @@ def split_pair(s):
     return s, ""
 
 
+def txxx_any(t, desc):
+    # TXXX-Beschreibungen schreiben Programme mal groß, mal klein ("replaygain_track_gain")
+    for k, fr in t.items():
+        if k.startswith("TXXX:") and fr.desc.upper() == desc and fr.text:
+            return str(fr.text[0])
+    return ""
+
+
+def mp3_lyrics(t):
+    frames = t.getall("USLT")
+    return str(frames[0].text) if frames else ""
+
+
 def mp3_read(t):
     track, tracktotal = split_pair(id3_text(t, "TRCK"))
     disc, disctotal = split_pair(id3_text(t, "TPOS"))
@@ -251,6 +275,8 @@ def mp3_read(t):
         "compilation": id3_text(t, "TCMP") == "1",
         "source": (txxx("SOURCE") or [""])[0],
         "rating": mp3_rating(t),
+        "lyrics": mp3_lyrics(t),
+        **{k: txxx_any(t, v) for k, v in REPLAYGAIN.items()},
     }
 
 
@@ -305,6 +331,20 @@ def mp3_write(path, tags, cover, remove_cover, version):
             t.add(COMM(encoding=3, lang=lang, desc="", text=[val]))
     if "compilation" in tags:
         set_text("TCMP", TCMP, "1" if tags["compilation"] else "")
+    for key, desc in REPLAYGAIN.items():
+        if key in tags:
+            for k in [k for k in t.keys() if k.startswith("TXXX:") and t[k].desc.upper() == desc]:
+                del t[k]
+            val = as_str(tags[key])
+            if val:
+                t.add(TXXX(encoding=3, desc=desc, text=[val]))
+    if "lyrics" in tags:
+        lang = (t.getall("USLT") or [None])[0]
+        lang = getattr(lang, "lang", None) or "XXX"
+        t.delall("USLT")
+        val = as_str(tags["lyrics"])
+        if val:
+            t.add(USLT(encoding=3, lang=lang, desc="", text=val))
     if "rating" in tags:
         # alle Bewertungen ersetzen (sonst zeigt ein anderes Programm noch die alte); Abspielzähler bleibt
         count = max([getattr(f, "count", 0) or 0 for f in t.getall("POPM")] or [0])
@@ -406,21 +446,51 @@ def cmd_write(req):
     return {"results": results}
 
 
+def cover_info(pics):
+    """Eingebettetes Cover: vorhanden? Kleinere Seite in Pixeln (Frontcover bevorzugt)."""
+    if not pics:
+        return False, None
+    pics = sorted(pics, key=lambda p: 0 if p.type == 3 else 1)
+    w, h, _ = image_info(pics[0].data)
+    return True, (min(w, h) if w and h else None)
+
+
+def tech_info(f, pics):
+    embedded, size = cover_info(pics)
+    bitrate = getattr(f.info, "bitrate", 0) or 0
+    return {"duration": float(f.info.length or 0), "bitrate": int(bitrate) or None,
+            "cover_embedded": embedded, "cover_size": size}
+
+
 def cmd_read(req):
     results = []
     for path in req.get("files", []):
         try:
             k = kind(path)
+            # Datei nur einmal öffnen: Tags und Technik (Länge, Bitrate, Cover) aus demselben Objekt
             if k == "flac":
-                tags = flac_read(FLAC(path))
+                f = FLAC(path)
+                tags = flac_read(f)
+                info = tech_info(f, f.pictures)
             elif k == "mp3":
                 try:
-                    tags = mp3_read(ID3(path))
-                except ID3NoHeaderError:
-                    tags = mp3_read(ID3())
+                    f = MP3(path)
+                except HeaderNotFoundError:
+                    # Tags lesbar, aber keine Audiodaten (z. B. abgebrochener Rip): Länge unbekannt = "defekt"
+                    try:
+                        t = ID3(path)
+                    except ID3NoHeaderError:
+                        t = ID3()
+                    tags = mp3_read(t)
+                    embedded, size = cover_info(t.getall("APIC"))
+                    info = {"duration": None, "bitrate": None, "cover_embedded": embedded, "cover_size": size}
+                else:
+                    t = f.tags if f.tags is not None else ID3()
+                    tags = mp3_read(t)
+                    info = tech_info(f, t.getall("APIC"))
             else:
                 raise ValueError("Format nicht unterstützt")
-            results.append({"path": path, "ok": True, "tags": tags})
+            results.append({"path": path, "ok": True, "tags": tags, "info": info})
         except Exception as e:  # noqa: BLE001
             results.append({"path": path, "ok": False, "error": f"{type(e).__name__}: {e}"})
     return {"results": results}

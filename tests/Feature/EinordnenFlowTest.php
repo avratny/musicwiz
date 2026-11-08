@@ -230,6 +230,7 @@ class EinordnenFlowTest extends TestCase
             ->set('fields.category', 'BLACKHOLE')->assertDontSee('alle Titel haben denselben Künstler');
         Livewire::test(AlbumEditor::class, ['album' => $album('/i/b', ['Yanou', 'ATB'])])->assertSet('fields.category', null);
         Livewire::test(AlbumEditor::class, ['album' => $album('/i/c', ['Yanou', ''])])->assertSet('fields.category', null);
-        Livewire::test(AlbumEditor::class, ['album' => $album('/i/d', ['Yanou', 'Yanou'], 'Various Artists')])->assertSet('fields.category', null);
+        // „Various Artists“ als Album-Interpret: Sampler statt Lib
+        Livewire::test(AlbumEditor::class, ['album' => $album('/i/d', ['Yanou', 'Yanou'], 'Various Artists')])->assertSet('fields.category', 'LIB COMPILATION');
     }
 }

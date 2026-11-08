@@ -12,7 +12,7 @@ class Settings
 {
     public const KEYS = ['base', 'inbox', 'trash', 'artist_images', 'categories', 'no_album', 'non_letter_folder',
         'compilation_artist', 'replace_colon', 'replace_slash', 'id3_version', 'scan_throttle_ms', 'small_cover_px',
-        'discogs_token', 'fanart_key', 'auto_cleanup',
+        'discogs_token', 'fanart_key', 'acoustid_key', 'auto_cleanup', 'inbox_watch',
         'yt_sleep_min', 'yt_sleep_max', 'yt_sleep_requests', 'yt_rate_mb', 'yt_daily_limit'];
 
     private ?array $cache = null;

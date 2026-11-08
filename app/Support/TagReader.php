@@ -51,6 +51,10 @@ class TagReader
 
     public function readOne(string $path, ?array $toolResult = null): array
     {
+        // MP3/FLAC: Tag-Tool liefert Tags und Technik aus einem Lesevorgang – getID3 (zweites Öffnen) nur als Ersatz
+        if (($toolResult['ok'] ?? false) && isset($toolResult['info'])) {
+            return $this->fromTool($path, $toolResult);
+        }
         $getID3 = new getID3;
         $getID3->option_save_attachments = true;
         $getID3->option_md5_data = false;
@@ -125,7 +129,33 @@ class TagReader
             'source' => $str($tags['source'] ?? ''),
             // Bewertung 1–5 Sterne (MP3: POPM, FLAC: RATING), ohne = null
             'rating' => max(0, min(5, (int) ($tags['rating'] ?? 0))) ?: null,
+            // nur gelesen für die Prüfungen „ReplayGain fehlt“ / „Songtext fehlt“ (Text selbst steht nicht im Index)
+            'replaygain' => $str($tags['rg_track_gain'] ?? ''),
+            'replaygain_album' => $str($tags['rg_album_gain'] ?? ''),
+            'has_lyrics' => trim((string) ($tags['lyrics'] ?? '')) !== '',
         ];
+    }
+
+    private function fromTool(string $path, array $toolResult): array
+    {
+        $info = $toolResult['info'];
+        $attrs = [
+            'duration' => isset($info['duration']) ? (float) $info['duration'] : null,
+            'bitrate' => isset($info['bitrate']) ? (int) $info['bitrate'] : null,
+            'format' => strtolower(pathinfo($path, PATHINFO_EXTENSION)),
+            'cover_embedded' => (bool) ($info['cover_embedded'] ?? false),
+            'cover_size' => isset($info['cover_size']) ? (int) $info['cover_size'] : null,
+            'writable' => true,
+            'error' => null,
+        ];
+        $noAudio = ($attrs['duration'] ?? 0) < 0.1;
+        if ($noAudio) {
+            $attrs['error'] = 'Keine Audiodaten – Datei ist defekt oder unvollständig.';
+        }
+        // nur intern: Scanner behält bei einem Lesefehler die bisherigen Werte (siehe Scanner::store)
+        $attrs['read_failed'] = $noAudio;
+
+        return $attrs + self::normalize($toolResult['tags']);
     }
 
     /** Ersatz für Formate, die das Tag-Tool nicht kennt (z. B. WMA). */

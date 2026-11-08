@@ -2,12 +2,14 @@
 
 namespace App\Livewire;
 
+use App\Jobs\IntegrityJob;
 use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\Operation;
 use App\Support\AutoCleanup;
 use App\Support\CleanupChecks;
 use App\Support\FileOps;
+use App\Support\Integrity;
 use App\Support\OperationRunner;
 use App\Support\Quality;
 use App\Support\Settings;
@@ -170,6 +172,16 @@ class Cleanup extends Component
         }
     }
 
+    /** Audiodaten der ganzen Lib prüfen (Hintergrund, inkrementell). */
+    public function startIntegrity(Integrity $integrity): void
+    {
+        if ($integrity->status()['running'] ?? false) {
+            return;
+        }
+        $integrity->status(['running' => true, 'done' => 0, 'total' => null, 'error' => null, 'finished_at' => null]);
+        IntegrityJob::dispatch();
+    }
+
     #[On('activity-changed')]
     public function refreshList(): void {}
 
@@ -222,6 +234,7 @@ class Cleanup extends Component
                 default => 0,
             },
             'fixable' => (bool) ($defs[$this->check][2] ?? null),
+            'integrity' => $this->check === 'integrity' ? app(Integrity::class)->status() : null,
             'base' => $settings->base(),
         ]);
     }

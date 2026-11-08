@@ -41,10 +41,19 @@ class PathBuilderTest extends TestCase
 
     public function test_multi_disc_and_compilation(): void
     {
-        $this->assertSame('/music/library/sampler/Bravo Hits 39 (2002)/2-04 - Kim Sozzi - Break Up.mp3',
+        $this->assertSame('/music/library/sampler/B/Bravo Hits 39 (2002)/2-04 - Kim Sozzi - Break Up.mp3',
             $this->target('LIB COMPILATION', ['artist' => 'Kim Sozzi', 'album' => 'Bravo Hits 39', 'year' => '2002', 'track' => '4', 'disc' => '2', 'disctotal' => '2', 'title' => 'Break Up'], '/in/x.mp3'));
-        $this->assertSame('/music/blackhole/sampler/X/01 - A - B.mp3',
+        $this->assertSame('/music/blackhole/sampler/X/X/01 - A - B.mp3',
             $this->target('BLACKHOLE COMPILATION', ['artist' => 'A', 'album' => 'X', 'track' => '1/12', 'disc' => '1/1', 'title' => 'B'], '/in/x.mp3'));
+    }
+
+    public function test_sampler_letter_follows_album(): void
+    {
+        $sampler = fn (string $album) => $this->target('LIB COMPILATION', ['artist' => 'A', 'albumartist' => 'Various Artists', 'album' => $album, 'track' => '1', 'title' => 'T'], '/in/x.mp3');
+        $this->assertSame('/music/library/sampler/0-9/100% Party/01 - A - T.mp3', $sampler('100% Party'));
+        $this->assertSame('/music/library/sampler/O/Ö3 Greatest Hits/01 - A - T.mp3', $sampler('Ö3 Greatest Hits'));
+        $this->assertSame('/music/library/sampler/T/The Dome 45/01 - A - T.mp3', $sampler('The Dome 45'));
+        $this->assertSame('/music/library/sampler/K/Kein Album/01 - A - T.mp3', $sampler(''));
     }
 
     public function test_special_characters_and_letters(): void

@@ -47,6 +47,8 @@
                                         </div>
                                     @elseif ($e->kind === 'error')
                                         <span class="text-red-300">{{ $e->error }}</span>
+                                    @elseif ($e->kind === 'info')
+                                        <span class="text-zinc-400">{{ $rel($e->old_path) }}</span> <span class="text-zinc-500">– {{ $e->error }}</span>
                                     @else
                                         <span class="text-zinc-400">{{ $rel($e->old_path) }}</span>
                                         @if ($e->new_path)<span class="text-blue-300"> → {{ $rel($e->new_path) }}</span>@endif

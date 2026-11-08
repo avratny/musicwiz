@@ -80,8 +80,8 @@ class AlbumPlanner
         }
         $multiDisc = PathBuilder::isMultiDisc($newTagSets);
 
-        if ($category && ! $category['compilation'] && strcasecmp(trim($fields['albumartist'] ?? ''), $compilationArtist) === 0) {
-            $warnings[] = 'Album-Interpret ist „'.$compilationArtist.'“, die Kategorie ist aber keine Compilation.';
+        if ($category && ! $category['compilation'] && app(Compilations::class)->isVariousArtists($fields['albumartist'] ?? '')) {
+            $warnings[] = 'Album-Interpret ist „'.trim($fields['albumartist']).'“ (= '.$compilationArtist.'), die Kategorie ist aber keine Compilation.';
         }
         if ($move && ! $category) {
             $warnings[] = 'Keine Kategorie gewählt – ohne Kategorie wird nichts verschoben.';

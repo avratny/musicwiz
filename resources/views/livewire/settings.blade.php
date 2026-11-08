@@ -37,12 +37,17 @@
                 </div>
                 <div><label class="label">Scan-Drosselung (ms pro Datei)</label><input type="number" wire:model="s.scan_throttle_ms" class="input"></div>
                 <div><label class="label">„Sehr kleines Cover“ unter (px)</label><input type="number" wire:model="s.small_cover_px" class="input"></div>
+                <div class="col-span-full">
+                    <label class="flex items-center gap-2 text-sm"><input type="checkbox" wire:model="s.inbox_watch" class="size-4 rounded border-zinc-600 bg-zinc-800 text-violet-500"> Inbox beobachten</label>
+                    <p class="mt-1 text-xs text-zinc-500">Prüft jede Minute, ob neue Dateien in der Inbox liegen, und liest sie dann ein. Es wird nur gelesen – eingeordnet wird weiter von Hand.</p>
+                </div>
             </div>
         @endif
 
         @if ($tab === 'categories')
             <p class="mb-4 max-w-4xl text-sm text-zinc-400">
-                Platzhalter: <code class="text-violet-300">{buchstabe} {ordner_interpret} {album} {nr} {interpret} {jahr} {titel} {ext}</code>.
+                Platzhalter: <code class="text-violet-300">{buchstabe} {album_buchstabe} {ordner_interpret} {album} {nr} {interpret} {jahr} {titel} {ext}</code>.
+                <code class="text-violet-300">{buchstabe}</code> ist der Anfangsbuchstabe des Ordner-Interpreten, <code class="text-violet-300">{album_buchstabe}</code> der des Albums (für Sampler).
                 Leere Platzhalter fallen samt Klammern bzw. Trenner weg. Der Name ist zugleich der Wert im Kommentar-Tag.
                 Die Kategorien sind fest: Lib und Blackhole mit je einem Ordner für Künstler und einem für Sampler.
             </p>
@@ -250,7 +255,9 @@
                     <p class="mt-1 text-xs text-zinc-500">discogs.com › Settings › Developers › „Generate new token“ (60 Abfragen/min).</p></div>
                 <div><label class="label">Fanart.tv-API-Key</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.fanart_key" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
                     <p class="mt-1 text-xs text-zinc-500">Kostenloser Key auf fanart.tv; Suche läuft über die MusicBrainz-ID des Künstlers.</p></div>
-                <p class="text-xs text-zinc-500">MusicBrainz und Deezer brauchen keine Anmeldung. Der Container braucht für das Nachschlagen Internetzugang.</p>
+                <div><label class="label">AcoustID-Anwendungsschlüssel</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.acoustid_key" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
+                    <p class="mt-1 text-xs text-zinc-500">Kostenlos auf acoustid.org › „Register your application“. Damit erkennt der Album-Editor Titel ohne Tags am Fingerabdruck.</p></div>
+                <p class="text-xs text-zinc-500">MusicBrainz, Deezer und LRCLIB (Songtexte) brauchen keine Anmeldung. Der Container braucht für das Nachschlagen Internetzugang.</p>
             </div>
         @endif
     </div>

@@ -17,7 +17,8 @@ class Scanner
 {
     public const STATUS_KEY = 'musicwiz.scan';
 
-    private const BATCH = 20;
+    /** Dateien pro Lesepaket (werden auf mehrere Tag-Tool-Prozesse verteilt, siehe scan_workers) */
+    private const BATCH = 80;
 
     /** Ordner pro Abfrage beim Neubilden der Alben (SQLite bricht bei zu langen OR-Ketten ab) */
     private const SCOPE_CHUNK = 100;
@@ -284,12 +285,15 @@ class Scanner
                 continue;
             }
             $path = $dir.'/'.$entry;
-            if (is_link($path)) {
+            // eine Abfrage pro Eintrag (übers Netzwerk ist jede ein Hin und Zurück): Art, Größe, Änderungszeit
+            $st = @lstat($path);
+            $type = $st ? $st['mode'] & 0170000 : 0;
+            if ($type === 0120000) { // Verknüpfung
                 $content = $audio = true;
 
                 continue;
             }
-            if (is_dir($path)) {
+            if ($type === 0040000) {
                 $sub = $this->walk($path, $files, $leftovers);
                 $content = $content || $sub['content'];
                 $audio = $audio || $sub['audio'];
@@ -305,7 +309,7 @@ class Scanner
             $content = true;
             if (in_array(strtolower(pathinfo($entry, PATHINFO_EXTENSION)), $audioExt, true)) {
                 $audio = $directAudio = true;
-                $files[$path] = ['mtime' => (int) @filemtime($path), 'size' => (int) @filesize($path)];
+                $files[$path] = ['mtime' => (int) ($st['mtime'] ?? 0), 'size' => (int) ($st['size'] ?? 0)];
             }
         }
         if ($directAudio) {

@@ -191,18 +191,24 @@ class ArtistDirectory
     {
         $skip = mb_strtolower((string) $this->settings->get('compilation_artist'));
 
-        return $this->names ??= Cache::remember('artist-names:v2:'.DataVersion::tracks().':'.md5($skip), now()->addHour(), fn () => $this->countNames($skip));
+        return $this->names ??= Cache::remember('artist-names:v3:'.DataVersion::tracks().':'.md5($skip), now()->addHour(), fn () => $this->countNames($skip));
     }
 
     private ?array $names = null;
 
     /** @return array<string, int> */
+    /** Namen aus dem Album-Interpreten – ohne Sampler-Schreibweisen („V.A.“, „Diverse“ …), die sind kein Künstler. */
+    public static function albumArtistNames(object $track): array
+    {
+        return app(Compilations::class)->isVariousArtists($track->albumartist) ? [] : ($track->albumartists ?: ArtistNames::split($track->albumartist));
+    }
+
     private function countNames(string $skip): array
     {
         $counts = [];
         // nur der Bestand: Inbox-Musik zählt erst, wenn sie eingeordnet ist
         foreach (Track::where('location', 'library')->select(['artist', 'artists', 'albumartist', 'albumartists'])->cursor() as $t) {
-            $names = array_merge($t->artists ?: ArtistNames::split($t->artist), $t->albumartists ?: ArtistNames::split($t->albumartist));
+            $names = array_merge($t->artists ?: ArtistNames::split($t->artist), $this->albumArtistNames($t));
             foreach (array_unique($names) as $n) {
                 if ($n !== '' && mb_strtolower($n) !== $skip) {
                     $counts[$n] = ($counts[$n] ?? 0) + 1;

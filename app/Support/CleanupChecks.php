@@ -9,6 +9,7 @@ use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\GenreMapping;
 use App\Models\HistoryEntry;
+use App\Models\IntegrityResult;
 use App\Models\Leftover;
 use App\Models\Track;
 use Illuminate\Support\Collection;
@@ -37,6 +38,7 @@ class CleanupChecks
         private PathBuilder $paths,
         private ArtistDirectory $directory,
         private Genres $genres,
+        private Compilations $compilations,
     ) {}
 
     /** Prüfungen in sinnvoller Arbeitsreihenfolge (Schritt 1 → 5). */
@@ -44,6 +46,7 @@ class CleanupChecks
     {
         return [
             'broken' => ['Defekte Dateien', 'Ohne Audiodaten (Länge 0) oder nicht lesbar – z. B. abgebrochene Rips.', 'In den Papierkorb'],
+            'integrity' => ['Beschädigte Audiodaten', 'Beim kompletten Dekodieren aufgefallen (CRC-Fehler, abgeschnittene oder kaputte Frames) – das normale Einlesen merkt das nicht. Geprüft wird per Knopf „Audiodaten prüfen“.', 'In den Papierkorb'],
             'duplicates' => ['Mögliche Duplikate', 'Gleicher Interpret, Titel und Länge, „(2)“-Dateien, gleiche Aufnahme als MP3 und FLAC.', 'Beste Version behalten, Rest in den Papierkorb'],
             'extension' => ['Uneinheitliche Endungen', 'z. B. „.Mp3“ statt „.mp3“.', 'Endung klein schreiben'],
             'encoding' => ['Kaputte Zeichen in Tags', 'Falsch gelesene Umlaute („KÃ¶nig“), unsichtbare Zeichen, Unicode-Form – sicher behebbar; falsche Codepage und verlorene Zeichen im Zeichen-Assistenten.', 'Sichere Korrekturen schreiben'],
@@ -52,9 +55,10 @@ class CleanupChecks
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
             'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
-            'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien.', 'Tags setzen'],
+            'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
+            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern – im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', null],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
-            'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt.', null],
+            'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
             'genre_mixed' => ['Alben mit gemischten Genres', 'Tracks eines Albums (kein Sampler) haben verschiedene Genres.', 'Häufigstes Genre fürs ganze Album'],
             'genre_missing' => ['Alben ohne Genre', 'Kein Genre im Tag – Vorschlag aus dem Standard-Genre des Künstlers bzw. seinen anderen Liedern.', 'Vorgeschlagenes Genre schreiben'],
@@ -62,6 +66,9 @@ class CleanupChecks
             'misplaced' => ['Datei liegt nicht am Regelort', 'Pfad weicht vom Namensschema der Kategorie ab.', 'An den richtigen Ort verschieben'],
             'leftovers' => ['Leere Ordner und Reste', 'Leere Ordner, „-Interpret@1-“, .DS_Store.', 'Entfernen'],
             'cover' => ['Fehlendes oder sehr kleines Cover', 'Kein Cover bzw. kleiner als die eingestellte Größe.', null],
+            'incomplete' => ['Album unvollständig', 'Lücken in den Tracknummern (1, 2, 4 …) oder weniger Titel als laut Gesamtzahl (TRACKTOTAL).', null],
+            'replaygain' => ['ReplayGain fehlt', 'Ohne Lautstärke-Angleich spielen leise Alben (z. B. 80er-Sampler) deutlich leiser als neue. Gemessen wird beim Ausführen (EBU R128, Bezug −18 LUFS) – dauert pro Album etwa so lange wie ein schnelles Abspielen.', 'Messen und ReplayGain schreiben'],
+            'lyrics' => ['Songtext fehlt', 'Songtexte von LRCLIB (synchronisiert, wenn vorhanden) in die Datei schreiben – Navidrome zeigt sie an. Nicht gefundene Titel werden 30 Tage nicht mehr vorgeschlagen.', 'Songtexte holen'],
             'cover_embed' => ['Cover nicht in allen Dateien', 'Ein Cover ist da (in anderen Tracks oder als cover.jpg), fehlt aber in einzelnen Dateien.', 'Cover einbetten'],
             'artist_image' => ['Künstler ohne Bild', 'Einträge im Künstlerverzeichnis ohne Bild.', null],
         ];
@@ -69,11 +76,11 @@ class CleanupChecks
 
     /** Schritte: Reihenfolge, in der aufgeräumt werden sollte. */
     public const STEPS = [
-        1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'duplicates', 'extension']],
-        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'comment', 'missing_tags']],
+        1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'integrity', 'duplicates', 'extension']],
+        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
         3 => ['Genres', 'Genre-Liste anwenden', ['genre_unlisted', 'genre_mixed', 'genre_missing', 'electronic_sub']],
         4 => ['Ablage', 'Erst jetzt an den Regelort verschieben', ['misplaced']],
-        5 => ['Abschluss', 'Reste, Cover, Künstlerbilder', ['leftovers', 'cover', 'cover_embed', 'artist_image']],
+        5 => ['Abschluss', 'Reste, Vollständigkeit, Cover, Künstlerbilder, ReplayGain, Songtexte', ['leftovers', 'incomplete', 'cover', 'cover_embed', 'artist_image', 'replaygain', 'lyrics']],
     ];
 
     public static function stepOf(string $check): int
@@ -130,7 +137,7 @@ class CleanupChecks
     public function version(): string
     {
         // pro Instanz gemerkt: eine Instanz lebt nur für einen Render bzw. einen Automatik-Schritt
-        return $this->version ??= md5(implode('|', [filemtime(__FILE__), Track::count(), Track::max('id'), DuplicateException::count(), DuplicateException::max('id'), CleanupException::count(), CleanupException::max('id'), Track::max('updated_at'), HistoryEntry::max('id'), Album::max('updated_at'), Leftover::count(), Leftover::max('updated_at'),
+        return $this->version ??= md5(implode('|', [filemtime(__FILE__), Track::count(), Track::max('id'), DuplicateException::count(), DuplicateException::max('id'), CleanupException::count(), CleanupException::max('id'), Track::max('updated_at'), HistoryEntry::max('id'), Album::max('updated_at'), Leftover::count(), Leftover::max('updated_at'), IntegrityResult::count(), IntegrityResult::max('updated_at'),
             ArtistAlias::max('updated_at'), Artist::max('updated_at'), Artist::count(), GenreMapping::max('updated_at'), json_encode($this->settings->all())]));
     }
 
@@ -157,9 +164,21 @@ class CleanupChecks
         return $this->albums ??= Album::where('location', 'library')->get()->keyBy('id');
     }
 
+    /**
+     * Tracks je Album. Tracks ohne Album (Scan läuft noch oder brach vor „Alben bilden“ ab) fehlen hier: sie sind kein
+     * gemeinsames Album, und „häufigster Wert“ würde sonst über Tausende fremde Titel gebildet.
+     */
     private function byAlbum(): Collection
     {
-        return $this->tracks()->groupBy('album_id');
+        return $this->tracks()->whereNotNull('album_id')->groupBy('album_id');
+    }
+
+    /** Album liegt bei den Künstlern, ist laut Flag bzw. Album-Interpret aber ein Sampler (bis zur Entscheidung nicht anfassen). */
+    private function compilationInArtists(?Album $album, Collection $tracks): ?string
+    {
+        $category = $this->settings->category($album?->category);
+
+        return $category && ! $category['compilation'] ? $this->compilations->reason($tracks) : null;
     }
 
     private function rel(string $path): string
@@ -244,7 +263,7 @@ class CleanupChecks
         foreach ($this->byAlbum() as $albumId => $tracks) {
             $album = $this->albums()[$albumId] ?? null;
             $category = $this->settings->category($album?->category);
-            if (! $category) {
+            if (! $category || $this->compilationInArtists($album, $tracks)) {
                 continue;
             }
             $multi = PathBuilder::isMultiDisc($tracks->map->tags()->all());
@@ -414,7 +433,7 @@ class CleanupChecks
     private function checkAmbiguous(): array
     {
         $out = [];
-        foreach ($this->tracks()->groupBy('album_id') as $albumId => $tracks) {
+        foreach ($this->byAlbum() as $albumId => $tracks) {
             $names = [];
             foreach ($tracks as $t) {
                 $r1 = $this->directory->resolveNames($t->artist, (array) ($t->artists ?? []));
@@ -510,6 +529,7 @@ class CleanupChecks
             if (! ($this->settings->category($album?->category)['compilation'] ?? false)) {
                 continue;
             }
+            // Der Interpret der Titel (ARTIST) wird nie angefasst – nur Album-Interpret und Flag
             $actions = $this->applyActions($tracks, function (Track $t) use ($va) {
                 $tags = [];
                 if ((string) $t->albumartist !== $va) {
@@ -523,7 +543,30 @@ class CleanupChecks
                 return $tags;
             });
             if ($actions) {
-                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => count($actions).' Track(s) ohne „'.$va.'“ bzw. Flag', 'link' => $this->link($album), 'actions' => $actions];
+                $detail = [];
+                $old = $tracks->filter(fn ($t) => (string) $t->albumartist !== $va)->map(fn ($t) => (string) $t->albumartist)->countBy();
+                if ($old->isNotEmpty()) {
+                    $detail[] = 'Album-Interpret '.$old->keys()->map(fn ($k) => '„'.($k === '' ? '∅' : $k).'“')->implode(', ').' → „'.$va.'“ ('.$old->sum().' Titel)';
+                }
+                $noFlag = $tracks->filter(fn ($t) => ! $t->compilation)->count();
+                if ($noFlag) {
+                    $detail[] = 'Compilation-Flag 0 → 1 ('.$noFlag.' Titel)';
+                }
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode("\n", $detail), 'link' => $this->link($album), 'actions' => $actions];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Sampler (Flag bzw. „Various Artists“-Schreibweise) im Künstler-Ordner: nur melden, entschieden wird im Editor. */
+    private function checkCompilationInArtists(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $album = $this->albums()[$albumId] ?? null;
+            if ($reason = $this->compilationInArtists($album, $tracks)) {
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => 'Erkannt an: '.$reason.' · liegt in „'.$album->category.'“', 'link' => $this->link($album), 'actions' => []];
             }
         }
 
@@ -536,7 +579,7 @@ class CleanupChecks
         foreach ($this->byAlbum() as $albumId => $tracks) {
             $album = $this->albums()[$albumId] ?? null;
             $category = $this->settings->category($album?->category);
-            if (! $category) {
+            if (! $category || $this->compilationInArtists($album, $tracks)) {
                 continue;
             }
             $wrong = $tracks->filter(fn ($t) => (string) $t->comment !== $category['name']);
@@ -582,8 +625,13 @@ class CleanupChecks
                     $missing['Tracknummer'] = ($missing['Tracknummer'] ?? 0) + 1;
                 }
             }
-            if ($missing) {
-                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', array_map(fn ($k, $n) => $k.' fehlt ('.$n.')', array_keys($missing), $missing)), 'link' => $this->link($album), 'actions' => []];
+            $lines = array_map(fn ($k, $n) => $k.' fehlt ('.$n.')', array_keys($missing), $missing);
+            // „Unknown Artist“ & Co. sind ein fehlendes Tag, kein Sampler – nicht automatisch umschreiben
+            foreach ($tracks->map(fn ($t) => trim((string) $t->albumartist))->filter(fn ($v) => Compilations::isPlaceholder($v))->countBy() as $value => $n) {
+                $lines[] = 'Album-Interpret „'.$value.'“ – prüfen ('.$n.')';
+            }
+            if ($lines) {
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', $lines), 'link' => $this->link($album), 'actions' => []];
             }
         }
 
@@ -611,7 +659,7 @@ class CleanupChecks
     private function checkCoverEmbed(): array
     {
         $out = [];
-        foreach ($this->tracks()->groupBy('album_id') as $albumId => $tracks) {
+        foreach ($this->byAlbum() as $albumId => $tracks) {
             $album = $this->albums()[$albumId] ?? null;
             if (! $album || $this->isLooseFolder($album)) {
                 continue;
@@ -753,6 +801,105 @@ class CleanupChecks
     }
 
     /** "Kein Album"-Ordner: Sammlung von Einzelliedern, kein echtes Album. */
+    /**
+     * Fehlende Titel je CD: Lücken bis zur höchsten Nummer bzw. bis TRACKTOTAL. Alben mit Titeln ohne Nummer übernimmt
+     * „Fehlende Tags“, Einzeltitel und „Kein Album“ sind gewollt unvollständig.
+     */
+    private function checkIncomplete(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $album = $this->albums()[$albumId] ?? null;
+            if (! $album || $tracks->count() < 2 || $this->isLooseFolder($album)
+                || $tracks->contains(fn ($t) => (int) $t->track < 1)) {
+                continue;
+            }
+            $byDisc = $tracks->groupBy(fn ($t) => max(1, (int) $t->disc))->sortKeys();
+            $lines = [];
+            foreach ($byDisc as $disc => $discTracks) {
+                $have = $discTracks->map(fn ($t) => (int) $t->track)->unique()->values()->all();
+                $total = (int) $discTracks->map(fn ($t) => (int) $t->tracktotal)->filter()->countBy()->sortDesc()->keys()->first();
+                $max = max(max($have), $total);
+                if ($max > 99) {
+                    continue; // unplausible Nummern (z. B. „101“ für CD 1 Titel 1) – nicht raten
+                }
+                $missing = array_values(array_diff(range(1, $max), $have));
+                if ($missing) {
+                    $list = implode(', ', array_slice($missing, 0, 15)).(count($missing) > 15 ? ' …' : '');
+                    $lines[] = ($byDisc->count() > 1 ? 'CD '.$disc.': ' : '').count($have).' von '.$max.' – es fehlen '.$list;
+                }
+            }
+            if ($lines) {
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode("\n", $lines), 'link' => $this->link($album), 'actions' => []];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Alben ohne ReplayGain: alle Titel neu messen, damit der Album-Wert stimmt („Kein Album“: jeder Titel für sich). */
+    private function checkReplaygain(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $album = $this->albums()[$albumId] ?? null;
+            $tracks = $tracks->filter(fn ($t) => $t->writable && TagTool::canWrite($t->path) && $t->duration > 0);
+            $missing = $tracks->filter(fn ($t) => blank($t->replaygain));
+            if ($missing->isEmpty()) {
+                continue;
+            }
+            $groups = $this->isLooseFolder($album) ? $missing->map(fn ($t) => collect([$t])) : collect([$tracks]);
+            $actions = $groups->map(fn ($g) => [
+                'type' => 'replaygain',
+                'path' => $g->count() === 1 ? $g->first()->path : ($album?->dir ?? dirname($g->first()->path)),
+                'paths' => $g->mapWithKeys(fn ($t) => [$t->path => (float) $t->duration])->all(),
+                'note' => 'Lautheit wird beim Ausführen gemessen ('.$g->count().' Titel)',
+            ])->values()->all();
+            $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $missing->count().' von '.$tracks->count().' Titel(n) ohne ReplayGain', 'link' => $this->link($album), 'actions' => $actions];
+        }
+
+        return $out;
+    }
+
+    /** Titel ohne Songtext (mit Interpret und Titel, nicht kürzlich erfolglos gesucht). */
+    private function checkLyrics(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $album = $this->albums()[$albumId] ?? null;
+            $missing = $tracks->filter(fn ($t) => ! $t->has_lyrics && $t->writable && TagTool::canWrite($t->path)
+                && trim((string) $t->artist) !== '' && trim((string) $t->title) !== '' && ! Lyrics::knownMissing($t->path));
+            if ($missing->isEmpty()) {
+                continue;
+            }
+            $actions = $missing->map(fn ($t) => [
+                'type' => 'lyrics', 'path' => $t->path, 'artist' => (string) $t->artist, 'title' => (string) $t->title,
+                'album' => (string) $t->album, 'duration' => (float) $t->duration,
+            ])->values()->all();
+            $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $missing->count().' Titel ohne Songtext', 'link' => $this->link($album), 'actions' => $actions];
+        }
+
+        return $out;
+    }
+
+    /** Dateien, bei denen die letzte Audiodaten-Prüfung Fehler fand (und die sich seitdem nicht geändert haben). */
+    private function checkIntegrity(): array
+    {
+        $tracks = $this->tracks()->keyBy('path');
+        $out = [];
+        foreach (IntegrityResult::where('ok', false)->orderBy('path')->get() as $r) {
+            $t = $tracks[$r->path] ?? null;
+            // mtime 0 = Index wird beim nächsten Scan neu gelesen; dann zählt nur die Größe
+            if (! $t || (int) $t->size !== $r->size || ((int) $t->mtime && (int) $t->mtime !== $r->mtime)) {
+                continue;
+            }
+            $out[] = ['id' => 't'.$t->id, 'title' => trim($t->artist.' – '.$t->title, ' –') ?: $t->filename, 'detail' => $this->rel($t->path)."\n".$r->error,
+                'link' => $this->link($this->albums()[$t->album_id] ?? null), 'actions' => [['type' => 'trash', 'path' => $t->path, 'reason' => 'Audiodaten beschädigt']]];
+        }
+
+        return $out;
+    }
+
     private function isLooseFolder(?Album $album): bool
     {
         return $album && basename($album->dir) === $this->settings->get('no_album');

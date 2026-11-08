@@ -21,7 +21,7 @@ class AutoCleanup
 
     private const HELD_KEY = 'auto-cleanup.held';
 
-    public const RISKY = ['duplicates' => 'verschiebt Dateien in den Papierkorb', 'misplaced' => 'verschiebt Dateien im Bestand', 'leftovers' => 'entfernt leere Ordner und Reste', 'broken' => 'verschiebt defekte Dateien in den Papierkorb'];
+    public const RISKY = ['duplicates' => 'verschiebt Dateien in den Papierkorb', 'misplaced' => 'verschiebt Dateien im Bestand', 'leftovers' => 'entfernt leere Ordner und Reste', 'broken' => 'verschiebt defekte Dateien in den Papierkorb', 'integrity' => 'verschiebt beschädigte Dateien in den Papierkorb'];
 
     public function __construct(private Settings $settings, private CleanupChecks $checks) {}
 

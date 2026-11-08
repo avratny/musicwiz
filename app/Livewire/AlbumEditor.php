@@ -13,7 +13,9 @@ use App\Models\Track;
 use App\Support\AlbumPlanner;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
+use App\Support\Compilations;
 use App\Support\Covers;
+use App\Support\Fingerprint;
 use App\Support\Genres;
 use App\Support\InboxMatcher;
 use App\Support\Lookup;
@@ -21,6 +23,7 @@ use App\Support\OperationRunner;
 use App\Support\PathBuilder;
 use App\Support\Scanner;
 use App\Support\Settings;
+use App\Support\TagTool;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Component;
@@ -48,6 +51,9 @@ class AlbumEditor extends Component
     /** Inbox: Kategorie „Lib“ vorgeschlagen, weil alle Titel denselben Künstler haben (nur Vorauswahl, nichts geschrieben) */
     public ?string $categoryGuessed = null;
 
+    /** Begründung der Vorauswahl (Anzeige unter den Kategorien) */
+    public ?string $categoryGuessedReason = null;
+
     /** unbekannte Künstler, die schon im Hintergrund nachgeschlagen werden (Dialog „erfassen“ ist dann sofort gefüllt) */
     public array $prefetched = [];
 
@@ -65,6 +71,14 @@ class AlbumEditor extends Component
     public array $genreLookup = [];
 
     public ?string $lookupError = null;
+
+    /** Abgleich mit der MusicBrainz-Titelliste: abweichende Titel, fehlende Nummern, fehlende Titel */
+    public ?array $tracklist = null;
+
+    /** Am Fingerabdruck erkannt (AcoustID): Zeile => Vorschlag */
+    public array $acoustid = [];
+
+    public ?string $acoustidError = null;
 
     public int $discForAll = 1;
 
@@ -104,9 +118,16 @@ class AlbumEditor extends Component
         $mode = fn (string $k) => $tracks->pluck($k)->filter()->countBy()->sortDesc()->keys()->first();
         $category = $album->category;
         // Inbox ohne Kategorie-Kommentar: ein einziger Künstler bei allen Titeln → Lib vorauswählen
-        $this->categoryGuessed = null;
-        if ($category === null && $album->location === 'inbox' && ($guess = $this->singleArtistCategory($tracks->all(), (string) ($mode('albumartist') ?? '')))) {
-            $category = $this->categoryGuessed = $guess;
+        $this->categoryGuessed = $this->categoryGuessedReason = null;
+        if ($category === null && $album->location === 'inbox') {
+            // Sampler (Flag bzw. „V.A.“, „Diverse“ … als Album-Interpret) → Lib-Sampler; sonst ein einziger Künstler → Lib
+            if ($reason = app(Compilations::class)->reason($tracks)) {
+                $sampler = collect(app(Settings::class)->categoriesIn('library'))->first(fn ($c) => $c['compilation']);
+                [$category, $this->categoryGuessedReason] = [$sampler['name'] ?? null, 'Sampler erkannt an: '.$reason.'.'];
+            } elseif ($category = $this->singleArtistCategory($tracks->all(), (string) ($mode('albumartist') ?? ''))) {
+                $this->categoryGuessedReason = 'alle Titel haben denselben Künstler.';
+            }
+            $this->categoryGuessed = $category;
         }
 
         $isSet = $album->discCount() > 1;
@@ -135,6 +156,8 @@ class AlbumEditor extends Component
             'ext' => $t->ext,
             'writable' => $t->writable,
             'error' => $t->error,
+            'rg' => $t->replaygain,
+            'rg_album' => $t->replaygain_album,
             'rating' => $t->rating,
         ])->values()->all();
         $this->discForAll = max(1, (int) ($mode('disc') ?? 1));
@@ -150,7 +173,7 @@ class AlbumEditor extends Component
     private function singleArtistCategory(array $tracks, string $albumArtist): ?string
     {
         $settings = app(Settings::class);
-        if (! $tracks || strcasecmp(trim($albumArtist), (string) $settings->get('compilation_artist')) === 0) {
+        if (! $tracks || app(Compilations::class)->isVariousArtists($albumArtist)) {
             return null;
         }
         $main = [];
@@ -350,7 +373,7 @@ class AlbumEditor extends Component
         $this->lookupError = null;
         $compilation = (bool) (app(Settings::class)->category($this->fields['category'])['compilation'] ?? false)
             || (bool) Album::find($this->albumId)?->is_compilation
-            || strcasecmp(trim($this->fields['albumartist']), (string) app(Settings::class)->get('compilation_artist')) === 0;
+            || app(Compilations::class)->isVariousArtists($this->fields['albumartist']);
         $artist = $this->fields['albumartist'] ?: ($this->rows[0]['artist'] ?? '');
         $artist = ArtistNames::split($artist)[0] ?? $artist;
         $result = app(Lookup::class)->albumCandidates($compilation ? null : $artist, $this->fields['album'], $compilation);
@@ -362,6 +385,189 @@ class AlbumEditor extends Component
         if (! $this->genreLookup) {
             $this->lookupError = 'Nichts gefunden'.($result['errors'] ? ' ('.implode(' · ', $result['errors']).')' : '').'.';
         }
+    }
+
+    /** Titelliste der gewählten MusicBrainz-Release-Group mit den Titeln des Albums vergleichen. */
+    public function compareTracklist(int $index): void
+    {
+        $this->tracklist = null;
+        $hit = $this->genreLookup[$index] ?? null;
+        if (empty($hit['mbid'])) {
+            return;
+        }
+        try {
+            $tl = app(Lookup::class)->musicbrainzTracklist($hit['mbid'], count($this->rows));
+        } catch (\Throwable $e) {
+            $this->lookupError = 'Titelliste: '.$e->getMessage();
+
+            return;
+        }
+        if (! $tl) {
+            $this->lookupError = 'Zu diesem Treffer gibt es bei MusicBrainz keine Titelliste.';
+
+            return;
+        }
+        $this->tracklist = self::matchTracklist($this->rows, $tl);
+    }
+
+    /**
+     * Zeilen den MusicBrainz-Titeln zuordnen: zuerst über CD + Nummer, sonst über den Titel.
+     *
+     * @return array{release:string, url:string, count:int, titles:array<int,string>, numbers:array<int,array{disc:string,track:string}>, missing:list<string>}
+     */
+    public static function matchTracklist(array $rows, array $tl): array
+    {
+        $norm = fn (string $s) => preg_replace('/[^a-z0-9]+/', '', mb_strtolower(ArtistNames::stripAccents($s))) ?? '';
+        $byPos = [];
+        $byTitle = [];
+        foreach ($tl['tracks'] as $k => $t) {
+            $byPos[$t['disc'].'-'.$t['track']] = $k;
+            $byTitle[$norm($t['title'])] ??= $k;
+        }
+        $used = [];
+        $titles = [];
+        $numbers = [];
+        foreach ($rows as $i => $row) {
+            $k = (int) $row['track'] > 0 ? ($byPos[max(1, (int) $row['disc']).'-'.(int) $row['track']] ?? null) : null;
+            if ($k !== null && ! isset($used[$k])) {
+                $used[$k] = true;
+                if ($norm($row['title']) !== $norm($tl['tracks'][$k]['title'])) {
+                    $titles[$i] = $tl['tracks'][$k]['title'];
+                } elseif ($row['title'] !== $tl['tracks'][$k]['title']) {
+                    $titles[$i] = $tl['tracks'][$k]['title']; // nur Schreibweise (Groß/klein, Satzzeichen)
+                }
+
+                continue;
+            }
+            $k = $byTitle[$norm($row['title'])] ?? null;
+            if ($k !== null && ! isset($used[$k])) {
+                $used[$k] = true;
+                $numbers[$i] = ['disc' => (string) $tl['tracks'][$k]['disc'], 'track' => (string) $tl['tracks'][$k]['track']];
+            }
+        }
+        $multi = count(array_unique(array_column($tl['tracks'], 'disc'))) > 1;
+        $missing = [];
+        foreach ($tl['tracks'] as $k => $t) {
+            if (! isset($used[$k])) {
+                $missing[] = ($multi ? 'CD '.$t['disc'].' · ' : '').$t['track'].'. '.$t['title'];
+            }
+        }
+
+        return ['release' => $tl['release'], 'url' => $tl['url'], 'count' => count($tl['tracks']), 'titles' => $titles, 'numbers' => $numbers, 'missing' => $missing];
+    }
+
+    public function applyTracklistTitles(): void
+    {
+        foreach ($this->tracklist['titles'] ?? [] as $i => $title) {
+            if (isset($this->rows[$i])) {
+                $this->rows[$i]['title'] = $title;
+            }
+        }
+        $this->tracklist['titles'] = [];
+    }
+
+    public function applyTracklistNumbers(): void
+    {
+        foreach ($this->tracklist['numbers'] ?? [] as $i => $n) {
+            if (isset($this->rows[$i])) {
+                $this->rows[$i]['disc'] = $n['disc'];
+                $this->rows[$i]['track'] = $n['track'];
+            }
+        }
+        $this->tracklist['numbers'] = [];
+    }
+
+    /** Titel am Fingerabdruck erkennen (AcoustID): Titel ohne Titel/Interpret, sonst alle (höchstens 25). */
+    public function identifyTracks(): void
+    {
+        $this->acoustid = [];
+        $this->acoustidError = null;
+        $rows = array_filter($this->rows, fn ($r) => trim($r['title']) === '' || trim($r['artist']) === '');
+        $rows = array_slice($rows ?: $this->rows, 0, 25, true);
+        $items = [];
+        foreach ($rows as $i => $row) {
+            $fp = app(Fingerprint::class)->acoustid($row['dir'].'/'.$row['filename']);
+            if ($fp) {
+                $items[$i] = ['fingerprint' => $fp, 'duration' => (float) $row['seconds']];
+            }
+        }
+        try {
+            $found = app(Lookup::class)->acoustid($items);
+        } catch (\Throwable $e) {
+            $this->acoustidError = $e->getMessage();
+
+            return;
+        }
+        foreach ($found as $i => $hit) {
+            // nur Vorschläge, die etwas ändern und einigermaßen sicher sind
+            if ($hit && $hit['score'] >= 0.5 && ($hit['title'] !== $this->rows[$i]['title'] || $hit['artist'] !== $this->rows[$i]['artist'])) {
+                $this->acoustid[$i] = $hit;
+            }
+        }
+        if (! $this->acoustid) {
+            $this->acoustidError = $items ? 'Nichts Neues erkannt.' : 'Kein Fingerabdruck berechenbar.';
+        }
+    }
+
+    public function useAcoustid(int $i): void
+    {
+        $hit = $this->acoustid[$i] ?? null;
+        if (! $hit) {
+            return;
+        }
+        $this->rows[$i]['title'] = $hit['title'];
+        $this->rows[$i]['artist'] = $hit['artist'];
+        if (trim($this->fields['album']) === '' && $hit['album']) {
+            $this->fields['album'] = $hit['album'];
+        }
+        unset($this->acoustid[$i]);
+    }
+
+    public function useAllAcoustid(): void
+    {
+        foreach (array_keys($this->acoustid) as $i) {
+            $this->useAcoustid($i);
+        }
+    }
+
+    /** Titel, deren Lautheits-Tags sich schreiben lassen (MP3/FLAC mit Audiodaten). */
+    private function replaygainTracks()
+    {
+        return $this->album()->tracks()->get()->filter(fn (Track $t) => $t->writable && TagTool::canWrite($t->path) && $t->duration > 0);
+    }
+
+    /** ReplayGain für das ganze Album (neu) messen und schreiben – als Aktion im Verlauf, rückgängig machbar. */
+    public function measureReplaygain(): void
+    {
+        $tracks = $this->replaygainTracks();
+        if ($tracks->isEmpty() || $this->operationId) {
+            return;
+        }
+        $album = $this->album();
+        // „Kein Album“: jeder Titel für sich (kein gemeinsamer Album-Wert)
+        $groups = basename($album->dir) === app(Settings::class)->get('no_album') ? $tracks->map(fn ($t) => collect([$t])) : collect([$tracks]);
+        $actions = $groups->map(fn ($g) => ['type' => 'replaygain', 'path' => $g->count() === 1 ? $g->first()->path : $album->dir,
+            'paths' => $g->mapWithKeys(fn ($t) => [$t->path => (float) $t->duration])->all()])->values()->all();
+        $this->operationId = OperationRunner::dispatch('replaygain', 'ReplayGain messen: '.$this->albumLabel(), $actions)->id;
+        $this->dispatch('activity-changed');
+    }
+
+    /** Alle ReplayGain-Tags des Albums entfernen. */
+    public function removeReplaygain(): void
+    {
+        $tracks = $this->replaygainTracks()->filter(fn (Track $t) => filled($t->replaygain) || filled($t->replaygain_album));
+        if ($tracks->isEmpty() || $this->operationId) {
+            return;
+        }
+        $empty = ['rg_track_gain' => '', 'rg_track_peak' => '', 'rg_album_gain' => '', 'rg_album_peak' => ''];
+        $actions = $tracks->map(fn (Track $t) => ['type' => 'apply', 'path' => $t->path, 'tags' => $empty])->values()->all();
+        $this->operationId = OperationRunner::dispatch('replaygain', 'ReplayGain entfernen: '.$this->albumLabel(), $actions)->id;
+        $this->dispatch('activity-changed');
+    }
+
+    private function albumLabel(): string
+    {
+        return trim(($this->fields['albumartist'] ?: '').' – '.$this->fields['album'], ' –');
     }
 
     public function useYear(string $year): void
@@ -429,6 +635,16 @@ class AlbumEditor extends Component
             session()->flash('error', 'Nicht alles hat geklappt: '.$op->error);
         } else {
             session()->flash('status', 'Erledigt: '.$op->description);
+        }
+        // ReplayGain ändert nur Lautheits-Tags: nur diese Werte nachladen, ungespeicherte Änderungen im Editor bleiben
+        if ($op->type === 'replaygain') {
+            $fresh = Track::whereIn('id', array_column($this->rows, 'id'))->get(['id', 'replaygain', 'replaygain_album'])->keyBy('id');
+            foreach ($this->rows as $i => $row) {
+                $this->rows[$i]['rg'] = $fresh[$row['id']]->replaygain ?? null;
+                $this->rows[$i]['rg_album'] = $fresh[$row['id']]->replaygain_album ?? null;
+            }
+
+            return null;
         }
 
         $album = Album::find($this->albumId);
@@ -667,7 +883,7 @@ class AlbumEditor extends Component
         }
         $albumArtistFix = app(PathBuilder::class)->uniformSpelling($directory->correctText($this->fields['albumartist']));
         $albumArtistNew = array_values(array_filter(ArtistNames::split($this->fields['albumartist']),
-            fn ($n) => strcasecmp($n, (string) $compilationArtist) !== 0 && $directory->check($n)['status'] === 'new'));
+            fn ($n) => ! app(Compilations::class)->isVariousArtists($n) && $directory->check($n)['status'] === 'new'));
         $this->prefetchUnknown([...$albumArtistNew, ...array_merge(...array_map(fn ($h) => $h['names'] ?? [], array_values($hints)))]);
         $renames = $directory->renamesFor([$this->fields['albumartist'], ...array_column($this->rows, 'artist')]);
 
@@ -719,7 +935,8 @@ class AlbumEditor extends Component
             'genreSuggestion' => $genreSuggestion,
             'unlistedGenres' => array_values(array_filter($trackGenres, fn ($g) => ! $genres->isListed($g))),
             'compilationArtist' => $compilationArtist,
-            'vaWarning' => $category && ! $category['compilation'] && strcasecmp(trim($this->fields['albumartist']), $compilationArtist) === 0,
+            'hasAcoustid' => trim((string) $settings->get('acoustid_key')) !== '',
+            'vaWarning' => $category && ! $category['compilation'] && app(Compilations::class)->isVariousArtists($this->fields['albumartist']),
             'base' => $settings->base(),
             'operation' => $op,
         ])->title($album->title);

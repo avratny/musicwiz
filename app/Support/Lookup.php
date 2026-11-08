@@ -173,7 +173,7 @@ class Lookup
                 $detail = count($out) < 3 ? $this->mb('release-group/'.$rg['id'], ['inc' => 'genres+tags']) : [];
                 $genres = array_merge(array_column($detail['genres'] ?? [], 'name'), array_column(array_filter($detail['tags'] ?? [], fn ($t) => ($t['count'] ?? 0) > 0), 'name'));
                 $out[] = ['source' => 'MusicBrainz', 'title' => $rg['title'], 'artist' => $credit, 'year' => substr((string) ($rg['first-release-date'] ?? ''), 0, 4) ?: null,
-                    'tracks' => null, 'genres' => array_values(array_unique(array_map('ucwords', $genres))), 'url' => 'https://musicbrainz.org/release-group/'.$rg['id']];
+                    'tracks' => null, 'genres' => array_values(array_unique(array_map('ucwords', $genres))), 'url' => 'https://musicbrainz.org/release-group/'.$rg['id'], 'mbid' => $rg['id']];
             }
         } catch (\Throwable $e) {
             $errors[] = $e->getMessage();
@@ -211,6 +211,79 @@ class Lookup
         }
 
         return ['candidates' => $out, 'errors' => $errors];
+    }
+
+    /**
+     * Titelliste einer Release-Group: die Veröffentlichung, deren Titelzahl am besten passt (offizielle bevorzugt).
+     *
+     * @return array{release:string, url:string, tracks:list<array{disc:int, track:int, title:string, artist:string, seconds:?float}>}|null
+     */
+    public function musicbrainzTracklist(string $releaseGroupId, int $wantedTracks): ?array
+    {
+        $releases = $this->mb('release', ['release-group' => $releaseGroupId, 'inc' => 'recordings+artist-credits+media', 'limit' => 25])['releases'] ?? [];
+        $count = fn ($r) => array_sum(array_map(fn ($m) => count($m['tracks'] ?? []), $r['media'] ?? []));
+        usort($releases, fn ($a, $b) => [abs($count($a) - $wantedTracks), ($a['status'] ?? '') === 'Official' ? 0 : 1, (string) ($a['date'] ?? '9999')]
+            <=> [abs($count($b) - $wantedTracks), ($b['status'] ?? '') === 'Official' ? 0 : 1, (string) ($b['date'] ?? '9999')]);
+        $release = $releases[0] ?? null;
+        if (! $release || ! $count($release)) {
+            return null;
+        }
+        $credit = fn (array $credits) => implode('', array_map(fn ($c) => ($c['name'] ?? '').($c['joinphrase'] ?? ''), $credits));
+        $tracks = [];
+        foreach ($release['media'] ?? [] as $m) {
+            foreach ($m['tracks'] ?? [] as $t) {
+                $tracks[] = ['disc' => (int) ($m['position'] ?? 1), 'track' => (int) ($t['position'] ?? 0), 'title' => (string) ($t['title'] ?? ''),
+                    'artist' => $credit($t['artist-credit'] ?? $t['recording']['artist-credit'] ?? []), 'seconds' => isset($t['length']) ? $t['length'] / 1000 : null];
+            }
+        }
+        $label = trim(($release['title'] ?? '').' · '.implode(' · ', array_filter([$release['country'] ?? null, $release['date'] ?? null, count($release['media'] ?? []) > 1 ? count($release['media']).' CDs' : null])), ' ·');
+
+        return ['release' => $label, 'url' => 'https://musicbrainz.org/release/'.$release['id'], 'tracks' => $tracks];
+    }
+
+    // ------------------------------------------------------------ AcoustID
+
+    /**
+     * Titel am Fingerabdruck erkennen (mehrere Dateien in einer Abfrage).
+     *
+     * @param  array<int|string, array{fingerprint:string, duration:float}>  $items
+     * @return array<int|string, array{title:string, artist:string, album:?string, score:float}|null>
+     */
+    public function acoustid(array $items): array
+    {
+        $key = trim((string) $this->settings->get('acoustid_key'));
+        if ($key === '' || ! $items) {
+            return [];
+        }
+        $keys = array_keys($items);
+        $form = ['client' => $key, 'meta' => 'recordings releasegroups compress', 'format' => 'json'];
+        foreach (array_values($items) as $i => $item) {
+            $form['duration.'.$i] = (int) round($item['duration']);
+            $form['fingerprint.'.$i] = $item['fingerprint'];
+        }
+        $r = Http::timeout(30)->asForm()->withHeaders(['User-Agent' => self::userAgent()])->post('https://api.acoustid.org/v2/lookup', $form);
+        if (! $r->successful() || ($r->json('status') ?? '') !== 'ok') {
+            throw new RuntimeException('AcoustID: '.($r->json('error.message') ?? 'antwortet nicht ('.$r->status().')'));
+        }
+        // Einzelabfrage liefert "results", Sammelabfrage "fingerprints" mit Index
+        $groups = $r->json('fingerprints') ?? [['index' => 0, 'results' => $r->json('results') ?? []]];
+        $out = array_fill_keys($keys, null);
+        foreach ($groups as $g) {
+            $best = null;
+            foreach ($g['results'] ?? [] as $res) {
+                foreach ($res['recordings'] ?? [] as $rec) {
+                    if (empty($rec['title']) || ($best && $best['score'] >= (float) $res['score'])) {
+                        continue;
+                    }
+                    $artist = implode('', array_map(fn ($a) => ($a['name'] ?? '').($a['joinphrase'] ?? ''), $rec['artists'] ?? []));
+                    $album = collect($rec['releasegroups'] ?? [])->sortBy(fn ($rg) => ($rg['type'] ?? '') === 'Album' ? 0 : 1)->first()['title'] ?? null;
+                    $best = ['title' => (string) $rec['title'], 'artist' => $artist, 'album' => $album, 'score' => (float) $res['score']];
+                }
+            }
+            $out[$keys[(int) ($g['index'] ?? 0)]] = $best;
+        }
+
+        return $out;
     }
 
     /**

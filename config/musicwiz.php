@@ -11,9 +11,9 @@ return [
     // feste Kategorien je Bereich (Lib, Blackhole): Name = Wert im Kommentar-Tag, Zielordner unter der Basis, Muster
     'categories' => [
         'lib' => ['name' => 'LIB', 'folder' => 'library/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
-        'lib_compilation' => ['name' => 'LIB COMPILATION', 'folder' => 'library/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
+        'lib_compilation' => ['name' => 'LIB COMPILATION', 'folder' => 'library/sampler', 'pattern' => '{album_buchstabe}/{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
         'blackhole' => ['name' => 'BLACKHOLE', 'folder' => 'blackhole/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
-        'blackhole_compilation' => ['name' => 'BLACKHOLE COMPILATION', 'folder' => 'blackhole/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
+        'blackhole_compilation' => ['name' => 'BLACKHOLE COMPILATION', 'folder' => 'blackhole/sampler', 'pattern' => '{album_buchstabe}/{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
     ],
 
     'no_album' => 'Kein Album',
@@ -23,6 +23,8 @@ return [
     'replace_slash' => '-',
     'id3_version' => 4,
     'scan_throttle_ms' => (int) env('MUSIC_SCAN_THROTTLE_MS', 15),
+    // gleichzeitige Leseprozesse beim Scan (übers Netzwerk deutlich schneller; 1 = nacheinander)
+    'scan_workers' => (int) env('MUSIC_SCAN_WORKERS', 4),
     // Pause vor dem zweiten Leseversuch einer Datei, die nicht lesbar war (Share kurz weg)
     'read_retry_ms' => (int) env('MUSIC_READ_RETRY_MS', 500),
     'small_cover_px' => 300,
@@ -37,6 +39,11 @@ return [
 
     'discogs_token' => env('DISCOGS_TOKEN', ''),
     'fanart_key' => env('FANART_KEY', ''),
+    // AcoustID (Titel per Fingerabdruck erkennen): kostenloser Anwendungs-Schlüssel von https://acoustid.org/new-application
+    'acoustid_key' => env('ACOUSTID_KEY', ''),
+    // Inbox beobachten: neue Dateien automatisch einlesen (nur lesen) – standardmäßig aus
+    'inbox_watch' => false,
+    'inbox_watch_seconds' => 60,
 
     'tagtool' => env('MUSIC_TAGTOOL', base_path('tools/tagtool.py')),
     // YouTube-Download (yt-dlp, braucht ffmpeg)

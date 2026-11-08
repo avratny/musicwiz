@@ -14,6 +14,7 @@ class Track extends Model
         'albumartists' => 'array',
         'genres' => 'array',
         'compilation' => 'boolean',
+        'has_lyrics' => 'boolean',
         'cover_embedded' => 'boolean',
         'writable' => 'boolean',
         'mtime' => 'integer',

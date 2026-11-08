@@ -96,7 +96,7 @@ class PrefetchUnknownArtists implements ShouldQueue
         $skip = mb_strtolower((string) app(Settings::class)->get('compilation_artist'));
         $found = ['inbox' => [], 'library' => []];
         foreach (Track::whereIn('location', ['inbox', 'library'])->select(['location', 'title', 'artist', 'artists', 'albumartist', 'albumartists'])->cursor() as $t) {
-            $names = array_unique(array_merge($t->artists ?: ArtistNames::split($t->artist), $t->albumartists ?: ArtistNames::split($t->albumartist)));
+            $names = array_unique(array_merge($t->artists ?: ArtistNames::split($t->artist), ArtistDirectory::albumArtistNames($t)));
             foreach ($names as $n) {
                 if ($n === '' || mb_strtolower($n) === $skip) {
                     continue;

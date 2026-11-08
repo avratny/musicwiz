@@ -9,11 +9,13 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Baut Zielpfade aus Kategorie-Muster und Tags.
- * Platzhalter: {buchstabe} {ordner_interpret} {album} {nr} {interpret} {jahr} {titel} {ext}
+ * Platzhalter: {buchstabe} {album_buchstabe} {ordner_interpret} {album} {nr} {interpret} {jahr} {titel} {ext}
+ * {buchstabe} richtet sich nach dem Ordner-Interpreten, {album_buchstabe} nach dem Album (für Sampler, deren Interpret
+ * „Various Artists“ alles unter „V“ legen würde).
  */
 class PathBuilder
 {
-    public const PLACEHOLDERS = ['buchstabe', 'ordner_interpret', 'album', 'nr', 'interpret', 'jahr', 'titel', 'ext'];
+    public const PLACEHOLDERS = ['buchstabe', 'album_buchstabe', 'ordner_interpret', 'album', 'nr', 'interpret', 'jahr', 'titel', 'ext'];
 
     public function __construct(private Settings $settings) {}
 
@@ -42,10 +44,13 @@ class PathBuilder
             $title = pathinfo($sourcePath, PATHINFO_FILENAME);
         }
 
+        $albumName = $album !== '' ? $album : (string) $this->settings->get('no_album');
+
         return [
             'buchstabe' => $this->letter($folderArtist),
+            'album_buchstabe' => $this->letter($albumName),
             'ordner_interpret' => $folderArtist,
-            'album' => $album !== '' ? $album : $this->settings->get('no_album'),
+            'album' => $albumName,
             'nr' => self::number($tags['track'] ?? '', $tags['disc'] ?? '', $multiDisc),
             'interpret' => trim((string) ($tags['artist'] ?? '')),
             // Ohne Album kein Jahr: der Ordner heißt dann einfach "Kein Album"

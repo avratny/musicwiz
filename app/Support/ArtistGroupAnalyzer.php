@@ -28,7 +28,7 @@ class ArtistGroupAnalyzer
             return $this->profiles;
         }
 
-        return $this->profiles = Cache::remember('artist-profiles:v4:'.DataVersion::tracks(), now()->addHour(), function () {
+        return $this->profiles = Cache::remember('artist-profiles:v5:'.DataVersion::tracks(), now()->addHour(), function () {
             $va = mb_strtolower((string) $this->settings->get('compilation_artist'));
             $out = [];
             // nur der Bestand – die Inbox wird erst nach dem Einordnen relevant
@@ -36,7 +36,7 @@ class ArtistGroupAnalyzer
                 ->orderBy('album')->orderByRaw('CAST(track AS INTEGER)');
             foreach ($query->cursor() as $t) {
                 $trackArtists = $t->artists ?: ArtistNames::split($t->artist);
-                $names = array_unique(array_merge($trackArtists, $t->albumartists ?: ArtistNames::split($t->albumartist)));
+                $names = array_unique(array_merge($trackArtists, ArtistDirectory::albumArtistNames($t)));
                 foreach ($names as $n) {
                     if ($n === '' || mb_strtolower($n) === $va) {
                         continue;

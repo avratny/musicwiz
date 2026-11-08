@@ -20,6 +20,8 @@ bestätigter Vorschau. Jede Aktion steht im Verlauf und lässt sich rückgängig
   jeweils mit Vorschau und „Übernehmen“. Einzelne Prüfungen lassen sich als Automatik freigeben (standardmäßig alles aus).
 - **YouTube-Download** – Ton als MP3 (beste VBR-Stufe, mit Tags und Cover) direkt in die Inbox; einstellbare Pausen,
   Bandbreite und Tagesgrenze, damit YouTube nicht sperrt. Herkunft steht im Tag `SOURCE`.
+- **Extras** – ReplayGain messen und schreiben, Songtexte (LRCLIB), beschädigte Audiodaten finden, unvollständige Alben,
+  Titelliste mit MusicBrainz abgleichen, Titel per Fingerabdruck erkennen (AcoustID), Inbox beobachten, Statistik.
 - **Verlauf & Papierkorb** – jede Dateiänderung mit alten/neuen Pfaden und Tags, rückgängig machbar; Papierkorb mit Wiederherstellen.
 - **Einstellungen** – Pfade, Kategorien und Namensschema, Genre-Liste und -Zuordnung, Sicherung/Wiederherstellung als Datei.
 
@@ -60,8 +62,12 @@ Ausnahmen lassen sich zusätzlich unter **Einstellungen → Sicherung** als Date
 ### Update
 
 In Dockge beim Stack **„Update“** (zieht das neueste Image und startet neu). Die Datenbank wird beim Start automatisch
-aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.2` (immer die neueste 0.2.x)
-bzw. `MUSICWIZ_TAG=0.2.1` setzen.
+aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.3` (immer die neueste 0.3.x)
+bzw. `MUSICWIZ_TAG=0.3.0` setzen.
+
+Update auf 0.3: Der nächste Scan liest einmal alle Dateien neu ein (neue Felder ReplayGain und Songtext) – dank paralleler
+Leseprozesse schneller als bisher (`MUSIC_SCAN_WORKERS`, Standard 4). Sampler bekommen Buchstabenordner nach dem Album
+(`sampler/B/Bravo Hits …`); gespeicherte Standard-Muster werden umgestellt, verschoben wird erst über „Aufräumen“.
 
 Update auf 0.2: Der nächste Scan liest einmal alle Dateien neu ein (neue Felder Bewertung und Herkunft) – das dauert je nach
 Sammlung eine Weile; Aufräum-Automatiken laufen erst nach einem vollständigen Scan.
@@ -133,5 +139,5 @@ MP3 wird als ID3v2.4 geschrieben (einstellbar). Planung und Anforderungen: [`Mus
 Push auf `main` baut `ghcr.io/avratny/musicwiz:latest`. Für eine Version ein Tag pushen:
 
 ```sh
-git tag v0.2.1 && git push origin v0.2.1   # → Image :0.2.1 und :0.2
+git tag v0.3.0 && git push origin v0.3.0   # → Image :0.3.0 und :0.3
 ```

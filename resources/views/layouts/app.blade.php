@@ -29,6 +29,7 @@
 
         @php
             $inboxCount = \App\Models\Album::where('location', 'inbox')->count();
+            app(\App\Support\InboxWatch::class)->ensure(); // Beobachter nach Neustart/Abbruch wieder anwerfen (wenn eingeschaltet)
             $ytActive = \App\Models\Operation::where('type', 'download')->whereIn('status', ['pending', 'running'])->get()->reject->isPlanned()->count();
             $nav = [
                 ['inbox', 'Inbox', 'M3 13h4l2 3h6l2-3h4M5 5h14l2 8v6H3v-6l2-8Z', $inboxCount],
@@ -40,6 +41,7 @@
             $more = [
                 ['artists', 'Künstler', 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 8a7 7 0 0 1 14 0', null],
                 ['cleanup', 'Aufräumen', 'M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.3 6.9L22 12l-6.7 2.1L13 21l-2.3-6.9L4 12l6.7-2.1z', null],
+                ['statistics', 'Statistik', 'M4 20V10M10 20V4M16 20v-7M22 20H2', null],
                 ['history', 'Verlauf', 'M3 12a9 9 0 1 0 3-6.7M3 4v5h5M12 7v5l3 2', null],
                 ['settings', 'Einstellungen', 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14.5 3h-4l-.4 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2Z', null],
             ];

@@ -178,7 +178,7 @@
                     @endforeach
                 </div>
                 @if ($categoryGuessed && $fields['category'] === $categoryGuessed)
-                    <p class="mt-1 text-xs text-zinc-500">Vorausgewählt: alle Titel haben denselben Künstler.</p>
+                    <p class="mt-1 text-xs text-zinc-500">Vorausgewählt: {{ $categoryGuessedReason }}</p>
                 @endif
                 @error('category')<p class="mt-1 text-sm text-red-400">{{ $message }}</p>@enderror
             </div>
@@ -204,7 +204,7 @@
                         <button wire:click="applyAlbumArtist(@js($albumArtistFix))" class="mt-1 text-xs text-blue-400 hover:underline">Schreibweise: {{ $albumArtistFix }} übernehmen</button>
                     @endif
                     @if ($vaWarning)
-                        <p class="mt-1 text-xs text-amber-300">„{{ $compilationArtist }}“ als Album-Interpret, aber die Kategorie ist keine Compilation.</p>
+                        <p class="mt-1 text-xs text-amber-300">„{{ $fields['albumartist'] }}“ ist ein Sampler-Album-Interpret, aber die Kategorie ist keine Compilation.</p>
                     @endif
                     @foreach ($albumArtistNew as $n)
                         <button wire:click="$dispatch('open-new-artist', { name: @js($n), album: {{ $album->id }} })" class="mt-1 mr-2 text-xs text-violet-300 hover:underline" title="Im Künstlerverzeichnis erfassen (MusicBrainz, Bild, Genre)">neu: {{ $n }} erfassen …</button>
@@ -292,9 +292,37 @@
                             @elseif (! $hit['suggestion'] && $hit['genres'])
                                 <span class="text-zinc-500">Genre ohne Zuordnung – in Einstellungen › Genre-Zuordnung pflegen.</span>
                             @endif
+                            @if (! empty($hit['mbid']))
+                                <button wire:click="compareTracklist({{ $loop->index }})" class="text-blue-400 hover:underline">
+                                    <span wire:loading.remove wire:target="compareTracklist({{ $loop->index }})">Titelliste vergleichen</span><span wire:loading wire:target="compareTracklist({{ $loop->index }})">lädt …</span>
+                                </button>
+                            @endif
                         </div>
                     </div>
                 @endforeach
+                @if ($tracklist)
+                    <div class="mt-2 rounded-lg border border-blue-500/30 bg-blue-500/5 p-2 text-xs">
+                        <div class="flex items-start gap-2">
+                            <div class="min-w-0 flex-1 text-zinc-200">MusicBrainz: {{ $tracklist['release'] }}</div>
+                            <a href="{{ $tracklist['url'] }}" target="_blank" rel="noopener" class="text-zinc-500 hover:text-white" title="Quelle öffnen">↗</a>
+                            <button wire:click="$set('tracklist', null)" class="text-zinc-500 hover:text-white">✕</button>
+                        </div>
+                        <div class="mt-1 text-zinc-400">{{ count($rows) }} von {{ $tracklist['count'] }} Titeln{{ ! $tracklist['missing'] && ! $tracklist['titles'] && ! $tracklist['numbers'] ? ' – alles passt.' : '' }}</div>
+                        @if ($tracklist['missing'])
+                            <div class="mt-1 text-amber-300">Es fehlen: {{ implode(' · ', array_slice($tracklist['missing'], 0, 20)) }}{{ count($tracklist['missing']) > 20 ? ' …' : '' }}</div>
+                        @endif
+                        @if ($tracklist['titles'])
+                            <div class="mt-1 text-zinc-300">Titel weichen ab:
+                                @foreach (array_slice($tracklist['titles'], 0, 8, true) as $i => $t)<div class="ml-2 text-zinc-400">{{ $rows[$i]['track'] }}. {{ $rows[$i]['title'] ?: '∅' }} → <span class="text-zinc-200">{{ $t }}</span></div>@endforeach
+                                @if (count($tracklist['titles']) > 8)<div class="ml-2 text-zinc-500">… und {{ count($tracklist['titles']) - 8 }} weitere</div>@endif
+                            </div>
+                            <button wire:click="applyTracklistTitles" class="mt-1 text-blue-400 hover:underline">{{ count($tracklist['titles']) }} Titel übernehmen</button>
+                        @endif
+                        @if ($tracklist['numbers'])
+                            <button wire:click="applyTracklistNumbers" class="mt-1 block text-blue-400 hover:underline">Nummern für {{ count($tracklist['numbers']) }} Titel ohne passende Nummer übernehmen</button>
+                        @endif
+                    </div>
+                @endif
                 @if ($lookupError)<p class="mt-1 text-xs text-amber-300">{{ $lookupError }}</p>@endif
             </div>
             @endif
@@ -312,6 +340,23 @@
                 @if ($hints && collect($hints)->contains('type', 'fix'))
                     <button wire:click="applyAllArtistCorrections" class="btn-ghost btn-sm text-blue-300">Alle Schreibweisen übernehmen</button>
                 @endif
+                @php
+                    $db = fn ($v) => $v === null || $v === '' ? null : str_replace(['-', '.'], ['−', ','], trim(preg_replace('/\s*db$/i', '', (string) $v))).' dB';
+                    $rgAlbum = collect($rows)->pluck('rg_album')->filter()->countBy()->sortDesc()->keys()->first();
+                    $rgCount = collect($rows)->pluck('rg')->filter()->count();
+                @endphp
+                <span class="flex items-center gap-2 text-zinc-500" title="ReplayGain: Lautstärke-Ausgleich (EBU R128, Bezug −18 LUFS). Messen dekodiert jeden Titel einmal komplett.">
+                    ReplayGain{{ $rgAlbum ? ': Album '.$db($rgAlbum) : '' }}{{ $rgCount && $rgCount < count($rows) ? ' ('.$rgCount.' von '.count($rows).')' : '' }}
+                    <button wire:click="measureReplaygain" class="btn-ghost btn-sm" @disabled($operation)>{{ $rgCount ? 'neu messen' : 'messen' }}</button>
+                    @if ($rgCount)<button wire:click="removeReplaygain" wire:confirm="ReplayGain aus allen Titeln dieses Albums entfernen? (rückgängig machbar)" class="btn-ghost btn-sm" @disabled($operation)>entfernen</button>@endif
+                </span>
+                @if ($hasAcoustid)
+                    <button wire:click="identifyTracks" class="btn-ghost btn-sm" title="Titel ohne Titel/Interpret (sonst alle, höchstens 25) per AcoustID am Klang erkennen – nur Vorschläge">
+                        <span wire:loading.remove wire:target="identifyTracks">Am Fingerabdruck erkennen</span><span wire:loading wire:target="identifyTracks">erkennt …</span>
+                    </button>
+                    @if (count($acoustid) > 1)<button wire:click="useAllAcoustid" class="btn-ghost btn-sm text-blue-300">Alle {{ count($acoustid) }} Vorschläge übernehmen</button>@endif
+                    @if ($acoustidError)<span class="text-amber-300">{{ $acoustidError }}</span>@endif
+                @endif
                 <span class="ml-auto flex items-center gap-2 text-zinc-500" title="Album bewerten – setzt alle Titel">
                     Album: <x-stars :value="collect($rows)->pluck('rating')->filter()->avg()" method="rateAlbum" :id="$album->id" />
                 </span>
@@ -327,6 +372,7 @@
                         <th class="th">Interpret</th>
                         @if ($perTrackGenres)<th class="th w-40">Genre</th>@endif
                         <th class="th w-16 text-right">Länge</th>
+                        <th class="th w-20 text-right" title="ReplayGain: Lautstärke-Ausgleich dieses Titels (Bezug −18 LUFS)">ReplayGain</th>
                         <th class="th w-28">Bewertung</th>
                         <th class="th w-10"></th>
                     </tr>
@@ -336,7 +382,7 @@
                         $discCounts = array_count_values(array_map(fn ($r) => (string) $r['disc'], $rows));
                         $showDiscHeaders = count($discCounts) > 1 || $album->discCount() > 1;
                         $prevDisc = null;
-                        $cols = $perTrackGenres ? 8 : 7;
+                        $cols = $perTrackGenres ? 9 : 8;
                     @endphp
                     @foreach ($rows as $i => $row)
                         @if ($showDiscHeaders && (string) $row['disc'] !== $prevDisc)
@@ -374,6 +420,9 @@
                             @endif
                             <td class="td">
                                 <input type="text" wire:model.blur="rows.{{ $i }}.title" class="input-sm">
+                                @if (isset($acoustid[$i]))
+                                    <button wire:click="useAcoustid({{ $i }})" class="mt-0.5 block text-left text-[11px] text-blue-400 hover:underline" title="AcoustID, Sicherheit {{ round($acoustid[$i]['score'] * 100) }} %{{ $acoustid[$i]['album'] ? ' · Album: '.$acoustid[$i]['album'] : '' }}">≈ {{ $acoustid[$i]['artist'] }} – {{ $acoustid[$i]['title'] }} ({{ round($acoustid[$i]['score'] * 100) }} %) übernehmen</button>
+                                @endif
                                 <div class="mt-0.5 flex items-center gap-2 truncate text-[11px] text-zinc-500" title="{{ $row['filename'] }}">
                                     <span class="truncate" title="{{ $row['filename'] }}">{{ $row['filename'] }}</span>
                                     @if (! $row['writable'])<span class="badge-amber">{{ $row['ext'] }}: nur lesen</span>@endif
@@ -410,6 +459,7 @@
                                 </td>
                             @endif
                             <td class="td text-right text-zinc-400 tabular-nums">{{ $row['duration'] }}</td>
+                            <td class="td text-right tabular-nums text-xs {{ $row['rg'] ? 'text-zinc-300' : 'text-zinc-600' }}" title="{{ $row['rg'] ? 'Titel: '.$db($row['rg']).($row['rg_album'] ? ' · Album: '.$db($row['rg_album']) : '') : 'Kein ReplayGain' }}">{{ $db($row['rg']) ?? '–' }}</td>
                             <td class="td">@if ($row['writable'])<x-stars :value="$row['rating'] ?? null" method="rateTrack" :id="$row['id']" />@endif</td>
                             <td class="td">
                                 <x-play-button :id="$row['id']" :seconds="$row['seconds'] ?? null" :title="$row['title']" :artist="$row['artist']" :album="$fields['album']" :cover="$album->coverUrl(120)" />

@@ -26,7 +26,7 @@ class SettingsBackup
 {
     public const FORMAT = 'musicwiz-backup';
 
-    public const SECRETS = ['discogs_token', 'fanart_key'];
+    public const SECRETS = ['discogs_token', 'fanart_key', 'acoustid_key'];
 
     /** Bereiche: Schlüssel => [Bezeichnung, Hinweis] */
     public const SECTIONS = [

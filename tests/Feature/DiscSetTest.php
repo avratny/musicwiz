@@ -73,7 +73,7 @@ class DiscSetTest extends TestCase
         $op = Operation::latest('id')->firstOrFail();
         $this->assertSame('done', $op->status, (string) $op->error);
 
-        $target = $this->base.'/library/sampler/Rock Years (1990)';
+        $target = $this->base.'/library/sampler/R/Rock Years (1990)';
         foreach (['1-01 - Artist Alpha - Alpha.mp3', '1-02 - Artist Beta - Beta.mp3', '2-01 - Artist Gamma - Gamma.mp3', '2-02 - Artist Delta - Delta.mp3', 'cover.jpg'] as $f) {
             $this->assertFileExists($target.'/'.$f);
         }
@@ -185,7 +185,7 @@ class DiscSetTest extends TestCase
         Livewire::test(AlbumEditor::class, ['album' => Album::whereNotNull('dirs')->firstOrFail()])
             ->set('fields.category', 'LIB COMPILATION')->call('preview', true)->call('confirm');
 
-        $target = $this->base.'/library/sampler/Hits (1990)';
+        $target = $this->base.'/library/sampler/H/Hits (1990)';
         $this->assertFileExists($target.'/cover.jpg');
         $this->assertFileDoesNotExist($target.'/cover (2).jpg');
         $this->assertFileExists($this->base.'/_papierkorb/inbox/Various/Hits [Disc 2]/Folder.jpg');

@@ -40,6 +40,15 @@ class Fingerprint
         }) ?: null;
     }
 
+    /** Abdruck im AcoustID-Format (komprimiert, Base64 – wie fpcalc); null, wenn nicht berechenbar. */
+    public function acoustid(string $path): ?string
+    {
+        $result = Process::timeout(120)->run(['ffmpeg', '-loglevel', 'error', '-i', $path, '-t', (string) self::SECONDS, '-f', 'chromaprint', '-fp_format', 'base64', '-']);
+        $fp = trim($result->output());
+
+        return $result->successful() && $fp !== '' ? $fp : null;
+    }
+
     /** Ähnlichkeit 0–1 (Anteil gleicher Bits bei bester Verschiebung); null, wenn ein Abdruck fehlt. */
     public function similarity(string $a, string $b): ?float
     {
