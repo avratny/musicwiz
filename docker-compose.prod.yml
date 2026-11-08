@@ -8,6 +8,7 @@ x-env: &env
   APP_URL: ${APP_URL:-http://localhost:8000}
   # Speichergrenze je PHP-Prozess (bei viel RAM z. B. 2G) und gleichzeitige Leseprozesse beim Scan
   PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
+  PHP_MAX_EXECUTION_TIME: ${PHP_MAX_EXECUTION_TIME:-120}
   MUSIC_SCAN_WORKERS: ${MUSIC_SCAN_WORKERS:-4}
   # Startwerte – gepflegt wird alles in der App unter Einstellungen
   MUSIC_BASE: /music

@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Jobs\RefreshCleanup;
 use App\Models\Album;
 use App\Models\PurchaseMark;
 use Illuminate\Support\Collection;
@@ -50,7 +51,9 @@ class FlacCandidates
      */
     public function incomplete(): Collection
     {
-        $missing = collect(app(CleanupChecks::class)->findings('incomplete'))
+        // fertigen Stand der Prüfung nehmen (nie im Seitenaufruf über die ganze Lib rechnen)
+        RefreshCleanup::request();
+        $missing = collect(app(CleanupChecks::class)->displayFindings('incomplete')[0])
             ->mapWithKeys(fn ($f) => [(int) substr($f['id'], 1) => $f['detail']]);
 
         return $this->items($missing->keys())->map(fn ($c) => ['missing' => $missing[$c['album']->id] ?? null] + $c);

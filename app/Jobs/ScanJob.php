@@ -22,7 +22,16 @@ class ScanJob implements ShouldQueue
 
     public function handle(Scanner $scanner, AutoCleanup $auto): void
     {
+        // noch in der Warteschlange abgebrochen: gar nicht erst anfangen
+        if ($scanner->cancelRequested()) {
+            $scanner->markCancelled();
+
+            return;
+        }
         $result = $scanner->scan($this->location, $this->allowMassRemoval);
+        if ($result['cancelled'] ?? false) {
+            return; // unvollständig: keine Automatiken, kein Vorberechnen
+        }
         // neue, noch unbekannte Künstler im Hintergrund nachschlagen (der Assistent ist dann sofort gefüllt)
         if ($this->location === 'library') {
             ArtistGroupAnalyzer::warm(); // „Neue Künstler erfassen“: sonst zahlt das der erste Klick

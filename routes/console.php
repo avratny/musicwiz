@@ -16,7 +16,13 @@ Artisan::command('musicwiz:scan {location : inbox, library oder blackhole} {--fo
         return 1;
     }
     $start = microtime(true);
+    Scanner::clearCancel();
     $result = $scanner->scan($location, (bool) $this->option('force'));
+    if ($result['cancelled'] ?? false) {
+        $this->warn('Abgebrochen (über die App) – Gelesenes bleibt, der nächste Scan macht weiter.');
+
+        return 1;
+    }
     $this->info(sprintf('%d Dateien, %d gelesen, %d entfernt (%.1fs)', $result['files'], $result['read'], $result['removed'], microtime(true) - $start));
     if ($result['held']) {
         $this->warn($result['held'].' bekannte Dateien fehlen und wurden nicht entfernt. Mit --force trotzdem entfernen.');

@@ -6,6 +6,9 @@
             <svg class="size-4 {{ ($scan['running'] ?? false) && $scan['location'] === 'inbox' ? 'animate-spin' : '' }}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v6h6M20 20v-6h-6M5.6 15a7 7 0 0 0 12.3 2M18.4 9A7 7 0 0 0 6.1 7"/></svg>
             Inbox scannen
         </button>
+        @if (($scan['running'] ?? false) && ($scan['location'] ?? null) === 'inbox')
+            <button wire:click="cancelScan" class="btn-ghost" @disabled(($scan['phase'] ?? '') === 'wird abgebrochen …') title="Bis dahin Gelesenes bleibt – der nächste Scan macht dort weiter">Abbrechen</button>
+        @endif
     </x-page-header>
 
     <div class="min-h-0 flex-1 overflow-y-auto p-6">

@@ -16,6 +16,12 @@
             <span class="text-amber-300/80">{{ implode(', ', array_slice($scan['unreadable'], 0, 5)) }}{{ count($scan['unreadable']) > 5 ? ' …' : '' }}</span>
         </div>
     @endif
+    @if (! empty($scan['cancelled']) && ($scan['location'] ?? null) === $location)
+        <div class="{{ $box }} rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+            Scan abgebrochen{{ ($scan['cancelled']['total'] ?? 0) ? ' nach '.$scan['cancelled']['read'].' von '.$scan['cancelled']['total'].' Dateien' : '' }}.
+            Bis dahin Gelesenes ist gespeichert; nichts wurde aus dem Index entfernt. Der nächste Scan macht dort weiter.
+        </div>
+    @endif
     @if (! empty($scan['auto_skipped']) && ($scan['location'] ?? null) === $location)
         <div class="{{ $box }} rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">{{ $scan['auto_skipped'] }}</div>
     @endif

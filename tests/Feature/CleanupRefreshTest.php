@@ -11,6 +11,7 @@ use App\Support\Settings;
 use App\Support\TagTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
@@ -20,6 +21,22 @@ use Tests\TestCase;
 class CleanupRefreshTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_without_any_state_the_page_computes_nothing(): void
+    {
+        Queue::fake(); // Worker ist beschäftigt (z. B. großer Scan)
+        Track::create(['location' => 'library', 'path' => '/m/a.Mp3', 'dir' => '/m', 'filename' => 'a.Mp3', 'ext' => 'mp3', 'duration' => 100]);
+
+        Livewire::test(Cleanup::class)->set('check', 'extension')
+            ->assertSee('Funde werden im Hintergrund berechnet')
+            ->assertSee('Wird berechnet')
+            ->assertDontSee('Keine Funde');
+        $this->assertFalse(Cache::has('cleanup.counts.'.app(CleanupChecks::class)->version()), 'im Seitenaufruf nichts berechnet');
+        Queue::assertPushed(RefreshCleanup::class);
+
+        (new RefreshCleanup)->handle();
+        Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('a.Mp3');
+    }
 
     public function test_stale_state_is_shown_locked_and_refreshed_in_background(): void
     {

@@ -65,7 +65,11 @@
                 <div class="shrink-0 px-6 pt-3">
                     <div class="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
                         <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
-                        Funde werden im Hintergrund aktualisiert – angezeigt wird der letzte Stand. Beheben geht wieder, sobald alles frisch ist.
+                        @if ($pending)
+                            Funde werden im Hintergrund berechnet{{ $scanRunning ? ' – startet, sobald der laufende Scan fertig ist' : '' }}. Die Seite aktualisiert sich von selbst.
+                        @else
+                            Funde werden im Hintergrund aktualisiert{{ $scanRunning ? ' (nach dem laufenden Scan)' : '' }} – angezeigt wird der letzte Stand. Beheben geht wieder, sobald alles frisch ist.
+                        @endif
                     </div>
                 </div>
             @endif
@@ -169,7 +173,7 @@
                             </div>
                         </div>
                     @empty
-                        <p class="py-12 text-center text-zinc-500">Keine Funde. 🎉</p>
+                        <p class="py-12 text-center text-zinc-500">{{ $pending ? 'Wird berechnet …' : 'Keine Funde. 🎉' }}</p>
                     @endforelse
                     @if ($check === 'electronic_sub' && $dismissedCount)
                         <div class="pt-3">

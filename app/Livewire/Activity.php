@@ -16,6 +16,11 @@ class Activity extends Component
     #[On('activity-changed')]
     public function refresh(): void {}
 
+    public function cancelScan(Scanner $scanner): void
+    {
+        $scanner->requestCancel();
+    }
+
     public function render(Scanner $scanner)
     {
         $scan = $scanner->status();

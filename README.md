@@ -48,6 +48,8 @@ Das Image wird bei jedem Push von GitHub Actions gebaut: `ghcr.io/avratny/musicw
    APP_URL=http://nas.local:8000
    # optional: Speichergrenze je PHP-Prozess (Standard 512M; bei viel RAM z. B. 2G)
    # PHP_MEMORY_LIMIT=512M
+   # optional: Zeitgrenze je Seitenaufruf in Sekunden (Standard 120; Scans und Aktionen laufen im Worker ohne Grenze)
+   # PHP_MAX_EXECUTION_TIME=120
    # optional: gleichzeitige Leseprozesse beim Scan (Standard 4)
    # MUSIC_SCAN_WORKERS=4
    ```
@@ -68,7 +70,7 @@ Ausnahmen lassen sich zusätzlich unter **Einstellungen → Sicherung** als Date
 
 In Dockge beim Stack **„Update“** (zieht das neueste Image und startet neu). Die Datenbank wird beim Start automatisch
 aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.3` (immer die neueste 0.3.x)
-bzw. `MUSICWIZ_TAG=0.3.2` setzen.
+bzw. `MUSICWIZ_TAG=0.3.3` setzen.
 
 Update auf 0.3: Der nächste Scan liest einmal alle Dateien neu ein (neue Felder ReplayGain und Songtext) – dank paralleler
 Leseprozesse schneller als bisher (`MUSIC_SCAN_WORKERS`, Standard 4). Sampler bekommen Buchstabenordner nach dem Album
@@ -144,5 +146,5 @@ MP3 wird als ID3v2.4 geschrieben (einstellbar). Planung und Anforderungen: [`Mus
 Push auf `main` baut `ghcr.io/avratny/musicwiz:latest`. Für eine Version ein Tag pushen:
 
 ```sh
-git tag v0.3.2 && git push origin v0.3.2   # → Image :0.3.2 und :0.3
+git tag v0.3.3 && git push origin v0.3.3   # → Image :0.3.3 und :0.3
 ```

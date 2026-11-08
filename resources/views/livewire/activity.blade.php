@@ -4,6 +4,9 @@
             <div class="flex items-center gap-2 font-medium text-blue-200">
                 <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
                 Scan {{ ['inbox' => 'Inbox', 'library' => 'Lib', 'blackhole' => 'Blackhole'][$scan['location']] ?? 'Lib' }} · {{ $scan['phase'] ?? '' }}
+                @if (($scan['phase'] ?? '') !== 'wird abgebrochen …')
+                    <button wire:click="cancelScan" class="ml-auto text-blue-300/80 hover:text-white" title="Scan abbrechen – Gelesenes bleibt, der nächste Scan macht dort weiter">Abbrechen</button>
+                @endif
             </div>
             @if (($scan['total'] ?? 0) > 0)
                 <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">

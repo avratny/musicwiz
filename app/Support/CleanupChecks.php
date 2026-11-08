@@ -148,21 +148,22 @@ class CleanupChecks
     }
 
     /**
-     * Funde zur Anzeige: aktuell, sonst der letzte fertige Stand derselben Prüfung; gibt es keinen, wird nur diese eine
-     * Prüfung jetzt berechnet.
+     * Funde zur Anzeige: aktuell, sonst der letzte fertige Stand derselben Prüfung. Gibt es noch keinen (z. B. direkt nach
+     * einem Update), wird hier nichts gerechnet – das macht der Hintergrund-Job; über die ganze Lib dauert eine Prüfung
+     * auf dem NAS sonst länger, als ein Seitenaufruf darf.
      *
-     * @return array{0: array, 1: bool} [Funde, veraltet]
+     * @return array{0: array, 1: bool, 2: bool} [Funde, veraltet, noch keine Funde berechnet]
      */
     public function displayFindings(string $key): array
     {
         $current = Cache::get($this->findingsKey($key, $this->version()));
         if ($current !== null) {
-            return [$current, false];
+            return [$current, false, false];
         }
         $last = Cache::get(self::LAST_VERSION);
         $stale = $last ? Cache::get($this->findingsKey($key, $last)) : null;
 
-        return $stale !== null ? [$stale, true] : [$this->findings($key), false];
+        return $stale !== null ? [$stale, true, false] : [[], true, true];
     }
 
     private function findingsKey(string $key, string $version): string

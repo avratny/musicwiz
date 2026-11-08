@@ -13,6 +13,7 @@ use App\Support\FileOps;
 use App\Support\Integrity;
 use App\Support\OperationRunner;
 use App\Support\Quality;
+use App\Support\Scanner;
 use App\Support\Settings;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
@@ -213,7 +214,7 @@ class Cleanup extends Component
             $fresh = $checks->isFresh(); // synchrone Warteschlange (Tests): schon fertig
         }
         $checks->withDismissed = in_array($this->check, ['duplicates', 'electronic_sub'], true) && $this->showDismissed;
-        [$all, $staleList] = $checks->withDismissed ? [$checks->findings($this->check), false] : $checks->displayFindings($this->check);
+        [$all, $staleList, $pending] = $checks->withDismissed && $fresh ? [$checks->findings($this->check), false, false] : $checks->displayFindings($this->check);
         $dismissed = array_values(array_filter($all, fn ($f) => $f['dismissed'] ?? false));
         $findings = array_values(array_filter($all, fn ($f) => ! ($f['dismissed'] ?? false)));
         foreach ($findings as $f) {
@@ -229,6 +230,8 @@ class Cleanup extends Component
             'counts' => $checks->displayCounts(),
             // veraltet: Liste/Anzahlen vom letzten Stand, Beheben gesperrt bis zur Neuberechnung
             'stale' => ! $fresh || $staleList,
+            'pending' => $pending,
+            'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),
             'openBefore' => $checks->openBefore($this->check),
             'step' => CleanupChecks::stepOf($this->check),
             'active' => $active,

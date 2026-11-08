@@ -30,8 +30,9 @@ RUN groupadd -o -g ${PGID} app && useradd -o -u ${PUID} -g ${PGID} -m app \
     && chown -R app:app /data /config /app /usr/local/bin/yt-dlp
 
 # Speichergrenze je PHP-Prozess (Aufräumen über die ganze Lib braucht bei ~15.000 Titeln gut 200 MB); per .env änderbar
-ENV PHP_MEMORY_LIMIT=512M
-RUN echo 'memory_limit = ${PHP_MEMORY_LIMIT}' > "$PHP_INI_DIR/conf.d/musicwiz.ini"
+# Zeitgrenze je Seitenaufruf als Sicherheitsnetz (lange Arbeiten laufen im Hintergrund-Worker ohne Grenze)
+ENV PHP_MEMORY_LIMIT=512M PHP_MAX_EXECUTION_TIME=120
+RUN printf 'memory_limit = ${PHP_MEMORY_LIMIT}\nmax_execution_time = ${PHP_MAX_EXECUTION_TIME}\n' > "$PHP_INI_DIR/conf.d/musicwiz.ini"
 
 ENV SERVER_NAME=":8080"
 WORKDIR /app

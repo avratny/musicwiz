@@ -17,6 +17,40 @@ class Scanner
 {
     public const STATUS_KEY = 'musicwiz.scan';
 
+    /** Abbruch angefordert (wird zwischen zwei Ordnern bzw. Lesepaketen geprüft) */
+    public const CANCEL_KEY = 'musicwiz.scan.cancel';
+
+    /** Scan abbrechen: bis dahin Gelesenes bleibt, der nächste Scan macht dort weiter. */
+    public function requestCancel(): void
+    {
+        if ($this->status()['running'] ?? false) {
+            Cache::put(self::CANCEL_KEY, true, now()->addHours(6));
+            $this->status(['phase' => 'wird abgebrochen …']);
+        }
+    }
+
+    public function cancelRequested(): bool
+    {
+        return Cache::has(self::CANCEL_KEY);
+    }
+
+    /** Vor einem neuen Scan: alte Abbruch-Anforderung vergessen. */
+    public static function clearCancel(): void
+    {
+        Cache::forget(self::CANCEL_KEY);
+    }
+
+    /** Status nach einem Abbruch (Index unvollständig: nichts entfernt, keine Automatiken). */
+    public function markCancelled(int $read = 0, int $total = 0): array
+    {
+        self::clearCancel();
+        $result = ['files' => 0, 'read' => $read, 'removed' => 0, 'held' => 0, 'unreadable' => 0, 'cancelled' => true];
+        $this->status(['running' => false, 'phase' => 'abgebrochen', 'finished_at' => now()->toIso8601String(), 'result' => $result,
+            'cancelled' => ['read' => $read, 'total' => $total]]);
+
+        return $result;
+    }
+
     /** Dateien pro Lesepaket (werden auf mehrere Tag-Tool-Prozesse verteilt, siehe scan_workers) */
     private const BATCH = 80;
 
@@ -82,7 +116,7 @@ class Scanner
     public function scan(string $location, bool $allowMassRemoval = false): array
     {
         $this->status(['running' => true, 'location' => $location, 'phase' => 'Ordner lesen', 'done' => 0, 'total' => 0, 'started_at' => now()->toIso8601String(),
-            'error' => null, 'held' => null, 'unreadable' => null, 'auto_skipped' => null]);
+            'error' => null, 'held' => null, 'unreadable' => null, 'auto_skipped' => null, 'cancelled' => null]);
 
         // Fehlt eine Wurzel, unter der schon Dateien erfasst sind (Share weg, Mount fehlt), nichts anfassen
         foreach ($this->configuredRoots() as $root) {
@@ -97,8 +131,14 @@ class Scanner
         $this->unreadable = [];
         $this->coverNames = [];
         $this->dirPause = $this->throttle() / 2;
-        foreach ($roots as $root) {
-            $this->walk($root, $files, $leftovers);
+        try {
+            foreach ($roots as $root) {
+                $this->walk($root, $files, $leftovers);
+            }
+        } catch (ScanCancelled) {
+            $this->dirPause = 0;
+
+            return $this->markCancelled(); // beim Durchgehen der Ordner: noch nichts geändert
         }
         $this->dirPause = 0;
 
@@ -115,8 +155,19 @@ class Scanner
         $throttle = $this->throttle();
         $total = count($changed);
         $this->status(['phase' => 'Tags lesen', 'total' => $total, 'files' => count($files)]);
+        $readDirs = [];
         foreach (array_chunk($changed, self::BATCH) as $i => $chunk) {
+            if ($this->cancelRequested()) {
+                // Gelesenes behalten und dafür Alben bilden; nichts entfernen (Index unvollständig)
+                $this->status(['phase' => 'Alben bilden (abgebrochen)']);
+                $this->rebuildAlbums(null, array_keys($readDirs));
+
+                return $this->markCancelled(min($total, $i * self::BATCH), $total);
+            }
             $this->store($location, $this->reader->readMany($chunk), $files);
+            foreach ($chunk as $p) {
+                $readDirs[dirname($p)] = true;
+            }
             $this->status(['done' => min($total, ($i + 1) * self::BATCH), 'current' => basename(dirname(end($chunk)))]);
             if ($throttle) {
                 usleep($throttle * count($chunk));
@@ -142,6 +193,7 @@ class Scanner
 
         $this->coverNames = [];
 
+        self::clearCancel(); // kam der Abbruch erst ganz am Ende, ist der Scan trotzdem vollständig
         $result = ['files' => count($files), 'read' => $total, 'removed' => count($gone), 'held' => $held['count'] ?? 0, 'unreadable' => count($this->unreadable)];
         $this->status(['running' => false, 'phase' => 'fertig', 'finished_at' => now()->toIso8601String(), 'result' => $result,
             'held' => $held, 'unreadable' => $this->unreadable ? array_slice($this->unreadable, 0, 20) : null]);
@@ -275,6 +327,9 @@ class Scanner
         }
         if ($this->dirPause) {
             usleep($this->dirPause);
+        }
+        if ($this->cancelRequested()) {
+            throw new ScanCancelled;
         }
         $this->coverNames[$dir] = array_values(array_filter($entries, fn ($e) => (bool) preg_match('/^(cover|folder|front)\./i', $e)));
         $content = false;

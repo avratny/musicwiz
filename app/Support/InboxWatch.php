@@ -55,6 +55,7 @@ class InboxWatch
             Cache::forever(self::SIGNATURE, $signature);
             // beim allerersten Durchgang nur merken – sonst würde jedes Einschalten einen Scan auslösen
             if ($previous !== null) {
+                Scanner::clearCancel();
                 $this->scanner->status(['running' => true, 'location' => 'inbox', 'phase' => 'wartet', 'done' => 0, 'total' => 0, 'error' => null, 'held' => null, 'unreadable' => null]);
                 ScanJob::dispatch('inbox');
             }
