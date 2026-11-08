@@ -126,7 +126,9 @@
 
     @if ($blackhole && ($openAlbum ?? null))
         {{-- Blackhole: Titelliste statt Editor --}}
-        <div class="fixed inset-0 z-40 grid place-items-center bg-black/60 p-6" wire:click.self="$set('open', null)" x-data x-on:keydown.escape.window="$wire.set('open', null)">
+        <div class="fixed inset-0 z-40 grid place-items-center bg-black/60 p-6" x-data="{ downOutside: false }" x-on:keydown.escape.window="$wire.set('open', null)"
+             x-on:mousedown.self="downOutside = true" x-on:click.self="if (downOutside) $wire.set('open', null); downOutside = false"
+             x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="card flex max-h-full w-full max-w-3xl flex-col overflow-hidden">
                 <div class="flex items-center gap-4 border-b border-zinc-800 p-4">
                     <x-cover :url="$openAlbum->coverUrl(120)" class="size-16 shrink-0 rounded-lg" />

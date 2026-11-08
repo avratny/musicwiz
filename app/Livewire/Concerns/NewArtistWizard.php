@@ -44,6 +44,12 @@ trait NewArtistWizard
 
     public ?string $wizImage = null;
 
+    /** Bild per URL (eigene Quelle neben Deezer/Fanart/Discogs) */
+    public string $wizImageUrl = '';
+
+    /** Per URL geladene Bilder: bleiben beim „Neu suchen“ erhalten */
+    public array $wizCustomImages = [];
+
     public string $wizGenre = '';
 
     /** Genre-Vorschläge: [{source, genre, detail}] aus Bestand, MusicBrainz, Discogs */
@@ -190,7 +196,7 @@ trait NewArtistWizard
     {
         $this->wizName = $name;
         $this->wizFinal = (string) $name;
-        $this->wizMb = $this->wizDiscogs = $this->wizImages = $this->wizErrors = $this->wizGenres = $this->wizMbAliases = $this->wizTake = [];
+        $this->wizMb = $this->wizDiscogs = $this->wizImages = $this->wizCustomImages = $this->wizErrors = $this->wizGenres = $this->wizMbAliases = $this->wizTake = [];
         $this->wizMbid = $this->wizDiscogsId = $this->wizImage = null;
         $this->wizGenre = '';
         $this->wizLoaded = false;
@@ -347,7 +353,7 @@ trait NewArtistWizard
                 $this->wizErrors[] = $label.': '.$e->getMessage();
             }
         }
-        $this->wizImages = array_slice($this->wizImages, 0, 12);
+        $this->wizImages = array_merge($this->wizCustomImages, array_slice($this->wizImages, 0, 12));
         if ($this->wizImage && ! in_array($this->wizImage, array_column($this->wizImages, 'url'), true)) {
             $this->wizImage = null;
         }
@@ -363,6 +369,29 @@ trait NewArtistWizard
     {
         $this->wizDiscogsId = $this->wizDiscogsId === $id ? null : $id;
         $this->wizLoadGenres(false);
+    }
+
+    /** Bild von einer URL laden (geprüft und verkleinert wie ein Upload) und gleich auswählen. */
+    public function wizLoadImageUrl(Covers $covers): void
+    {
+        $this->resetErrorBag('wizImageUrl');
+        $url = trim($this->wizImageUrl);
+        if ($url === '') {
+            return;
+        }
+        try {
+            $file = $covers->download($url, 'tmp');
+        } catch (\Throwable $e) {
+            $this->addError('wizImageUrl', $e->getMessage());
+
+            return;
+        }
+        [$w, $h] = @getimagesize($file) ?: [0, 0];
+        $entry = ['url' => $url, 'thumb' => route('cover.tmp', ['f' => basename($file)]), 'source' => 'Eigene URL', 'size' => $w && $h ? $w.'×'.$h : '', 'file' => $file];
+        $this->wizCustomImages = [$entry, ...array_filter($this->wizCustomImages, fn ($c) => $c['url'] !== $url)];
+        $this->wizImages = [$entry, ...array_values(array_filter($this->wizImages, fn ($c) => $c['url'] !== $url))];
+        $this->wizImage = $url;
+        $this->wizImageUrl = '';
     }
 
     public function wizPickImage(int $i): void
@@ -402,7 +431,9 @@ trait NewArtistWizard
         }
         if ($this->wizImage && ! $artist->image) {
             try {
-                ArtistImages::store($artist, $covers->download($this->wizImage));
+                // per URL geladen: schon geprüfte Datei nehmen, sonst jetzt herunterladen
+                $file = collect($this->wizImages)->firstWhere('url', $this->wizImage)['file'] ?? null;
+                ArtistImages::store($artist, $file && is_file($file) ? $file : $covers->download($this->wizImage));
             } catch (\Throwable $e) {
                 $msg .= ' – Bild nicht gespeichert: '.$e->getMessage();
             }

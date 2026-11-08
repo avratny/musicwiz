@@ -10,7 +10,9 @@ use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\Track;
+use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
@@ -84,6 +86,40 @@ class NewArtistWizardTest extends TestCase
         $a = Artist::where('name', 'Taucher')->sole();
         $this->assertSame('beck', $a->mbid);
         $this->assertSame('Trance', $a->default_genre);
+    }
+
+    public function test_image_from_url_is_checked_shown_and_saved(): void
+    {
+        $images = storage_path('framework/testing/artist-images-'.bin2hex(random_bytes(4)));
+        app(Settings::class)->set(['artist_images' => $images]);
+        $img = imagecreatetruecolor(600, 500);
+        ob_start();
+        imagejpeg($img);
+        $jpeg = ob_get_clean();
+        Http::fake([
+            'example.com/taucher.jpg' => Http::response($jpeg),
+            'example.com/kein-bild' => Http::response('<html>'),
+            '*' => Http::response([], 404),
+        ]);
+
+        Livewire::test(Artists::class, ['tab' => 'unknown'])
+            ->set('wizLoaded', true)->set('wizDetailsLoaded', true) // Bildbereich erscheint nach Suche + „Details laden“
+            ->assertSee('oder Bild-URL einfügen')
+            ->set('wizImageUrl', 'https://example.com/kein-bild')->call('wizLoadImageUrl')->assertHasErrors('wizImageUrl')
+            ->set('wizImageUrl', 'https://example.com/taucher.jpg')->call('wizLoadImageUrl')->assertHasNoErrors()
+            ->assertSet('wizImage', 'https://example.com/taucher.jpg')
+            ->assertSet('wizImageUrl', '')
+            ->assertSee('Eigene URL')
+            ->call('wizFindImages') // „Neu suchen“ behält das eigene Bild
+            ->assertSet('wizImage', 'https://example.com/taucher.jpg')
+            ->call('wizSave');
+
+        $artist = Artist::where('name', 'Taucher')->sole();
+        $this->assertNotNull($artist->fresh()->image);
+        $this->assertFileExists($images.'/'.$artist->fresh()->image);
+        // Bild wurde beim Speichern nicht ein zweites Mal geladen
+        $this->assertSame(1, Http::recorded()->filter(fn ($r) => str_contains($r[0]->url(), 'taucher.jpg'))->count());
+        File::deleteDirectory($images);
     }
 
     public function test_changed_spelling_keeps_original_as_alias(): void

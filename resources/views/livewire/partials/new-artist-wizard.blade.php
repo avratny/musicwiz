@@ -217,8 +217,15 @@
                                 @endforeach
                             </div>
                         @else
-                            <p class="text-sm text-zinc-500">Keine Bilder gefunden. Eigenes Bild später im Verzeichnis hochladen.</p>
+                            <p class="text-sm text-zinc-500">Keine Bilder gefunden – eigenes Bild per URL laden oder später im Verzeichnis hochladen.</p>
                         @endif
+                        <div class="mt-3 flex items-center gap-2">
+                            <input type="url" wire:model="wizImageUrl" wire:keydown.enter="wizLoadImageUrl" placeholder="oder Bild-URL einfügen (https://…)" class="input-sm max-w-md flex-1 text-xs">
+                            <button wire:click="wizLoadImageUrl" class="btn-ghost btn-sm">
+                                <span wire:loading.remove wire:target="wizLoadImageUrl">Laden</span><span wire:loading wire:target="wizLoadImageUrl">lädt …</span>
+                            </button>
+                            @error('wizImageUrl')<span class="text-xs text-red-300">{{ $message }}</span>@enderror
+                        </div>
                     </section>
 
                     {{-- 5. Genre --}}

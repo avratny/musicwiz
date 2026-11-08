@@ -5,7 +5,6 @@ namespace App\Support;
 use App\Models\Album;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 
 /** Zahlen zur Lib (nur Bestand, nicht Inbox/Blackhole); zwischengespeichert, bis sich der Index ändert. */
 class Statistics
@@ -57,9 +56,7 @@ class Statistics
         }
 
         // FLAC-Kandidaten: Alben nur aus verlustbehafteten Dateien, nach Künstler
-        $lossy = DB::table('tracks')->where('location', 'library')->whereNotNull('album_id')
-            ->selectRaw("album_id, sum(case when ext in ('flac','wav','aiff','alac') then 1 else 0 end) as lossless")
-            ->groupBy('album_id')->having('lossless', 0)->pluck('album_id');
+        $lossy = FlacCandidates::albumIds();
         $candidates = Album::whereIn('id', $lossy)->where('is_compilation', false)->whereNotNull('folder_artist')
             ->selectRaw('folder_artist, count(*) as n')->groupBy('folder_artist')->orderByDesc('n')->limit(10)->pluck('n', 'folder_artist')->all();
 

@@ -70,7 +70,7 @@
             @endforeach
 
             <section class="card p-4 lg:col-span-2">
-                <h2 class="text-sm font-semibold text-zinc-200">Kandidaten für FLAC</h2>
+                <h2 class="flex items-center text-sm font-semibold text-zinc-200">Kandidaten für FLAC <a href="{{ route('flac-candidates') }}" wire:navigate class="ml-auto text-xs font-normal text-blue-400 hover:underline">alle ansehen →</a></h2>
                 <p class="text-xs text-zinc-500">{{ $fmt($s['mp3_albums']) }} Alben bestehen nur aus verlustbehafteten Dateien – die Künstler mit den meisten davon (ohne Sampler):</p>
                 <div class="mt-3 flex flex-wrap gap-2">
                     @forelse ($s['candidates'] as $artist => $n)

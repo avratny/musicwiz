@@ -21,6 +21,7 @@ Route::livewire('/aufraeumen', Livewire\Cleanup::class)->name('cleanup');
 Route::livewire('/aufraeumen/zeichen', Livewire\TextRepairAssistant::class)->name('text-repair');
 Route::livewire('/verlauf', Livewire\History::class)->name('history');
 Route::livewire('/statistik', Livewire\Statistics::class)->name('statistics');
+Route::livewire('/flac-kandidaten', Livewire\FlacCandidatesPage::class)->name('flac-candidates');
 Route::livewire('/einstellungen', Livewire\SettingsPage::class)->name('settings');
 
 Route::get('/media/cover/album/{album}', [MediaController::class, 'albumCover'])->name('cover.album');

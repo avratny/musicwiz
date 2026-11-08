@@ -37,6 +37,11 @@
                 </div>
                 <div><label class="label">Scan-Drosselung (ms pro Datei)</label><input type="number" wire:model="s.scan_throttle_ms" class="input"></div>
                 <div><label class="label">„Sehr kleines Cover“ unter (px)</label><input type="number" wire:model="s.small_cover_px" class="input"></div>
+                <div><label class="label">Qobuz-Shop (FLAC-Kandidaten)</label>
+                    <select wire:model="s.qobuz_store" class="input">
+                        @foreach (['de-de' => 'Deutschland', 'at-de' => 'Österreich', 'ch-de' => 'Schweiz (Deutsch)', 'fr-fr' => 'Frankreich', 'gb-en' => 'Großbritannien', 'us-en' => 'USA'] as $v => $label)<option value="{{ $v }}">{{ $label }}</option>@endforeach
+                    </select>
+                </div>
                 <div class="col-span-full">
                     <label class="flex items-center gap-2 text-sm"><input type="checkbox" wire:model="s.inbox_watch" class="size-4 rounded border-zinc-600 bg-zinc-800 text-violet-500"> Inbox beobachten</label>
                     <p class="mt-1 text-xs text-zinc-500">Prüft jede Minute, ob neue Dateien in der Inbox liegen, und liest sie dann ein. Es wird nur gelesen – eingeordnet wird weiter von Hand.</p>

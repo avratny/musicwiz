@@ -497,7 +497,9 @@
             $conflicts = collect($plan['rows'])->where('conflict', true)->count();
             $show = fn ($v) => is_array($v) ? implode(' ; ', $v) : (is_bool($v) ? ($v ? 'ja' : 'nein') : ($v === '' ? '∅' : $v));
         @endphp
-        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" wire:key="preview" x-data x-on:keydown.escape.window="$wire.closePreview()">
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" wire:key="preview" x-data="{ downOutside: false }" x-on:keydown.escape.window="$wire.closePreview()"
+             x-on:mousedown.self="downOutside = true" x-on:click.self="if (downOutside) $wire.closePreview(); downOutside = false"
+             x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center gap-3 border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: {{ $planMove ? ($isInbox ? 'Einordnen' : 'Speichern & verschieben') : 'Tags speichern' }}</h2>

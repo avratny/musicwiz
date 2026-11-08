@@ -44,6 +44,8 @@ return [
     // Inbox beobachten: neue Dateien automatisch einlesen (nur lesen) – standardmäßig aus
     'inbox_watch' => false,
     'inbox_watch_seconds' => 60,
+    // Qobuz-Shop für „Bei Qobuz suchen“ (Land-Sprache wie in der Qobuz-Adresse)
+    'qobuz_store' => env('QOBUZ_STORE', 'de-de'),
 
     'tagtool' => env('MUSIC_TAGTOOL', base_path('tools/tagtool.py')),
     // YouTube-Download (yt-dlp, braucht ffmpeg)

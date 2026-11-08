@@ -222,7 +222,9 @@
             $shown = array_slice($preview['actions'], 0, 300);
             $hasMoves = collect($preview['actions'])->contains(fn ($a) => in_array($a['type'], ['move', 'apply']) && ! empty($a['target']));
         @endphp
-        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data x-on:keydown.escape.window="$wire.set('preview', null)">
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data="{ downOutside: false }" x-on:keydown.escape.window="$wire.set('preview', null)"
+             x-on:mousedown.self="downOutside = true" x-on:click.self="if (downOutside) $wire.set('preview', null); downOutside = false"
+             x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: {{ $defs[$check][2] }} · {{ $preview['count'] }} Funde, {{ count($preview['actions']) }} Schritte</h2>
