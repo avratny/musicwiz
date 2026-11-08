@@ -130,6 +130,16 @@
                     </div>
                 </div>
             @endif
+            @if ($invertedArtists->isNotEmpty())
+                <div class="shrink-0 px-6 pt-3">
+                    <div class="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
+                        <span class="min-w-0 flex-1">Im Künstlerverzeichnis stehen {{ $invertedArtists->count() }} Einträge umgedreht ({{ $invertedArtists->take(4)->pluck('name')->implode(', ') }}{{ $invertedArtists->count() > 4 ? ' …' : '' }}) – zuerst dort richtig herum benennen, sonst dreht „Uneinheitliche Schreibweisen“ die Tags zurück.</span>
+                        <button wire:click="renameInvertedArtists" data-confirm-label="Umbenennen"
+                                wire:confirm="{{ $invertedArtists->count() }} Einträge im Künstlerverzeichnis richtig herum benennen (z. B. „{{ $invertedArtists->first()->name }}“ → „{{ \App\Support\ArtistNames::uninvert($invertedArtists->first()->name, true) }}“)? Der alte Name bleibt als Schreibweise, Bilder werden mit umbenannt. Gibt es den Namen schon, wird zusammengeführt."
+                                class="btn-primary btn-sm">Im Verzeichnis umbenennen ({{ $invertedArtists->count() }})</button>
+                    </div>
+                </div>
+            @endif
             @if ($splitNewArtists)
                 <div class="shrink-0 px-6 pt-3">
                     <div class="flex flex-wrap items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200">

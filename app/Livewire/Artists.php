@@ -222,30 +222,21 @@ class Artists extends Component
 
             return;
         }
-        $oldName = $a->name;
+        // Namensänderung: Bild mit umbenennen, alter Name wird Variante
+        if ($name !== $a->name) {
+            try {
+                $a = app(ArtistDirectory::class)->rename($a, $name);
+            } catch (\Throwable $e) {
+                $this->lookupError = 'Nicht umbenannt: '.$e->getMessage();
+
+                return;
+            }
+        }
         $a->fill([
-            'name' => $name,
             'mbid' => trim($this->form['mbid'] ?? '') ?: null,
             'discogs_id' => trim($this->form['discogs_id'] ?? '') ?: null,
             'default_genre' => ($this->form['default_genre'] ?? '') ?: null,
         ]);
-        // Namensänderung: Bild mit umbenennen, alter Name wird Variante
-        if ($oldName !== $name) {
-            if ($a->image) {
-                $dir = rtrim($settings->get('artist_images'), '/');
-                $newFile = self::imageFile($name, pathinfo($a->image, PATHINFO_EXTENSION));
-                try {
-                    $files->move($dir.'/'.$a->image, $dir.'/'.$newFile, 'number');
-                    $a->image = $newFile;
-                } catch (\Throwable $e) {
-                    $this->lookupError = 'Bild nicht umbenannt: '.$e->getMessage();
-                }
-            }
-            if (! ArtistAlias::where('alias', $oldName)->exists()) {
-                $a->aliases()->create(['alias' => $oldName]);
-            }
-            ArtistAlias::where('artist_id', $a->id)->where('alias', $name)->delete();
-        }
         $a->save();
         session()->flash('status', 'Gespeichert.');
     }

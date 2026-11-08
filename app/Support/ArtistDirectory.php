@@ -6,6 +6,7 @@ use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\RejectedAlias;
 use App\Models\Track;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -26,7 +27,7 @@ class ArtistDirectory
 
     public function flush(): void
     {
-        $this->exact = $this->byKey = $this->ambiguous = $this->names = null;
+        $this->exact = $this->byKey = $this->ambiguous = $this->names = $this->invertMode = null;
         ArtistNames::flushProtected();
     }
 
@@ -87,15 +88,32 @@ class ArtistDirectory
         }
         $hit = $this->exact[mb_strtolower($name)] ?? null;
         if ($hit !== null) {
+            $hit = $this->preferred($hit);
+
             return ['status' => $hit === $name ? 'ok' : 'variant', 'canonical' => $hit];
         }
         $key = ArtistNames::compareKey($name);
         if ($key !== '' && isset($this->byKey[$key])) {
-            return ['status' => 'similar', 'canonical' => $this->byKey[$key]];
+            $canonical = $this->preferred($this->byKey[$key]);
+
+            return ['status' => $canonical === $name ? 'ok' : 'similar', 'canonical' => $canonical];
         }
 
         return ['status' => 'new', 'canonical' => null];
     }
+
+    /**
+     * Richtige Schreibweise laut Einstellung „Umgedrehte Namen“: steht im Verzeichnis noch „Coasters, The“, gilt
+     * „The Coasters“ – so widersprechen sich „Umgedrehte Namen“ und „Uneinheitliche Schreibweisen“ (und Ordnernamen) nie.
+     */
+    private function preferred(string $canonical): string
+    {
+        $this->invertMode ??= (string) ($this->settings->get('invert_names') ?: 'articles');
+
+        return $this->invertMode === 'off' ? $canonical : (ArtistNames::uninvert($canonical, $this->invertMode === 'persons') ?? $canonical);
+    }
+
+    private ?string $invertMode = null;
 
     /**
      * Personen zu einem mehrdeutigen Grundnamen (leer, wenn der Name eindeutig ist).
@@ -391,6 +409,61 @@ class ArtistDirectory
         $this->flush();
 
         return $added;
+    }
+
+    /**
+     * Eintrag umbenennen: alter Name wird Schreibweise, Bild wird mit umbenannt. Gibt es den neuen Namen schon als
+     * eigenen Eintrag, geht dieser Eintrag darin auf (wie „Ist derselbe wie …“).
+     *
+     * @return Artist der Eintrag, der danach den Namen trägt
+     */
+    public function rename(Artist $artist, string $name): Artist
+    {
+        $name = trim($name);
+        if ($name === '' || $name === $artist->name) {
+            return $artist;
+        }
+        $existing = Artist::where('name', $name)->where('id', '!=', $artist->id)->first();
+        if ($existing) {
+            $this->merge($existing, [$artist->id]);
+
+            return $existing->refresh();
+        }
+        $oldName = $artist->name;
+        DB::transaction(function () use ($artist, $name, $oldName) {
+            if ($artist->image) {
+                $dir = rtrim((string) $this->settings->get('artist_images'), '/');
+                $newFile = ArtistImages::fileName($name, pathinfo($artist->image, PATHINFO_EXTENSION));
+                if (is_file($dir.'/'.$artist->image)) {
+                    $artist->image = basename(app(FileOps::class)->move($dir.'/'.$artist->image, $dir.'/'.$newFile, 'number'));
+                }
+            }
+            $artist->name = $name;
+            $artist->save();
+            if (! ArtistAlias::where('alias', $oldName)->exists() && mb_strtolower($oldName) !== mb_strtolower($name)) {
+                $artist->aliases()->create(['alias' => $oldName]);
+            }
+            ArtistAlias::where('artist_id', $artist->id)->where('alias', $name)->delete();
+        });
+        $this->flush();
+
+        return $artist;
+    }
+
+    /**
+     * Verzeichnis-Einträge in Sortierschreibweise („Coasters, The“) laut Einstellung „invert_names“.
+     *
+     * @return Collection<int, Artist>
+     */
+    public function invertedEntries()
+    {
+        $mode = (string) ($this->settings->get('invert_names') ?: 'articles');
+        if ($mode === 'off') {
+            return collect();
+        }
+
+        return Artist::whereNull('base_name')->orderBy('name')->get()
+            ->filter(fn (Artist $a) => ArtistNames::uninvert($a->name, $mode === 'persons') !== null)->values();
     }
 
     /**

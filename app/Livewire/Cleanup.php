@@ -275,6 +275,23 @@ class Cleanup extends Component
         $this->done = '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt. In die Dateien schreibt das „Kombi-Interpreten ohne ARTISTS“ (Schritt 2).';
     }
 
+    /** „Umgedrehte Namen“: Verzeichnis-Einträge richtig herum benennen (alter Name wird Schreibweise). */
+    public function renameInvertedArtists(ArtistDirectory $directory): void
+    {
+        $persons = app(Settings::class)->get('invert_names') === 'persons';
+        $done = [];
+        foreach ($directory->invertedEntries() as $artist) {
+            $to = ArtistNames::uninvert($artist->name, $persons);
+            if ($to !== null) {
+                $from = $artist->name;
+                $directory->rename($artist, $to);
+                $done[] = '„'.$from.'“ → „'.$to.'“';
+            }
+        }
+        RefreshCleanup::request();
+        $this->done = $done ? 'Im Verzeichnis umbenannt: '.implode(', ', array_slice($done, 0, 8)).(count($done) > 8 ? ' … ('.count($done).')' : '').'. Die Tags schreibt „Richtig herum schreiben“.' : null;
+    }
+
     /** Künstler im Dialog erfasst (z. B. „Simon & Garfunkel“ als ein Künstler): Funde neu berechnen lassen. */
     #[On('artist-directory-changed')]
     public function directoryChanged(): void
@@ -346,6 +363,7 @@ class Cleanup extends Component
             'countsStale' => ! $fresh,
             'pending' => $pending,
             'splitStatus' => $this->split ? $this->splitPartStatus() : [],
+            'invertedArtists' => $this->check === 'inverted' ? app(ArtistDirectory::class)->invertedEntries() : collect(),
             'looseCount' => $looseCount,
             'progress' => $fresh ? null : CleanupChecks::progress(),
             'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),

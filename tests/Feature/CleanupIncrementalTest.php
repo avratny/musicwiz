@@ -4,9 +4,12 @@ namespace Tests\Feature;
 
 use App\Jobs\RefreshCleanup;
 use App\Jobs\RunOperation;
+use App\Livewire\Cleanup;
 use App\Livewire\SettingsPage;
 use App\Models\Album;
+use App\Models\Artist;
 use App\Models\Track;
+use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
 use App\Support\CleanupChecks;
 use App\Support\OperationRunner;
@@ -14,6 +17,7 @@ use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
@@ -124,5 +128,68 @@ class CleanupIncrementalTest extends TestCase
         app(Settings::class)->set(['invert_names' => 'off']);
         $this->assertSame([], app()->make(CleanupChecks::class)->findings('inverted'));
         Livewire::test(SettingsPage::class)->assertSee('Umgedrehte Namen');
+    }
+
+    public function test_inverted_directory_entries_are_renamed(): void
+    {
+        $images = storage_path('framework/testing/inv-'.bin2hex(random_bytes(4)));
+        File::ensureDirectoryExists($images);
+        file_put_contents($images.'/Coasters, The.jpg', 'bild');
+        app(Settings::class)->set(['base' => '/music', 'artist_images' => $images, 'trash' => $images.'/_papierkorb']);
+        $coasters = Artist::create(['name' => 'Coasters, The', 'image' => 'Coasters, The.jpg']);
+        Artist::create(['name' => 'Crystals, The', 'mbid' => 'crystals']);
+        $right = Artist::create(['name' => 'The Crystals']);
+        $this->album('Coasters, The', 'Yakety Yak', [[]]);
+
+        // schon vor dem Umbenennen gilt die richtig herum gedrehte Form (kein Hin und Her mit „Schreibweisen“)
+        $this->assertSame(['status' => 'variant', 'canonical' => 'The Coasters'], app(ArtistDirectory::class)->check('Coasters, The'));
+        $page = Livewire::test(Cleanup::class)->set('check', 'inverted')
+            ->assertSee('Im Verzeichnis umbenennen (2)')
+            ->call('renameInvertedArtists')
+            ->assertSee('„Coasters, The“ → „The Coasters“');
+
+        $coasters->refresh();
+        $this->assertSame('The Coasters', $coasters->name);
+        $this->assertSame('The Coasters.jpg', $coasters->image);
+        $this->assertFileExists($images.'/The Coasters.jpg');
+        $this->assertSame(['Coasters, The'], $coasters->aliases()->pluck('alias')->all());
+        // „The Crystals“ gab es schon: zusammengeführt, ID übernommen
+        $this->assertFalse(Artist::where('name', 'Crystals, The')->exists());
+        $this->assertSame('crystals', $right->fresh()->mbid);
+        $this->assertSame(['status' => 'variant', 'canonical' => 'The Coasters'], app(ArtistDirectory::class)->check('Coasters, The'));
+        $page->assertDontSee('Im Verzeichnis umbenennen');
+        File::deleteDirectory($images);
+    }
+
+    public function test_inverted_and_spelling_never_ping_pong(): void
+    {
+        app(Settings::class)->set(['base' => '/music']);
+        Artist::create(['name' => 'Coasters, The']); // Verzeichnis noch umgedreht
+        $album = $this->album('Coasters, The', 'Yakety Yak', [[], []]);
+
+        $checks = fn () => app()->make(CleanupChecks::class);
+        $inverted = $checks()->findings('inverted');
+        $this->assertSame('The Coasters', $inverted[0]['actions'][0]['tags']['artist']);
+        // „Uneinheitliche Schreibweisen“ will dasselbe – nicht zurück auf „Coasters, The“
+        foreach ($checks()->findings('spelling') as $f) {
+            foreach ($f['actions'] as $a) {
+                $this->assertStringNotContainsString('Coasters, The', json_encode($a['tags'] ?? [], JSON_UNESCAPED_UNICODE));
+            }
+        }
+
+        // „Richtig herum schreiben“ angewendet → keine der beiden Prüfungen meldet noch etwas
+        Carbon::setTestNow(now()->addMinute());
+        Track::where('album_id', $album->id)->update(['artist' => 'The Coasters', 'albumartist' => 'The Coasters']);
+        $this->assertSame([], $checks()->findings('inverted'));
+        $this->assertSame([], $checks()->findings('spelling'));
+        $this->assertSame(['status' => 'ok', 'canonical' => 'The Coasters'], app(ArtistDirectory::class)->check('The Coasters'));
+        // Ordner richtet sich nach „The Coasters“
+        $target = collect($checks()->findings('misplaced'))->flatMap(fn ($f) => $f['actions'])->pluck('target')->filter()->first();
+        $this->assertStringContainsString('/T/The Coasters/', (string) $target);
+
+        // Einstellung „aus“: Verzeichnis-Schreibweise gilt wieder
+        app(Settings::class)->set(['invert_names' => 'off']);
+        app()->forgetInstance(ArtistDirectory::class);
+        $this->assertSame('Coasters, The', app(ArtistDirectory::class)->check('The Coasters')['canonical']);
     }
 }
