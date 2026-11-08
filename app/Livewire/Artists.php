@@ -9,6 +9,7 @@ use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\RejectedAlias;
 use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistGenreSuggestions;
@@ -22,6 +23,7 @@ use App\Support\Homonyms;
 use App\Support\Lookup;
 use App\Support\OperationRunner;
 use App\Support\Settings;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Title;
@@ -68,6 +70,13 @@ class Artists extends Component
     public array $form = [];
 
     public string $newAlias = '';
+
+    /** „Ist derselbe wie …“: Auswahl offen, Suchtext, angehakte Einträge */
+    public bool $mergeOpen = false;
+
+    public string $mergeQ = '';
+
+    public array $mergeIds = [];
 
     public array $mbResults = [];
 
@@ -127,7 +136,9 @@ class Artists extends Component
     public function select(int $id): void
     {
         $this->selected = $id;
-        $this->splitOpen = false;
+        $this->splitOpen = $this->mergeOpen = false;
+        $this->mergeQ = '';
+        $this->mergeIds = [];
         $this->splitPersons = $this->assign = $this->mbSuggest = [];
         $this->assignPreview = $this->splitError = null;
         $this->resetLookup();
@@ -285,6 +296,49 @@ class Artists extends Component
         session()->flash('status', $n ? $n.' Künstler haben jetzt ein Standard-Genre aus dem Bestand.' : 'Kein Künstler ohne Standard-Genre mit passenden Liedern.');
     }
 
+    /** „Ist derselbe wie …“: angehakte Einträge gehen im gewählten Künstler auf (er bleibt der richtige Name). */
+    public function merge(ArtistDirectory $directory): void
+    {
+        $target = Artist::find($this->selected);
+        $ids = array_map('intval', array_filter($this->mergeIds));
+        if (! $target || ! $ids) {
+            return;
+        }
+        $result = $directory->merge($target, $ids);
+        $msg = $result['merged']
+            ? '„'.implode('“, „', $result['merged']).'“ '.(count($result['merged']) === 1 ? 'ist' : 'sind').' jetzt Schreibweise von „'.$target->name.'“. Die Dateien gleicht Aufräumen → „Uneinheitliche Interpreten-Schreibweisen“ an.'
+            : 'Nichts zusammengeführt.';
+        if ($result['skipped']) {
+            $msg .= ' Ausgelassen (gleichnamige Person, bewusst getrennt): „'.implode('“, „', $result['skipped']).'“.';
+        }
+        session()->flash('status', $msg);
+        $this->mergeOpen = false;
+        $this->mergeQ = '';
+        $this->mergeIds = [];
+        $this->fillForm();
+    }
+
+    /**
+     * Einträge zur Auswahl: mit Suchtext danach gefiltert (Name oder Schreibweise), sonst ähnliche Namen zuerst.
+     *
+     * @return Collection<int, Artist>
+     */
+    private function mergeCandidates(Artist $target)
+    {
+        $query = Artist::where('id', '!=', $target->id)->whereNull('base_name')->withCount('aliases');
+        $q = trim($this->mergeQ);
+        if ($q !== '') {
+            return $query->where(fn ($w) => $w->where('name', 'like', '%'.$q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$q.'%')))
+                ->orderByRaw('name COLLATE NOCASE')->limit(40)->get();
+        }
+        $key = (string) $target->compare_key;
+
+        return $query->get()->filter(fn (Artist $a) => $a->compare_key === $key
+            || (strlen($key) >= 4 && abs(strlen($a->compare_key) - strlen($key)) <= 3 && levenshtein($key, (string) $a->compare_key) <= (strlen($key) > 10 ? 3 : 2))
+            || (strlen($key) >= 4 && (str_contains((string) $a->compare_key, $key) || str_contains($key, (string) $a->compare_key))))
+            ->sortBy(fn (Artist $a) => levenshtein($key, (string) $a->compare_key))->take(20)->values();
+    }
+
     public function deleteArtist(): void
     {
         Artist::whereKey($this->selected)->delete();
@@ -308,12 +362,24 @@ class Artists extends Component
         }
         $this->resetErrorBag('newAlias');
         ArtistAlias::updateOrCreate(['alias' => $alias], ['artist_id' => $a->id]);
+        RejectedAlias::forget($a->id, $alias); // von Hand wieder eingetragen: nicht mehr abgelehnt
         $this->newAlias = '';
     }
 
+    /** Schreibweise löschen und merken – sonst trägt das nächste Holen von MusicBrainz sie wieder ein. */
     public function removeAlias(int $id): void
     {
-        ArtistAlias::whereKey($id)->delete();
+        $alias = ArtistAlias::find($id);
+        if ($alias) {
+            RejectedAlias::remember($alias->artist_id, $alias->alias);
+            $alias->delete();
+        }
+    }
+
+    /** Abgelehnte Schreibweise wieder zulassen (beim nächsten Holen darf MusicBrainz sie eintragen). */
+    public function allowAlias(int $id): void
+    {
+        RejectedAlias::whereKey($id)->delete();
     }
 
     // ---------------------------------------------------------------- Nachschlagen
@@ -738,7 +804,8 @@ class Artists extends Component
                 ->when($this->q !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%'))));
             $data['artistTotal'] = (clone $query)->count();
             $data['artists'] = $query->withCount('aliases')->orderByRaw('name COLLATE NOCASE')->limit($this->artistLimit)->get();
-            $data['artist'] = $this->selected ? Artist::with('aliases')->find($this->selected) : null;
+            $data['artist'] = $this->selected ? Artist::with(['aliases', 'rejectedAliases'])->find($this->selected) : null;
+            $data['mergeCandidates'] = $data['artist'] && $this->mergeOpen ? $this->mergeCandidates($data['artist']) : collect();
             $data['genreSuggestion'] = $data['artist'] ? $genres->suggestForArtist($data['artist']) : null;
             $data['artistTracks'] = $data['artist'] ? $this->sampleTracks($data['artist']) : [];
             // ohne Lieder im Bestand: Hinweis, ob welche noch in der Inbox liegen (zählen erst nach dem Einordnen)

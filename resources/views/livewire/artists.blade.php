@@ -21,7 +21,7 @@
                     <button wire:click="create" class="btn-primary btn-sm">+</button>
                 </div>
                 @if ($withoutGenre)
-                    <button wire:click="fillDefaultGenres" wire:confirm="Für {{ $withoutGenre }} Künstler ohne Standard-Genre den Vorschlag aus dem Bestand übernehmen? Vorhandene Einträge bleiben unverändert."
+                    <button wire:click="fillDefaultGenres" data-confirm-label="Übernehmen" wire:confirm="Für {{ $withoutGenre }} Künstler ohne Standard-Genre den Vorschlag aus dem Bestand übernehmen? Vorhandene Einträge bleiben unverändert."
                             class="mx-3 mt-2 rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-white">
                         Standard-Genre aus Bestand für {{ $withoutGenre }} Künstler ohne Genre
                     </button>
@@ -84,7 +84,7 @@
                             @if ($artist->image)
                                 <div class="flex items-center gap-2">
                                     <p class="min-w-0 flex-1 truncate text-xs text-zinc-500" title="{{ $artist->image }}">{{ $artist->image }}</p>
-                                    <button wire:click="removeImage" wire:confirm="Bild entfernen? Die Datei wandert in den Papierkorb." class="btn-ghost btn-sm shrink-0 hover:text-red-300">Entfernen</button>
+                                    <button wire:click="removeImage" data-confirm-label="Entfernen" wire:confirm="Bild entfernen? Die Datei wandert in den Papierkorb." class="btn-ghost btn-sm shrink-0 hover:text-red-300">Entfernen</button>
                                 </div>
                             @endif
                         </div>
@@ -136,8 +136,33 @@
                                 <button wire:click="saveArtist" class="btn-primary">Speichern</button>
                                 <button wire:click="lookupMusicBrainz" class="btn-ghost"><span wire:loading.remove wire:target="lookupMusicBrainz">Bei MusicBrainz nachschlagen</span><span wire:loading wire:target="lookupMusicBrainz">sucht …</span></button>
                                 <button wire:click="lookupDiscogs" class="btn-ghost">Discogs</button>
-                                <button wire:click="deleteArtist" wire:confirm="Künstler aus dem Verzeichnis löschen? (Dateien bleiben unverändert)" class="btn-ghost ml-auto hover:text-red-400">Löschen</button>
+                                @unless ($artist->base_name)
+                                    <button wire:click="$toggle('mergeOpen')" class="btn-ghost {{ $mergeOpen ? 'border-blue-500/60 text-blue-200' : '' }}" title="Andere Einträge sind nur andere Schreibweisen dieses Künstlers">Ist derselbe wie …</button>
+                                @endunless
+                                <button wire:click="deleteArtist" data-confirm-label="Löschen" wire:confirm="Künstler aus dem Verzeichnis löschen? (Dateien bleiben unverändert)" class="btn-ghost ml-auto hover:text-red-400">Löschen</button>
                             </div>
+                            @if ($mergeOpen)
+                                <div class="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3">
+                                    <div class="text-sm text-zinc-300">Welche Einträge sind in Wahrheit <strong>„{{ $artist->name }}“</strong>? Sie werden zu Schreibweisen dieses Künstlers; Varianten, IDs, Genre und Bild werden übernommen, wo hier noch nichts steht.</div>
+                                    <input type="search" wire:model.live.debounce.300ms="mergeQ" placeholder="Anderen Eintrag suchen …" class="input-sm mt-2 w-72">
+                                    <div class="mt-2 max-h-64 space-y-0.5 overflow-y-auto">
+                                        @forelse ($mergeCandidates as $c)
+                                            <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-zinc-800/60" wire:key="mc{{ $c->id }}">
+                                                <input type="checkbox" wire:model.live="mergeIds" value="{{ $c->id }}" class="size-4 rounded border-zinc-600 bg-zinc-800 text-violet-500">
+                                                @if ($c->imageUrl())<img src="{{ $c->imageUrl() }}" class="size-6 rounded-full object-cover">@endif
+                                                <span class="text-zinc-200">{{ $c->name }}</span>
+                                                <span class="text-xs text-zinc-500">{{ $c->aliases_count ? $c->aliases_count.' Schreibweise(n)' : '' }}{{ $c->mbid ? ' · MusicBrainz' : '' }}</span>
+                                            </label>
+                                        @empty
+                                            <p class="px-2 py-1 text-sm text-zinc-500">{{ trim($mergeQ) === '' ? 'Keine ähnlichen Einträge – oben suchen.' : 'Nichts gefunden.' }}</p>
+                                        @endforelse
+                                    </div>
+                                    <div class="mt-2 flex items-center gap-2">
+                                        <button wire:click="merge" @disabled(! $mergeIds) data-confirm-label="Zusammenführen" wire:confirm="Die angehakten Einträge in „{{ $artist->name }}“ aufgehen lassen? Ihre Namen werden Schreibweisen von „{{ $artist->name }}“; die Dateien bleiben vorerst unverändert." class="btn-primary btn-sm">Zusammenführen ({{ count($mergeIds) }})</button>
+                                        <button wire:click="$set('mergeOpen', false)" class="btn-ghost btn-sm">Abbrechen</button>
+                                    </div>
+                                </div>
+                            @endif
                             @if ($lookupError)<p class="text-sm text-amber-300">{{ $lookupError }}</p>@endif
 
                             @if ($mbResults)
@@ -180,7 +205,7 @@
                                     @foreach ($artist->aliases as $al)
                                         <span class="badge-gray gap-1" @if ($al->source === 'musicbrainz') title="Schreibweise laut MusicBrainz" @endif>
                                             {{ $al->alias }}@if ($al->source === 'musicbrainz')<span class="text-[10px] text-emerald-300/80">MB</span>@endif
-                                            <button wire:click="removeAlias({{ $al->id }})" class="text-zinc-500 hover:text-red-400">✕</button>
+                                            <button wire:click="removeAlias({{ $al->id }})" class="text-zinc-500 hover:text-red-400" title="Löschen – wird gemerkt, „Von MusicBrainz holen“ trägt sie nicht wieder ein">✕</button>
                                         </span>
                                     @endforeach
                                 </div>
@@ -192,6 +217,14 @@
                                     @endif
                                 </div>
                                 @error('newAlias')<p class="mt-1 text-xs text-red-400">{{ $message }}</p>@enderror
+                                @if ($artist->rejectedAliases->isNotEmpty())
+                                    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                                        <span title="Diese Schreibweisen hast du gelöscht – MusicBrainz trägt sie nicht wieder ein">Gelöscht, wird nicht wieder geholt:</span>
+                                        @foreach ($artist->rejectedAliases as $r)
+                                            <span class="inline-flex items-center gap-1 rounded border border-zinc-800 px-1.5 py-0.5 text-zinc-500 line-through decoration-zinc-600">{{ $r->alias }}<button wire:click="allowAlias({{ $r->id }})" class="text-zinc-500 no-underline hover:text-blue-300" title="Wieder zulassen">↺</button></span>
+                                        @endforeach
+                                    </div>
+                                @endif
                             </div>
                         </div>
                     </div>

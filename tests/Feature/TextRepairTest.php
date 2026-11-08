@@ -105,6 +105,9 @@ class TextRepairTest extends TestCase
         $this->assertSame('o0', $items[$id('artist', 'KÃ¶nig')], 'sicher: vorausgewählt');
         $this->assertSame('o0', $items[$id('title', 'Ãðóïïà êðîâè')], 'ein plausibler Codepage-Vorschlag: vorausgewählt');
         $this->assertSame('skip', $items[$id('title', 'M?tley')]);
+        // „Eigene Eingabe“ ist mit dem Text vorbelegt (Vorschlag bzw. bisheriger Wert), nicht nur Platzhalter
+        $this->assertSame('König', $page->instance()->custom[$id('artist', 'KÃ¶nig')]);
+        $this->assertSame('M?tley', $page->instance()->custom[$id('title', 'M?tley')]);
 
         $page->set('choice.'.$id('album', 'Ãëàâíîå'), 'keep')
             ->set('choice.'.$id('title', 'M?tley'), 'custom')->set('custom.'.$id('title', 'M?tley'), 'Mötley')

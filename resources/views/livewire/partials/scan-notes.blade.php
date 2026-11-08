@@ -7,7 +7,7 @@
     @if (($scan['held']['location'] ?? null) === $location)
         <div class="{{ $box }} flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
             <span class="flex-1">{{ $scan['held']['count'] }} von {{ $scan['held']['known'] }} bekannten Dateien wurden nicht gefunden und deshalb nicht aus dem Index entfernt. War das Share kurz weg, einfach später erneut scannen.</span>
-            <button wire:click="startScan('{{ $location }}', true)" wire:confirm="{{ $scan['held']['count'] }} Dateien aus dem Index entfernen? (Die Dateien selbst werden nicht angefasst.)" class="btn-ghost btn-sm shrink-0">Trotzdem entfernen</button>
+            <button wire:click="startScan('{{ $location }}', true)" data-confirm-label="Entfernen" wire:confirm="{{ $scan['held']['count'] }} Dateien aus dem Index entfernen? (Die Dateien selbst werden nicht angefasst.)" class="btn-ghost btn-sm shrink-0">Trotzdem entfernen</button>
         </div>
     @endif
     @if (! empty($scan['unreadable']) && ($scan['location'] ?? null) === $location)

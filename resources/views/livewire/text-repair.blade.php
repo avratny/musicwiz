@@ -61,7 +61,7 @@
                             <input type="radio" wire:model.live="choice.{{ $id }}" value="custom" class="border-zinc-600 bg-zinc-800">
                             <span class="text-zinc-300">Eigene Eingabe:</span>
                             <input type="text" wire:model.live.debounce.400ms="custom.{{ $id }}" x-on:focus="$wire.set('choice.{{ $id }}', 'custom')"
-                                   placeholder="{{ $item['options'][0]['value'] ?? $item['value'] }}" class="input-sm w-96">
+                                   class="input-sm w-96">
                         </label>
                         <div class="flex flex-wrap gap-4 pt-1">
                             <label class="flex cursor-pointer items-center gap-2 text-zinc-400">

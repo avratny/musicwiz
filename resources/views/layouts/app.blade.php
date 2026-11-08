@@ -79,6 +79,7 @@
     <x-player />
 @endpersist
 </div>
+@include('partials.confirm-modal')
 @livewireScripts
 </body>
 </html>

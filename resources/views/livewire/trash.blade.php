@@ -22,8 +22,8 @@
                 <option value="best">bessere Version behalten</option>
             </select>
         </label>
-        <button wire:click="restore" wire:confirm="{{ $chosenCount }} Datei(en) an ihren ursprünglichen Ort zurücklegen?" class="btn-primary btn-sm" @disabled(! $chosenCount || $running)>Wiederherstellen</button>
-        <button wire:click="deleteForever" wire:confirm="{{ $chosenCount }} Datei(en) ENDGÜLTIG löschen? Das lässt sich nicht rückgängig machen." class="btn-danger btn-sm" @disabled(! $chosenCount || $running)>Endgültig löschen …</button>
+        <button wire:click="restore" data-confirm-label="Zurücklegen" wire:confirm="{{ $chosenCount }} Datei(en) an ihren ursprünglichen Ort zurücklegen?" class="btn-primary btn-sm" @disabled(! $chosenCount || $running)>Wiederherstellen</button>
+        <button wire:click="deleteForever" data-confirm-label="Endgültig löschen" data-confirm-danger wire:confirm="{{ $chosenCount }} Datei(en) ENDGÜLTIG löschen? Das lässt sich nicht rückgängig machen." class="btn-danger btn-sm" @disabled(! $chosenCount || $running)>Endgültig löschen …</button>
     </div>
 
     @if ($done)

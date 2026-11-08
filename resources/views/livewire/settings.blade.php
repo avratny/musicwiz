@@ -94,7 +94,7 @@
                                 <input value="{{ $item->name }}" wire:change="renameGenre({{ $item->id }}, $event.target.value)" class="input-sm {{ $item->parent_id ? '' : 'font-semibold' }}">
                                 <button wire:click="moveGenre({{ $item->id }}, -1)" class="btn-ghost btn-sm">↑</button>
                                 <button wire:click="moveGenre({{ $item->id }}, 1)" class="btn-ghost btn-sm">↓</button>
-                                <button wire:click="deleteGenre({{ $item->id }})" wire:confirm="Genre „{{ $item->name }}“ löschen?" class="btn-ghost btn-sm hover:text-red-400">✕</button>
+                                <button wire:click="deleteGenre({{ $item->id }})" data-confirm-label="Löschen" wire:confirm="Genre „{{ $item->name }}“ löschen?" class="btn-ghost btn-sm hover:text-red-400">✕</button>
                             </div>
                         @endforeach
                     @endforeach
@@ -171,7 +171,7 @@
                     </div>
                 @endforeach
                 <div class="mt-4 flex items-center gap-3">
-                    <button wire:click="runAuto" wire:confirm="Alle angehakten Automatiken jetzt ausführen?" class="btn-primary" @disabled(! $autoConfig)>Jetzt ausführen</button>
+                    <button wire:click="runAuto" data-confirm-label="Jetzt ausführen" wire:confirm="Alle angehakten Automatiken jetzt ausführen?" class="btn-primary" @disabled(! $autoConfig)>Jetzt ausführen</button>
                     <span class="text-xs text-zinc-500">Läuft sonst automatisch nach jedem Lib-Scan.</span>
                 </div>
             </div>
@@ -216,7 +216,7 @@
                         @if (($importSummary['auto_cleanup'] ?? 0) && in_array('settings', $importSections, true))
                             <p class="mt-2 text-xs text-amber-300">Die Einstellungen enthalten {{ $importSummary['auto_cleanup'] }} freigegebene Automatik(en) – sie laufen nach dem nächsten Lib-Scan ohne Nachfrage (höchstens {{ \App\Support\AutoCleanup::LIMIT }} Schritte je Automatik, sonst wird angehalten). Prüfen unter „Automatiken“.</p>
                         @endif
-                        <button wire:click="runImport" wire:confirm="Gewählte Bereiche durch die Sicherung ersetzen?" class="btn-primary mt-3" @disabled(! $importSections)>Einspielen</button>
+                        <button wire:click="runImport" data-confirm-label="Ersetzen" wire:confirm="Gewählte Bereiche durch die Sicherung ersetzen?" class="btn-primary mt-3" @disabled(! $importSections)>Einspielen</button>
                     @endif
                 </div>
 

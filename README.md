@@ -72,7 +72,7 @@ Ausnahmen lassen sich zusätzlich unter **Einstellungen → Sicherung** als Date
 
 In Dockge beim Stack **„Update“** (zieht das neueste Image und startet neu). Die Datenbank wird beim Start automatisch
 aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.3` (immer die neueste 0.3.x)
-bzw. `MUSICWIZ_TAG=0.3.5` setzen.
+bzw. `MUSICWIZ_TAG=0.3.6` setzen.
 
 Update auf 0.3: Der nächste Scan liest einmal alle Dateien neu ein (neue Felder ReplayGain und Songtext) – dank paralleler
 Leseprozesse schneller als bisher (`MUSIC_SCAN_WORKERS`, Standard 4). Sampler bekommen Buchstabenordner nach dem Album
@@ -148,5 +148,5 @@ MP3 wird als ID3v2.4 geschrieben (einstellbar). Planung und Anforderungen: [`Mus
 Push auf `main` baut `ghcr.io/avratny/musicwiz:latest`. Für eine Version ein Tag pushen:
 
 ```sh
-git tag v0.3.5 && git push origin v0.3.5   # → Image :0.3.5 und :0.3
+git tag v0.3.6 && git push origin v0.3.6   # → Image :0.3.6 und :0.3
 ```

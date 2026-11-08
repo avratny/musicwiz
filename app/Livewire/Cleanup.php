@@ -231,6 +231,7 @@ class Cleanup extends Component
             // veraltet: Liste/Anzahlen vom letzten Stand, Beheben gesperrt bis zur Neuberechnung
             'stale' => ! $fresh || $staleList,
             'pending' => $pending,
+            'progress' => $fresh ? null : CleanupChecks::progress(),
             'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),
             'openBefore' => $checks->openBefore($this->check),
             'step' => CleanupChecks::stepOf($this->check),

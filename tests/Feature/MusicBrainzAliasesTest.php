@@ -9,10 +9,12 @@ use App\Livewire\Inbox;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\RejectedAlias;
 use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
 use App\Support\Lookup;
+use App\Support\SettingsBackup;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
@@ -58,6 +60,35 @@ class MusicBrainzAliasesTest extends TestCase
         $this->assertSame(['D.J. Bo-Bo', 'BoBo'], $added);
         $this->assertSame(['musicbrainz'], ArtistAlias::whereIn('alias', $added)->distinct()->pluck('source')->all());
         $this->assertSame($other->id, ArtistAlias::where('alias', 'The Bobos')->value('artist_id'));
+    }
+
+    public function test_deleted_spelling_is_not_fetched_again(): void
+    {
+        $this->fakeBobo();
+        $a = Artist::create(['name' => 'DJ BoBo', 'mbid' => 'bobo']);
+        $page = Livewire::test(Artists::class)->call('select', $a->id)->call('loadMusicBrainzAliases');
+        $this->assertEqualsCanonicalizing(['Bobo', 'D.J. BoBo'], $a->aliases()->pluck('alias')->all());
+
+        // „Bobo“ löschen und erneut holen: bleibt weg, wird angezeigt
+        $page->call('removeAlias', ArtistAlias::where('alias', 'Bobo')->value('id'))
+            ->call('loadMusicBrainzAliases')
+            ->assertSee('Keine neuen Schreibweisen bei MusicBrainz')
+            ->assertSee('Gelöscht, wird nicht wieder geholt');
+        $this->assertSame(['D.J. BoBo'], $a->aliases()->pluck('alias')->all());
+        $this->assertSame([], app(ArtistDirectory::class)->importMusicBrainzAliases($a, ['bobo']), 'auch in anderer Groß/Kleinschreibung');
+
+        // wieder zulassen → nächstes Holen trägt sie ein
+        $page->call('allowAlias', RejectedAlias::where('artist_id', $a->id)->value('id'))->call('loadMusicBrainzAliases');
+        $this->assertContains('Bobo', $a->aliases()->pluck('alias')->all());
+
+        // von Hand eingetragen: Ablehnung fällt weg
+        $page->call('removeAlias', ArtistAlias::where('alias', 'Bobo')->value('id'))->set('newAlias', 'Bobo')->call('addAlias');
+        $this->assertSame(0, RejectedAlias::count());
+
+        // Sicherung nimmt Ablehnungen mit
+        RejectedAlias::remember($a->id, 'D.J. BoBo');
+        $export = app(SettingsBackup::class)->export(false);
+        $this->assertSame(['D.J. BoBo'], collect($export['artists'])->firstWhere('name', 'DJ BoBo')['rejected_aliases']);
     }
 
     public function test_choosing_musicbrainz_id_in_directory_imports_spellings(): void

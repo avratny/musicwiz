@@ -248,6 +248,8 @@ class TextRepairAssistant extends Component
         $items = $this->items();
         foreach ($items as $item) {
             $this->choice[$item['id']] ??= $this->defaultChoice($item);
+            // „Eigene Eingabe“ mit dem Text vorbelegen (erster Vorschlag, sonst der bisherige Wert) – nur noch anpassen
+            $this->custom[$item['id']] ??= $item['options'][0]['value'] ?? $item['value'];
         }
         $chosen = count(array_filter($items, fn ($item) => $this->chosenValue($item) !== null));
 

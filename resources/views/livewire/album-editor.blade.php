@@ -132,7 +132,7 @@
                                     <span class="badge-blue shrink-0">CD {{ $disc }}</span>
                                     <span class="min-w-0 flex-1 truncate text-zinc-400" title="{{ $dir }}">{{ basename($dir) }}</span>
                                     @if (in_array($dir, $manualDirs, true))
-                                        <button wire:click="removeDisc(@js($dir))" wire:confirm="CD {{ $disc }} wieder als eigenes Album führen?" class="shrink-0 text-zinc-500 hover:text-red-300" title="herauslösen">✕</button>
+                                        <button wire:click="removeDisc(@js($dir))" data-confirm-label="Trennen" wire:confirm="CD {{ $disc }} wieder als eigenes Album führen?" class="shrink-0 text-zinc-500 hover:text-red-300" title="herauslösen">✕</button>
                                     @endif
                                 </li>
                             @endforeach
@@ -348,7 +348,7 @@
                 <span class="flex items-center gap-2 text-zinc-500" title="ReplayGain: Lautstärke-Ausgleich (EBU R128, Bezug −18 LUFS). Messen dekodiert jeden Titel einmal komplett.">
                     ReplayGain{{ $rgAlbum ? ': Album '.$db($rgAlbum) : '' }}{{ $rgCount && $rgCount < count($rows) ? ' ('.$rgCount.' von '.count($rows).')' : '' }}
                     <button wire:click="measureReplaygain" class="btn-ghost btn-sm" @disabled($operation)>{{ $rgCount ? 'neu messen' : 'messen' }}</button>
-                    @if ($rgCount)<button wire:click="removeReplaygain" wire:confirm="ReplayGain aus allen Titeln dieses Albums entfernen? (rückgängig machbar)" class="btn-ghost btn-sm" @disabled($operation)>entfernen</button>@endif
+                    @if ($rgCount)<button wire:click="removeReplaygain" data-confirm-label="Entfernen" wire:confirm="ReplayGain aus allen Titeln dieses Albums entfernen? (rückgängig machbar)" class="btn-ghost btn-sm" @disabled($operation)>entfernen</button>@endif
                 </span>
                 @if ($hasAcoustid)
                     <button wire:click="identifyTracks" class="btn-ghost btn-sm" title="Titel ohne Titel/Interpret (sonst alle, höchstens 25) per AcoustID am Klang erkennen – nur Vorschläge">

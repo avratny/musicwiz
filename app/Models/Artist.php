@@ -35,6 +35,12 @@ class Artist extends Model
         return $this->hasMany(ArtistAlias::class)->orderBy('alias');
     }
 
+    /** Gelöschte Schreibweisen (MusicBrainz trägt sie nicht wieder ein) */
+    public function rejectedAliases(): HasMany
+    {
+        return $this->hasMany(RejectedAlias::class)->orderBy('alias');
+    }
+
     public function imageUrl(): ?string
     {
         return $this->image ? route('cover.artist', ['artist' => $this->id, 'v' => $this->updated_at?->timestamp]) : null;

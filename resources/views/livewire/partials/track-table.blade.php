@@ -40,7 +40,7 @@
                         @if (isset($busyAlbums[$album->id]))
                             <span class="text-xs text-amber-300">wird in die Inbox verschoben …</span>
                         @else
-                            <button wire:click="albumToInbox({{ $album->id }})" wire:confirm="Album „{{ $album->title }}“ in die Inbox verschieben?" class="btn-ghost btn-sm">Album → In die Inbox</button>
+                            <button wire:click="albumToInbox({{ $album->id }})" data-confirm-label="In die Inbox" wire:confirm="Album „{{ $album->title }}“ in die Inbox verschieben?" class="btn-ghost btn-sm">Album → In die Inbox</button>
                         @endif
                     @endif
                 </div>
@@ -64,7 +64,7 @@
                         @if (isset($busy[$t->path]))
                             <span class="text-xs text-amber-300">wird verschoben …</span>
                         @else
-                            <button wire:click="trackToInbox({{ $t->id }})" wire:confirm="„{{ $t->title ?: $t->filename }}“ in die Inbox verschieben?" class="btn-ghost btn-sm">→ In die Inbox</button>
+                            <button wire:click="trackToInbox({{ $t->id }})" data-confirm-label="In die Inbox" wire:confirm="„{{ $t->title ?: $t->filename }}“ in die Inbox verschieben?" class="btn-ghost btn-sm">→ In die Inbox</button>
                         @endif
                     </td>
                 @endif

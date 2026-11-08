@@ -63,12 +63,25 @@
             </div>
             @if ($stale)
                 <div class="shrink-0 px-6 pt-3">
-                    <div class="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
+                    <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
+                        <div class="flex items-center gap-2">
                         <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
                         @if ($pending)
                             Funde werden im Hintergrund berechnet{{ $scanRunning ? ' – startet, sobald der laufende Scan fertig ist' : '' }}. Die Seite aktualisiert sich von selbst.
                         @else
                             Funde werden im Hintergrund aktualisiert{{ $scanRunning ? ' (nach dem laufenden Scan)' : '' }} – angezeigt wird der letzte Stand. Beheben geht wieder, sobald alles frisch ist.
+                        @endif
+                        </div>
+                        @if ($progress)
+                            <div class="mt-2 flex items-center gap-3 text-xs text-blue-200/80">
+                                <div class="h-1.5 w-48 overflow-hidden rounded-full bg-zinc-800">
+                                    <div class="h-full bg-gradient-to-r from-blue-500 to-violet-500" style="width: {{ min(100, round(100 * ($progress['done'] ?? 0) / max(1, $progress['total'] ?? 1))) }}%"></div>
+                                </div>
+                                <span>Prüfung {{ ($progress['done'] ?? 0) + 1 }} von {{ $progress['total'] ?? '?' }}{{ ! empty($progress['current']) ? ': '.$progress['current'] : '' }}</span>
+                                @if (! empty($progress['started_at']))<span class="text-blue-200/50">· läuft seit {{ \Illuminate\Support\Carbon::parse($progress['started_at'])->diffForHumans(null, true) }}</span>@endif
+                            </div>
+                        @else
+                            <div class="mt-1 text-xs text-blue-200/70">{{ $scanRunning ? 'Wartet, bis der laufende Scan fertig ist – der Hintergrund-Worker erledigt eins nach dem anderen.' : 'Wartet auf den Hintergrund-Worker …' }}</div>
                         @endif
                     </div>
                 </div>
@@ -166,7 +179,7 @@
                                         <span class="flex items-center gap-1.5 px-2 text-xs text-violet-300"><span class="size-2 animate-pulse rounded-full bg-violet-400"></span>läuft …</span>
                                     @else
                                         <button wire:click="applyOne(@js($f['id']))" wire:loading.attr="disabled" wire:target="applyOne(@js($f['id']))"
-                                                wire:confirm="„{{ $f['title'] }}“ übernehmen? {{ count($f['actions']) }} Schritt(e) – rückgängig machbar im Verlauf."
+                                                data-confirm-label="Übernehmen" wire:confirm="„{{ $f['title'] }}“ übernehmen? {{ count($f['actions']) }} Schritt(e) – rückgängig machbar im Verlauf."
                                                 @disabled($stale) class="btn-primary btn-sm">Übernehmen</button>
                                     @endif
                                 @endif

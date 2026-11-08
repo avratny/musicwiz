@@ -14,3 +14,24 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
     if (e.code === 'Space' && !e.target.closest(typing) && window.Alpine?.store('player')?.track) e.preventDefault();
 });
+
+// Rückfragen (wire:confirm) als eigenes Modal statt Browser-Dialog: Livewire fragt über el.__livewire_confirm(ausführen,
+// abbrechen) – das ersetzen wir nach Livewires eigener Einrichtung. Das Modal liegt im Layout (partials/confirm-modal).
+// Optional am Element: data-confirm-label="Löschen" (Text des Knopfs), data-confirm-danger (roter Knopf).
+document.addEventListener('livewire:init', () => {
+    window.Livewire.hook('directive.init', ({ el, directive }) => {
+        if (directive.value !== 'confirm') return;
+        const message = (directive.expression || 'Wirklich ausführen?').replaceAll('\\n', '\n');
+        el.__livewire_confirm = (action, instead) => {
+            instead(); // Klick jetzt anhalten – ausgeführt wird erst nach „OK“ im Modal
+            window.dispatchEvent(new CustomEvent('mw-confirm', {
+                detail: {
+                    message,
+                    label: el.dataset.confirmLabel || null,
+                    danger: el.hasAttribute('data-confirm-danger') || /endgültig/i.test(message),
+                    run: action,
+                },
+            }));
+        };
+    });
+});

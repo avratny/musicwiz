@@ -70,7 +70,7 @@
         @if ($deletable)
             <div class="mt-6 flex items-center text-sm">
                 <span class="flex-1 font-medium text-zinc-300">Verlauf</span>
-                <button wire:click="clearHistory"
+                <button wire:click="clearHistory" data-confirm-label="Verlauf löschen"
                         wire:confirm="Alle abgeschlossenen und geplanten Downloads aus dem Verlauf löschen? Die Dateien bleiben in der Inbox, rückgängig machen geht danach aber nicht mehr."
                         class="btn-ghost btn-sm">Verlauf löschen</button>
             </div>
@@ -105,7 +105,7 @@
                             <button wire:click="startNow({{ $op->id }})" class="btn-ghost btn-sm">Jetzt starten</button>
                         @endif
                         @if (! $op->isActive() || $op->isPlanned())
-                            <button wire:click="remove({{ $op->id }})"
+                            <button wire:click="remove({{ $op->id }})" data-confirm-label="Löschen"
                                     wire:confirm="Diesen Download aus dem Verlauf löschen? Die Dateien bleiben, rückgängig machen geht danach nicht mehr."
                                     class="text-zinc-500 hover:text-red-300" title="Aus dem Verlauf löschen">✕</button>
                         @endif

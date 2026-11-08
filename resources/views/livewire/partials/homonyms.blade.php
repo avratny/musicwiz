@@ -46,7 +46,7 @@
             </table>
             <div class="flex items-center gap-3">
                 <span class="text-xs text-zinc-500">Zusatz-Vorschlag: Land, wenn eindeutig – sonst Kurzbeschreibung von MusicBrainz. Kurz halten, er steht im Künstlernamen.</span>
-                <button wire:click="doSplit" wire:confirm="Personen anlegen? Dateien werden dabei noch nicht verändert." class="btn-primary ml-auto">{{ $artist->base_name ? 'Personen hinzufügen' : 'Aufteilen' }}</button>
+                <button wire:click="doSplit" data-confirm-label="Anlegen" wire:confirm="Personen anlegen? Dateien werden dabei noch nicht verändert." class="btn-primary ml-auto">{{ $artist->base_name ? 'Personen hinzufügen' : 'Aufteilen' }}</button>
             </div>
         </div>
     @endif

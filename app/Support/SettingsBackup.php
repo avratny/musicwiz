@@ -11,6 +11,7 @@ use App\Models\DuplicateException;
 use App\Models\Genre;
 use App\Models\GenreMapping;
 use App\Models\Leftover;
+use App\Models\RejectedAlias;
 use App\Models\Setting;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
@@ -59,11 +60,12 @@ class SettingsBackup
             'genres' => Genre::whereNull('parent_id')->orderBy('position')->with('children')->get()
                 ->map(fn ($g) => ['name' => $g->name, 'children' => $g->children->pluck('name')->all()])->all(),
             'genre_mappings' => GenreMapping::orderBy('source')->get(['source', 'target'])->toArray(),
-            'artists' => Artist::with('aliases')->orderBy('name')->get()->map(fn ($a) => [
+            'artists' => Artist::with(['aliases', 'rejectedAliases'])->orderBy('name')->get()->map(fn ($a) => [
                 'name' => $a->name, 'base_name' => $a->base_name, 'suffix' => $a->suffix, 'disambiguation' => $a->disambiguation,
                 'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre, 'image' => $a->image,
                 // von Hand: nur der Name; von MusicBrainz: mit Herkunft
                 'aliases' => $a->aliases->map(fn ($al) => $al->source ? ['alias' => $al->alias, 'source' => $al->source] : $al->alias)->all(),
+                'rejected_aliases' => $a->rejectedAliases->pluck('alias')->all(),
             ])->all(),
             'disc_sets' => DiscSet::all()->pluck('members')->all(),
             'duplicate_exceptions' => DuplicateException::all(['song_key', 'members', 'label'])->toArray(),
@@ -230,6 +232,9 @@ class SettingsBackup
                         if ($alias !== '' && ! ArtistAlias::where('alias', $alias)->exists()) {
                             $artist->aliases()->create(['alias' => $alias, 'source' => $source]);
                         }
+                    }
+                    foreach ($a['rejected_aliases'] ?? [] as $rejected) {
+                        RejectedAlias::remember($artist->id, (string) $rejected);
                     }
                 }
             }

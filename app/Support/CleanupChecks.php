@@ -129,11 +129,24 @@ class CleanupChecks
         return Cache::has('cleanup.counts.'.$this->version());
     }
 
+    /** Fortschritt der Neuberechnung im Hintergrund: done, total, current (Name der Prüfung), started_at */
+    public const PROGRESS = 'cleanup.progress';
+
     /** Alle Prüfungen berechnen (läuft im Hintergrund nach Scan bzw. Aktion, siehe RefreshCleanup). */
     public function refreshAll(): void
     {
-        $this->counts();
-        Cache::forever(self::LAST_VERSION, $this->version());
+        Cache::put(self::PROGRESS, ['done' => 0, 'total' => count(self::definitions()), 'current' => null, 'started_at' => now()->toIso8601String()], now()->addHours(2));
+        try {
+            $this->counts();
+            Cache::forever(self::LAST_VERSION, $this->version());
+        } finally {
+            Cache::forget(self::PROGRESS);
+        }
+    }
+
+    public static function progress(): ?array
+    {
+        return Cache::get(self::PROGRESS);
     }
 
     /** Anzahlen für die Seitenleiste: aktuell, sonst der letzte fertige Stand (nie alles im Seitenaufruf neu rechnen). */
@@ -176,7 +189,12 @@ class CleanupChecks
     {
         return Cache::remember('cleanup.counts.'.$this->version(), now()->addDays(self::TTL_DAYS), function () {
             $out = [];
-            foreach (array_keys(self::definitions()) as $key) {
+            $defs = self::definitions();
+            $i = 0;
+            foreach (array_keys($defs) as $key) {
+                if (Cache::has(self::PROGRESS)) {
+                    Cache::put(self::PROGRESS, ['done' => $i++, 'current' => $defs[$key][0]] + Cache::get(self::PROGRESS, []), now()->addHours(2));
+                }
                 // ausgeblendete Funde nicht mitzählen (auch wenn die Liste der Ausnahmen gerade aufgeklappt ist)
                 $out[$key] = count(array_filter($this->findings($key), fn ($f) => ! ($f['dismissed'] ?? false)));
             }

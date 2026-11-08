@@ -4,8 +4,10 @@ namespace App\Support;
 
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\RejectedAlias;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Künstlerverzeichnis: jeder Künstler genau einmal mit richtigem Namen und bekannten Varianten.
@@ -338,6 +340,8 @@ class ArtistDirectory
         $this->load();
         $added = [];
         $otherKeys = Artist::where('id', '!=', $artist->id)->pluck('compare_key')->flip();
+        // vom Nutzer gelöschte Schreibweisen nie wieder eintragen
+        $rejected = RejectedAlias::where('artist_id', $artist->id)->pluck('alias_key')->flip();
         foreach ($aliases as $alias) {
             $alias = trim((string) $alias);
             $key = ArtistNames::compareKey($alias);
@@ -345,7 +349,7 @@ class ArtistDirectory
             if (ArtistNames::looksCollaboration($alias) && ! ArtistNames::looksCollaboration($artist->name)) {
                 continue;
             }
-            if ($alias === '' || $key === '' || $alias === $artist->name || isset($this->exact[mb_strtolower($alias)])
+            if ($alias === '' || $key === '' || $alias === $artist->name || isset($rejected[RejectedAlias::keyOf($alias)]) || isset($this->exact[mb_strtolower($alias)])
                 || isset($otherKeys[$key]) || isset($this->ambiguous[$key]) || ArtistAlias::where('alias', $alias)->exists()) {
                 continue;
             }
@@ -380,6 +384,65 @@ class ArtistDirectory
         $this->flush();
 
         return $added;
+    }
+
+    /**
+     * „Ist derselbe wie“: andere Verzeichnis-Einträge gehen im Ziel auf. Ihr Name wird Schreibweise des Ziels, ihre
+     * Schreibweisen und abgelehnten Schreibweisen wandern mit; IDs, Standard-Genre und Bild werden übernommen, wo das Ziel
+     * noch nichts hat (ein überzähliges Bild kommt in den Papierkorb). Gleichnamige Personen („Adam [DE]“) bleiben getrennt.
+     * Die Dateien ändern sich nicht – das macht danach „Uneinheitliche Interpreten-Schreibweisen“ im Aufräumen.
+     *
+     * @param  list<int>  $ids
+     * @return array{merged: list<string>, skipped: list<string>}
+     */
+    public function merge(Artist $target, array $ids): array
+    {
+        $merged = [];
+        $skipped = [];
+        $imageDir = rtrim((string) $this->settings->get('artist_images'), '/');
+        $files = app(FileOps::class);
+        foreach (Artist::with(['aliases', 'rejectedAliases'])->whereIn('id', $ids)->where('id', '!=', $target->id)->get() as $other) {
+            if ($other->base_name) {
+                $skipped[] = $other->name;
+
+                continue;
+            }
+            DB::transaction(function () use ($target, $other, $imageDir, $files) {
+                foreach (['mbid', 'discogs_id', 'default_genre', 'disambiguation'] as $field) {
+                    if (blank($target->{$field}) && filled($other->{$field})) {
+                        $target->{$field} = $other->{$field};
+                    }
+                }
+                foreach ($other->aliases as $alias) {
+                    mb_strtolower($alias->alias) === mb_strtolower($target->name) ? $alias->delete() : $alias->update(['artist_id' => $target->id]);
+                }
+                foreach ($other->rejectedAliases as $rejected) {
+                    RejectedAlias::remember($target->id, $rejected->alias);
+                }
+                // Bild: übernehmen, wenn das Ziel keins hat – sonst das überzählige in den Papierkorb
+                $otherImage = $other->image ? $imageDir.'/'.$other->image : null;
+                if ($otherImage && is_file($otherImage)) {
+                    if (! $target->image) {
+                        $file = ArtistImages::fileName($target->name, pathinfo($otherImage, PATHINFO_EXTENSION));
+                        $files->move($otherImage, $imageDir.'/'.$file, 'number');
+                        $target->image = $file;
+                    } else {
+                        $files->trash($otherImage);
+                    }
+                }
+                $name = $other->name;
+                $other->delete();
+                $target->save();
+                if (mb_strtolower($name) !== mb_strtolower($target->name) && ! ArtistAlias::where('alias', $name)->exists()) {
+                    $target->aliases()->create(['alias' => $name]);
+                }
+                RejectedAlias::forget($target->id, $name);
+            });
+            $merged[] = $other->name;
+        }
+        $this->flush();
+
+        return ['merged' => $merged, 'skipped' => $skipped];
     }
 
     /** Richtige Schreibweise festlegen und Varianten als Alias speichern. */

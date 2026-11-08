@@ -34,7 +34,13 @@ class CleanupRefreshTest extends TestCase
         $this->assertFalse(Cache::has('cleanup.counts.'.app(CleanupChecks::class)->version()), 'im Seitenaufruf nichts berechnet');
         Queue::assertPushed(RefreshCleanup::class);
 
+        // Worker noch nicht dran: Wartehinweis; dann läuft er: Prüfung x von y
+        Livewire::test(Cleanup::class)->assertSee('Wartet auf den Hintergrund-Worker');
+        Cache::put(CleanupChecks::PROGRESS, ['done' => 2, 'total' => 33, 'current' => 'Mögliche Duplikate', 'started_at' => now()->subMinute()->toIso8601String()]);
+        Livewire::test(Cleanup::class)->assertSee('Prüfung 3 von 33: Mögliche Duplikate')->assertSee('läuft seit 1 Minute');
+
         (new RefreshCleanup)->handle();
+        $this->assertNull(CleanupChecks::progress(), 'nach dem Lauf aufgeräumt');
         Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('a.Mp3');
     }
 
