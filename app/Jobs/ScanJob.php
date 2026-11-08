@@ -6,6 +6,7 @@ use App\Support\AutoCleanup;
 use App\Support\Scanner;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Queue\MaxAttemptsExceededException;
 
 class ScanJob implements ShouldQueue
 {
@@ -15,7 +16,8 @@ class ScanJob implements ShouldQueue
 
     public int $timeout = 0;
 
-    public function __construct(public string $location, public bool $allowMassRemoval = false) {}
+    /** @param  bool  $resumed  automatischer zweiter Anlauf nach einer Unterbrechung (nur einmal, keine Endlosschleife) */
+    public function __construct(public string $location, public bool $allowMassRemoval = false, public bool $resumed = false) {}
 
     public function handle(Scanner $scanner, AutoCleanup $auto): void
     {
@@ -41,6 +43,21 @@ class ScanJob implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
-        app(Scanner::class)->status(['running' => false, 'phase' => 'Fehler', 'error' => $e->getMessage()]);
+        $scanner = app(Scanner::class);
+        // Worker wurde mitten im Scan beendet (z. B. Neustart/Update des Containers): die Warteschlange gibt den Job nach
+        // einer Weile erneut aus und Laravel bricht ihn als "zu oft versucht" ab. Ein Scan liest nur und überspringt schon
+        // gelesene Dateien – also einmal von selbst neu ansetzen.
+        if ($e instanceof MaxAttemptsExceededException) {
+            if (! $this->resumed) {
+                $scanner->status(['running' => true, 'phase' => 'wartet', 'error' => null]);
+                self::dispatch($this->location, $this->allowMassRemoval, true);
+
+                return;
+            }
+            $scanner->status(['running' => false, 'phase' => 'Fehler', 'error' => 'Scan wurde zweimal unterbrochen (Container neu gestartet?) – bitte erneut scannen; schon gelesene Dateien werden übersprungen.']);
+
+            return;
+        }
+        $scanner->status(['running' => false, 'phase' => 'Fehler', 'error' => $e->getMessage()]);
     }
 }
