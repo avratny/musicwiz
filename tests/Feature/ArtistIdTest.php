@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Livewire\Artists;
 use App\Models\Artist;
+use App\Models\ArtistAlias;
 use App\Support\Lookup;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -52,5 +53,16 @@ class ArtistIdTest extends TestCase
         $hits = app(Lookup::class)->musicbrainzArtists('C.C. Catch');
         $this->assertSame('C.C.Catch', $hits[0]['name']);
         $this->assertSame('cc', $hits[0]['mbid']);
+    }
+
+    public function test_alias_of_another_artist_is_not_taken_silently(): void
+    {
+        $a = Artist::create(['name' => 'Mia.']);
+        $b = Artist::create(['name' => 'M.I.A.']);
+        ArtistAlias::create(['artist_id' => $a->id, 'alias' => 'MIA']);
+
+        Livewire::test(Artists::class)->call('select', $b->id)->set('newAlias', 'MIA')->call('addAlias')->assertHasErrors('newAlias');
+
+        $this->assertSame($a->id, ArtistAlias::where('alias', 'MIA')->sole()->artist_id);
     }
 }

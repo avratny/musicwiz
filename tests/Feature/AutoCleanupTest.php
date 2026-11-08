@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\ScanJob;
+use App\Livewire\Cleanup;
 use App\Livewire\SettingsPage;
 use App\Models\Operation;
 use App\Support\ArtistDirectory;
@@ -90,5 +91,30 @@ class AutoCleanupTest extends TestCase
         $target = $this->base.'/library/artists/A/A-Teens/Hits/01 - Mamma Mia.mp3';
         $this->assertFileExists($target, 'in einem Durchlauf im richtigen Ordner');
         $this->assertSame('A-Teens', app(TagTool::class)->read([$target])[$target]['tags']['albumartist']);
+    }
+
+    public function test_too_many_steps_are_held_instead_of_run(): void
+    {
+        $mp3 = str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 20);
+        for ($i = 2; $i <= AutoCleanup::LIMIT + 1; $i++) {
+            file_put_contents($this->base."/library/artists/A/ABBA/Gold/{$i} - Lied.MP3", $mp3);
+        }
+        app(Settings::class)->set(['auto_cleanup' => ['extension' => ['LIB' => true]]]);
+
+        (new ScanJob('library'))->handle(app(Scanner::class), app(AutoCleanup::class));
+
+        $this->assertSame(0, Operation::where('type', 'auto')->count());
+        $this->assertFileExists($this->base.'/library/artists/A/ABBA/Gold/01 - Waterloo.MP3');
+        $this->assertSame(AutoCleanup::LIMIT + 1, app(AutoCleanup::class)->held()['extension']['count']);
+        Livewire::test(Cleanup::class)->assertSee('angehalten');
+
+        // wieder unter der Grenze: läuft und der Hinweis verschwindet
+        foreach (glob($this->base.'/library/artists/A/ABBA/Gold/*Lied.MP3') as $f) {
+            unlink($f);
+        }
+        // viele Dateien weg: Entfernen bestätigen, sonst ist der Scan unvollständig und die Automatik läuft gar nicht
+        (new ScanJob('library', true))->handle(app(Scanner::class), app(AutoCleanup::class));
+        $this->assertSame(1, Operation::where('type', 'auto')->count());
+        $this->assertSame([], app(AutoCleanup::class)->held());
     }
 }

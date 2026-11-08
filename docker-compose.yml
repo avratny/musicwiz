@@ -35,6 +35,8 @@ services:
       disable: true
     # listen statt work: Codeänderungen greifen ohne Neustart
     command: ["php", "artisan", "queue:listen", "--queue=default,research", "--sleep=1", "--tries=1", "--timeout=0"]
+    # beim Stoppen die laufende Aktion zu Ende bringen lassen statt sie nach 10 s hart abzubrechen
+    stop_grace_period: 2m
     depends_on: [app]
 
   # YouTube-Downloads laufen getrennt, damit sie andere Aktionen nicht aufhalten

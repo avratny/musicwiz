@@ -23,6 +23,8 @@ return [
     'replace_slash' => '-',
     'id3_version' => 4,
     'scan_throttle_ms' => (int) env('MUSIC_SCAN_THROTTLE_MS', 15),
+    // Pause vor dem zweiten Leseversuch einer Datei, die nicht lesbar war (Share kurz weg)
+    'read_retry_ms' => (int) env('MUSIC_READ_RETRY_MS', 500),
     'small_cover_px' => 300,
 
     // Aufräum-Automatiken: [prüfung => [kategorie|'_other' => true]] – standardmäßig alles aus
@@ -30,6 +32,8 @@ return [
 
     // Pause zwischen MusicBrainz-Abfragen in Sekunden (MusicBrainz erlaubt etwa eine pro Sekunde)
     'mb_pause' => 1.1,
+    // so lange werden Antworten von MusicBrainz, Discogs, Deezer und Fanart.tv zwischengespeichert (Tage)
+    'lookup_cache_days' => (int) env('MUSIC_LOOKUP_CACHE_DAYS', 10),
 
     'discogs_token' => env('DISCOGS_TOKEN', ''),
     'fanart_key' => env('FANART_KEY', ''),

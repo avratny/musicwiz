@@ -9,8 +9,9 @@ use Illuminate\Support\Collection;
 use RuntimeException;
 
 /**
- * Aus dem Blackhole zurück in die Inbox (Album oder einzelne Titel) – Tags bleiben, wie sie sind; eingeordnet wird
- * danach wie jede andere Inbox-Musik. Läuft als Aktion über den OperationRunner (Verlauf, rückgängig machbar).
+ * Aus dem Blackhole zurück in die Inbox (Album oder einzelne Titel). Der Kategorie-Kommentar (BLACKHOLE …) wird geleert,
+ * damit in der Inbox keine Kategorie vorausgewählt ist; alle anderen Tags bleiben. Eingeordnet wird danach wie jede andere
+ * Inbox-Musik. Läuft als Aktion über den OperationRunner (Verlauf, rückgängig machbar).
  */
 class ToInbox
 {
@@ -37,18 +38,46 @@ class ToInbox
             $this->moves($album, collect([$track]), $dir));
     }
 
+    /**
+     * Pfade, die gerade schon in die Inbox wandern (Aktion wartet bzw. läuft) – nicht ein zweites Mal losschicken.
+     *
+     * @return array<string, true>
+     */
+    public static function busyPaths(): array
+    {
+        $paths = [];
+        foreach (Operation::where('type', 'to_inbox')->whereIn('status', ['pending', 'running'])->get() as $op) {
+            foreach ($op->payload['actions'] ?? [] as $a) {
+                if (! empty($a['path'])) {
+                    $paths[$a['path']] = true;
+                }
+            }
+        }
+
+        return $paths;
+    }
+
     private function moves(?Album $album, Collection $tracks, string $dir): array
     {
         if ($this->settings->inbox() === '') {
             throw new RuntimeException('Kein Inbox-Ordner eingerichtet (Einstellungen).');
         }
+        $busy = self::busyPaths();
+        $tracks = $tracks->filter(fn (Track $t) => $t->location === 'blackhole' && ! isset($busy[$t->path]));
+        if ($tracks->isEmpty()) {
+            throw new RuntimeException('Wird bereits in die Inbox verschoben.');
+        }
 
-        return $tracks->filter(fn (Track $t) => $t->location === 'blackhole')->map(function (Track $t) use ($album, $dir) {
+        return $tracks->map(function (Track $t) use ($album, $dir) {
             // Unterordner im Album (z. B. CD 1/CD 2) bleiben erhalten
             $base = $album ? collect($album->allDirs())->first(fn ($d) => str_starts_with($t->path, $d.'/')) : null;
             $relative = $base ? substr($t->path, strlen($base) + 1) : $t->filename;
 
-            return ['type' => 'move', 'path' => $t->path, 'target' => $dir.'/'.$relative];
+            $target = $dir.'/'.$relative;
+
+            return $t->comment !== null && $t->comment !== ''
+                ? ['type' => 'apply', 'path' => $t->path, 'tags' => ['comment' => ''], 'target' => $target]
+                : ['type' => 'move', 'path' => $t->path, 'target' => $target];
         })->values()->all();
     }
 

@@ -2,12 +2,17 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\PrefetchArtistLookup;
+use App\Livewire\AlbumEditor;
 use App\Livewire\Artists;
+use App\Livewire\NewArtistModal;
+use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\Track;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -48,7 +53,8 @@ class NewArtistWizardTest extends TestCase
                 ]]);
             }
             if (str_contains($url, '/ws/2/recording')) {
-                return Http::response(['count' => str_contains($url, 'arid:beck') ? 1 : 0]);
+                // eine Abfrage für alle Kandidaten: Treffer nur beim richtigen Taucher
+                return Http::response(['recordings' => str_contains($url, 'arid:beck') ? [['title' => 'Bizarre', 'artist-credit' => [['artist' => ['id' => 'beck']]]]] : []]);
             }
 
             return Http::response(['data' => []]); // Deezer
@@ -57,8 +63,14 @@ class NewArtistWizardTest extends TestCase
         Livewire::test(Artists::class, ['tab' => 'unknown'])
             ->call('wizLookup')
             ->assertSet('wizMbid', 'beck')
-            ->assertSet('wizGenre', 'Trance')
-            ->assertSee('passt zu euren Liedern');
+            ->assertSee('passt zu euren Liedern')
+            ->assertSee('lädt Bilder, Genres und Schreibweisen') // Treffer zuerst, Rest im zweiten Schritt
+            ->call('wizLookupDetails')
+            ->assertSet('wizGenre', 'Trance');
+
+        // nur eine Abfrage für die Liedprüfung (statt einer je Kandidat und Titel)
+        Http::assertSentCount(collect(Http::recorded())->count());
+        $this->assertSame(1, collect(Http::recorded())->filter(fn ($r) => str_contains($r[0]->url(), '/ws/2/recording'))->count());
     }
 
     public function test_save_creates_artist_and_moves_on(): void
@@ -146,5 +158,74 @@ class NewArtistWizardTest extends TestCase
             ->assertSet('wizName', 'Chuck Berry')
             ->assertSet('wizFinal', 'Chuck Berry')
             ->assertSet('wizSearched', 'Chuck Berry');
+    }
+
+    public function test_modal_in_editor_handles_only_the_clicked_inbox_artist(): void
+    {
+        Http::fake(function ($request) {
+            $url = urldecode($request->url());
+            if (str_contains($url, '/ws/2/artist')) {
+                return Http::response(['artists' => [['id' => 'yan', 'name' => 'Yanou', 'score' => 100, 'disambiguation' => 'DJ', 'country' => 'DE']]]);
+            }
+            if (str_contains($url, '/ws/2/recording')) {
+                // Liedprüfung mit den Titeln aus dem Inbox-Album
+                return Http::response(['recordings' => str_contains($url, 'King of My Castle') ? [['title' => 'King of My Castle (Radio Edit)', 'artist-credit' => [['artist' => ['id' => 'yan']]]]] : []]);
+            }
+
+            return Http::response(['data' => []]);
+        });
+        $album = Album::create(['location' => 'inbox', 'dir' => '/i/Sunrise', 'title' => 'Sunrise', 'track_count' => 2]);
+        foreach (['King of My Castle', 'Sunrise'] as $i => $title) {
+            Track::create(['album_id' => $album->id, 'location' => 'inbox', 'path' => "/i/Sunrise/$i.mp3", 'dir' => '/i/Sunrise', 'filename' => "$i.mp3", 'ext' => 'mp3',
+                'artist' => $i ? 'Yanou feat. Liz' : 'Yanou', 'title' => $title, 'album' => 'Sunrise', 'track' => (string) ($i + 1), 'duration' => 100]);
+        }
+
+        // im Editor: unbekannte Namen als Knopf, der den Dialog öffnet
+        Livewire::test(AlbumEditor::class, ['album' => $album->id])
+            ->assertSee('Yanou erfassen')->assertSee('Liz erfassen')
+            ->assertSeeHtml('open-new-artist')->assertSeeLivewire(NewArtistModal::class);
+
+        $modal = Livewire::test(NewArtistModal::class)
+            ->call('openFor', 'Yanou', $album->id)
+            ->assertSet('open', true)
+            ->assertSee('Neuer Künstler · 2 Titel in diesem Album')
+            ->assertDontSee('Namen noch nicht im Verzeichnis') // keine Warteschlange
+            ->assertDontSee('Taucher')
+            ->call('wizLookup')
+            ->assertSet('wizMbid', 'yan')
+            ->assertSee('passt zu euren Liedern')
+            ->call('wizLookupDetails')
+            ->call('wizSave')
+            ->assertSet('open', false)
+            ->assertDispatched('artist-directory-changed');
+
+        $this->assertSame('yan', Artist::where('name', 'Yanou')->sole()->mbid);
+        $this->assertNull(Artist::where('name', 'Taucher')->first(), 'nur der angeklickte Name');
+
+        // danach ist Yanou bekannt: im Editor nur noch Liz als neu
+        Livewire::test(AlbumEditor::class, ['album' => $album->id])->assertDontSee('Yanou erfassen')->assertSee('Liz erfassen');
+
+        // Abbrechen speichert nichts
+        Livewire::test(NewArtistModal::class)->call('openFor', 'Liz', $album->id)->call('close')->assertSet('open', false);
+        $this->assertNull(Artist::where('name', 'Liz')->first());
+    }
+
+    public function test_unknown_artists_are_prefetched_in_background(): void
+    {
+        config(['queue.default' => 'database']);
+        Queue::fake();
+        $album = Album::create(['location' => 'inbox', 'dir' => '/i/S', 'title' => 'S', 'track_count' => 1]);
+        Track::create(['album_id' => $album->id, 'location' => 'inbox', 'path' => '/i/S/1.mp3', 'dir' => '/i/S', 'filename' => '1.mp3', 'ext' => 'mp3',
+            'artist' => 'Yanou feat. Liz', 'title' => 'King of My Castle', 'album' => 'S', 'track' => '1', 'duration' => 100]);
+
+        Livewire::test(AlbumEditor::class, ['album' => $album->id])->call('$refresh');
+
+        Queue::assertPushedOn('research', PrefetchArtistLookup::class);
+        Queue::assertPushed(PrefetchArtistLookup::class, fn ($job) => $job->name === 'Yanou' && $job->titles === ['King of My Castle']);
+        Queue::assertPushed(PrefetchArtistLookup::class, 2); // Yanou und Liz – je einmal, auch nach erneutem Rendern
+
+        // auf der Künstler-Seite: die nächsten zwei Namen der Warteschlange
+        Livewire::test(Artists::class, ['tab' => 'unknown']);
+        Queue::assertPushed(PrefetchArtistLookup::class, fn ($job) => $job->name === 'Chuck Berry');
     }
 }

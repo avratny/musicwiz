@@ -38,15 +38,29 @@
         <button x-on:click="$store.player.seek($store.player.time + 10)" class="text-zinc-400 hover:text-white" title="10 s vor">
             <svg class="size-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 17l5-5-5-5M6 17l5-5-5-5"/></svg>
         </button>
-        <span class="w-10 text-right text-xs text-zinc-400 tabular-nums" x-text="$store.player.format($store.player.time)"></span>
-        <input type="range" min="0" step="0.1" :max="$store.player.duration || 0" :value="$store.player.time"
-               x-on:input="$store.player.seek(Number($event.target.value))" class="h-1 min-w-0 flex-1 cursor-pointer accent-violet-500">
+        <span class="w-10 text-right text-xs text-zinc-400 tabular-nums" x-text="$store.player.format($store.player.dragging ? $store.player.dragTime : $store.player.time)"></span>
+        {{-- beim Ziehen nicht nachführen und erst beim Loslassen springen (sonst springt der Regler zurück und jeder Pixel lädt neu) --}}
+        <input type="range" min="0" step="0.1" :max="$store.player.duration || 0" aria-label="Position"
+               x-effect="if (! $store.player.dragging) $el.value = $store.player.time"
+               x-on:pointerdown="$store.player.dragging = true; $store.player.dragTime = Number($el.value)"
+               x-on:input="$store.player.dragTime = Number($event.target.value)"
+               x-on:change="$store.player.seek(Number($event.target.value)); $store.player.dragging = false"
+               x-on:pointerup="$store.player.seek(Number($el.value)); $store.player.dragging = false" x-on:pointercancel="$store.player.dragging = false"
+               class="h-1 min-w-0 flex-1 cursor-pointer accent-violet-500">
         <span class="w-10 text-xs text-zinc-400 tabular-nums" x-text="$store.player.format($store.player.duration)"></span>
+    </div>
+
+    {{-- Bewertung des laufenden Titels --}}
+    <div x-show="$store.player.rateable" x-cloak class="flex items-center" x-data="{ hover: 0 }" x-on:mouseleave="hover = 0" title="Bewerten (derselbe Stern noch mal = entfernen)">
+        <template x-for="n in 5" :key="n">
+            <button type="button" x-on:click="$store.player.rate(n)" x-on:mouseenter="hover = n" class="px-px text-lg leading-none transition"
+                    :class="(hover ? hover >= n : $store.player.rating >= n) ? 'text-amber-400' : 'text-zinc-600 hover:text-zinc-400'">★</button>
+        </template>
     </div>
 
     <div class="flex items-center gap-2">
         <svg class="size-4 text-zinc-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7"/></svg>
-        <input type="range" min="0" max="1" step="0.05" :value="$store.player.volume" x-on:input="$store.player.setVolume(Number($event.target.value))" class="h-1 w-24 cursor-pointer accent-blue-500">
+        <input type="range" min="0" max="1" step="0.05" aria-label="Lautstärke" :value="$store.player.volume" x-on:input="$store.player.setVolume(Number($event.target.value))" class="h-1 w-24 cursor-pointer accent-blue-500">
         <button x-on:click="$store.player.close()" class="ml-2 text-zinc-500 hover:text-white" title="Player schließen">✕</button>
     </div>
 </div>

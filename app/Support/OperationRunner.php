@@ -92,6 +92,14 @@ class OperationRunner
         $this->files->onDirRenamed = fn (string $old, string $new) => $this->db(
             fn () => $op->entries()->create(['kind' => 'move', 'old_path' => $old, 'new_path' => $new, 'error' => 'Ordner-Schreibweise']));
 
+        if ($root = $this->scanner->unreachableRoot($this->affectedPaths($op))) {
+            $this->files->onDirRenamed = null;
+            $op->update(['status' => 'failed', 'error' => 'Ordner nicht erreichbar oder leer: '.$root.' – ist das Share eingehängt? Es wurde nichts verändert. '
+                .'(Wurden dort wirklich alle Dateien entfernt, zuerst neu scannen.)', 'finished_at' => now()]);
+
+            return;
+        }
+
         if ($op->type === 'undo') {
             $errors = $this->undo($op);
         } else {
@@ -150,6 +158,25 @@ class OperationRunner
             'error' => $errors ? implode("\n", array_slice($errors, 0, 20)) : null,
             'finished_at' => now(),
         ]);
+    }
+
+    /** Alle Pfade, die eine Aktion bzw. ein Rückgängig anfasst (für die Prüfung, ob die Ordner erreichbar sind). */
+    private function affectedPaths(Operation $op): array
+    {
+        if ($op->type === 'undo') {
+            return Operation::find($op->payload['undo'])?->entries()->get(['old_path', 'new_path'])
+                ->flatMap(fn ($e) => [$e->old_path, $e->new_path])->filter()->values()->all() ?? [];
+        }
+        $paths = [];
+        foreach ($op->payload['actions'] ?? [] as $a) {
+            foreach (['path', 'target', 'from_dir', 'to_dir', 'dir'] as $k) {
+                if (! empty($a[$k]) && is_string($a[$k])) {
+                    $paths[] = $a[$k];
+                }
+            }
+        }
+
+        return $paths;
     }
 
     private function runAction(Operation $op, array $a, string $onConflict): void
@@ -325,8 +352,9 @@ class OperationRunner
         $backup = null;
         if ($cover || $removeCover) {
             $backup = $this->backupPath('img');
-            if (! $this->tagTool->extractCover($path, Storage::path($backup))) {
-                $backup = null; // es gab kein eingebettetes Cover
+            // nur das Frontcover sichern: nur das wird ersetzt bzw. entfernt (Rückseite & Co. bleiben in der Datei)
+            if (! $this->tagTool->extractCover($path, Storage::path($backup), true)) {
+                $backup = null; // es gab kein eingebettetes Frontcover
             }
         }
 

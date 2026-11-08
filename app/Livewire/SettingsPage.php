@@ -92,9 +92,17 @@ class SettingsPage extends Component
         $values['inbox'] = rtrim(trim($values['inbox']), '/');
         // feste Rollen: gespeichert werden nur Name, Zielordner und Muster
         $values['categories'] = collect($values['categories'])->mapWithKeys(fn ($c) => [$c['role'] => ['name' => trim($c['name']), 'folder' => trim($c['folder'], '/ '), 'pattern' => trim($c['pattern'])]])->all();
+        if ($problems = $settings->override($values)->pathProblems()) {
+            foreach ($problems as $i => $problem) {
+                $this->addError('paths.'.$i, $problem);
+            }
+
+            return;
+        }
         $settings->set($values);
         $this->load($settings);
-        session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; die Lib wird nur über „Aufräumen“ verschoben.');
+        session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; die Lib wird über „Aufräumen“ verschoben'
+            .(app(AutoCleanup::class)->isEnabled('misplaced') ? ' – bzw. von der Automatik „falscher Ort“ nach dem nächsten Scan (höchstens '.AutoCleanup::LIMIT.' Schritte ohne Nachfrage).' : '.'));
     }
 
     // ---------------------------------------------------------------- Genres
@@ -155,7 +163,7 @@ class SettingsPage extends Component
             $read = $backup->read($this->importFile->getRealPath());
             $this->importSummary = $backup->summarize($read['data']);
             $this->importImages = count($read['images']);
-            $this->importSections = array_keys(array_filter($this->importSummary));
+            $this->importSections = array_values(array_intersect(array_keys(array_filter($this->importSummary)), SettingsBackup::BACKUP_SECTIONS));
         } catch (\Throwable $e) {
             $this->addError('importFile', $e->getMessage());
         }
@@ -167,7 +175,14 @@ class SettingsPage extends Component
             return;
         }
         $read = $backup->read($this->importFile->getRealPath());
-        $backup->import($read['data'], $this->importSections);
+        try {
+            $backup->import($read['data'], $this->importSections);
+        } catch (\RuntimeException $e) {
+            $settings->set([]); // Zwischenspeicher leeren: die Datenbank ist unverändert
+            $this->addError('importFile', $e->getMessage());
+
+            return;
+        }
         $images = in_array('artists', $this->importSections, true) ? $backup->restoreImages($read['images']) : 0;
         $this->importFile = null;
         $this->importSummary = null;
@@ -252,6 +267,7 @@ class SettingsPage extends Component
             $data['autoColumns'] = $auto->columns();
             $data['autoConfig'] = $auto->config();
             $data['autoPreview'] = $auto->preview();
+            $data['autoHeld'] = $auto->held();
             $data['risky'] = AutoCleanup::RISKY;
         }
         if ($this->tab === 'genres' || $this->tab === 'mapping') {

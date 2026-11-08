@@ -178,6 +178,8 @@ class SettingsBackup
             'artists' => count($data['artists'] ?? []),
             'disc_sets' => count($data['disc_sets'] ?? []),
             'duplicate_exceptions' => count($data['duplicate_exceptions'] ?? []) + count($data['cleanup_exceptions'] ?? []),
+            // kein eigener Bereich (steckt in den Einstellungen) – nur als Hinweis: freigegebene Automatiken laufen nach dem nächsten Scan
+            'auto_cleanup' => collect((array) ($data['settings']['auto_cleanup'] ?? []))->sum(fn ($cats) => count(array_filter((array) $cats))),
         ];
     }
 
@@ -198,6 +200,14 @@ class SettingsBackup
                     if (in_array($key, Settings::KEYS, true)) {
                         Setting::create(['key' => $key, 'value' => $value]);
                     }
+                }
+            }
+            if (in_array('settings', $sections, true)) {
+                // eingespielte Ordner müssen sich vertragen – sonst alles zurücknehmen (Transaktion)
+                $settings = app(Settings::class);
+                $settings->set([]); // Zwischenspeicher leeren
+                if ($problems = (new Settings)->pathProblems()) {
+                    throw new RuntimeException('Sicherung nicht eingespielt – Ordner passen nicht: '.implode(' ', $problems));
                 }
             }
             if (in_array('genres', $sections, true)) {

@@ -6,7 +6,9 @@ use App\Models\Album;
 use App\Models\Artist;
 use App\Models\Track;
 use App\Support\Covers;
+use App\Support\Ratings;
 use App\Support\Settings;
+use App\Support\TagTool;
 use App\Support\Trash;
 use Illuminate\Http\Request;
 
@@ -18,6 +20,26 @@ class MediaController extends Controller
         abort_unless($path && is_file($path), 404);
 
         return response()->file($path, ['Cache-Control' => 'public, max-age=604800']);
+    }
+
+    /** Bewertung fürs Player-Fenster: aktueller Wert und ob bewertet werden darf (nicht im Blackhole, nur MP3/FLAC). */
+    public function rating(Track $track)
+    {
+        return response()->json(['rating' => (int) $track->rating, 'rateable' => self::rateable($track)]);
+    }
+
+    public function rate(Track $track, Request $request, Ratings $ratings)
+    {
+        abort_unless(self::rateable($track), 422, 'Dieser Titel kann nicht bewertet werden.');
+        $stars = (int) $request->validate(['rating' => 'required|integer|min:0|max:5'])['rating'];
+        $ratings->track($track, $stars);
+
+        return response()->json(['rating' => $stars, 'rateable' => true]);
+    }
+
+    private static function rateable(Track $track): bool
+    {
+        return $track->location !== 'blackhole' && TagTool::canWrite($track->path);
     }
 
     public function artistImage(Artist $artist, Settings $settings)

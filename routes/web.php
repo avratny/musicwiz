@@ -18,6 +18,7 @@ Route::livewire('/youtube', Livewire\YouTubeDownload::class)->name('youtube');
 Route::livewire('/papierkorb', Livewire\TrashPage::class)->name('trash');
 Route::livewire('/kuenstler', Livewire\Artists::class)->name('artists');
 Route::livewire('/aufraeumen', Livewire\Cleanup::class)->name('cleanup');
+Route::livewire('/aufraeumen/zeichen', Livewire\TextRepairAssistant::class)->name('text-repair');
 Route::livewire('/verlauf', Livewire\History::class)->name('history');
 Route::livewire('/einstellungen', Livewire\SettingsPage::class)->name('settings');
 
@@ -40,3 +41,5 @@ Route::get('/einstellungen/export', function (Request $request, SettingsBackup $
     ]);
 })->name('settings.export');
 Route::get('/media/audio/{track}', [MediaController::class, 'audio'])->name('audio');
+Route::get('/media/rating/{track}', [MediaController::class, 'rating'])->name('rating');
+Route::post('/media/rating/{track}', [MediaController::class, 'rate'])->name('rating.set');

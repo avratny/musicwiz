@@ -3,6 +3,7 @@
 namespace App\Livewire;
 
 use App\Jobs\ImportMusicBrainzAliases;
+use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\ResearchArtistGroup;
 use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
@@ -12,6 +13,7 @@ use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistGroupAnalyzer;
+use App\Support\ArtistImages;
 use App\Support\ArtistNames;
 use App\Support\Covers;
 use App\Support\FileOps;
@@ -41,6 +43,27 @@ class Artists extends Component
 
     #[Url]
     public ?int $selected = null;
+
+    /** Verzeichnis: so viele Einträge, dann „Mehr anzeigen“ */
+    public int $artistLimit = 500;
+
+    public function moreArtists(): void
+    {
+        $this->artistLimit += 500;
+    }
+
+    /** Alle unbekannten Künstler im Hintergrund nachschlagen (läuft sonst nach jedem Scan von selbst) */
+    public function startPrefetch(): void
+    {
+        session()->flash('status', PrefetchUnknownArtists::start()
+            ? 'Vorladen gestartet – läuft im Hintergrund, etwa eine Abfrage pro Sekunde (Grenze von MusicBrainz).'
+            : 'Nichts vorzuladen – alle unbekannten Künstler sind schon nachgeschlagen (bzw. es läuft bereits).');
+    }
+
+    public function updatedQ(): void
+    {
+        $this->artistLimit = 500;
+    }
 
     public array $form = [];
 
@@ -276,6 +299,14 @@ class Artists extends Component
         if (! $a || $alias === '' || $alias === $a->name) {
             return;
         }
+        // gehört die Schreibweise schon einem anderen Künstler, nicht still umhängen
+        $taken = ArtistAlias::with('artist')->where('alias', $alias)->where('artist_id', '!=', $a->id)->first();
+        if ($taken) {
+            $this->addError('newAlias', '„'.$alias.'“ ist schon eine Schreibweise von „'.($taken->artist?->name ?? '?').'“ – dort zuerst entfernen.');
+
+            return;
+        }
+        $this->resetErrorBag('newAlias');
         ArtistAlias::updateOrCreate(['alias' => $alias], ['artist_id' => $a->id]);
         $this->newAlias = '';
     }
@@ -474,24 +505,12 @@ class Artists extends Component
 
     private function storeImage(string $tmp): void
     {
-        $a = Artist::findOrFail($this->selected);
-        $dir = rtrim(app(Settings::class)->get('artist_images'), '/');
-        app(FileOps::class)->ensureDir($dir);
-        $file = self::imageFile($a->name, 'jpg');
-        if ($a->image && $a->image !== $file && is_file($dir.'/'.$a->image)) {
-            app(FileOps::class)->trash($dir.'/'.$a->image);
-        } elseif (is_file($dir.'/'.$file)) {
-            app(FileOps::class)->trash($dir.'/'.$file);
-        }
-        copy($tmp, $dir.'/'.$file);
-        @unlink($tmp);
-        $a->update(['image' => $file]);
-        $a->touch();
+        ArtistImages::store(Artist::findOrFail($this->selected), $tmp);
     }
 
     public static function imageFile(string $name, string $ext): string
     {
-        return str_replace(['/', ':', '\\', '?', '*', '"', '<', '>', '|'], ['-', '-', '-', '', '', "'", '', '', ''], $name).'.'.($ext ?: 'jpg');
+        return ArtistImages::fileName($name, $ext);
     }
 
     // ---------------------------------------------------------------- Vorschläge
@@ -715,9 +734,10 @@ class Artists extends Component
     {
         $data = ['genreOptions' => $genres->options()];
         if ($this->tab === 'directory') {
-            $data['artists'] = Artist::withCount('aliases')
-                ->when($this->q !== '', fn ($q) => $q->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%')))
-                ->orderByRaw('name COLLATE NOCASE')->limit(500)->get();
+            $query = Artist::query()
+                ->when($this->q !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%'))));
+            $data['artistTotal'] = (clone $query)->count();
+            $data['artists'] = $query->withCount('aliases')->orderByRaw('name COLLATE NOCASE')->limit($this->artistLimit)->get();
             $data['artist'] = $this->selected ? Artist::with('aliases')->find($this->selected) : null;
             $data['genreSuggestion'] = $data['artist'] ? $genres->suggestForArtist($data['artist']) : null;
             $data['artistTracks'] = $data['artist'] ? $this->sampleTracks($data['artist']) : [];
@@ -757,6 +777,7 @@ class Artists extends Component
             $data['covers'] = Album::whereIn('id', $albumIds)->get()->mapWithKeys(fn ($a) => [$a->id => $a->coverUrl(120)])->all();
         } else {
             $data += $this->wizData($directory, app(ArtistGroupAnalyzer::class));
+            $data['prefetch'] = PrefetchUnknownArtists::status();
         }
 
         return view('livewire.artists', $data);

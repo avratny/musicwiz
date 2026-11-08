@@ -19,6 +19,20 @@ class TagReader
      */
     public function readMany(array $paths): array
     {
+        $out = $this->readPass($paths);
+        // Lesefehler (Share kurz weg, Datei gesperrt): nach kurzer Pause einmal neu versuchen
+        $failed = array_keys(array_filter($out, fn ($a) => $a['read_failed']));
+        if ($failed) {
+            usleep((int) config('musicwiz.read_retry_ms', 500) * 1000);
+            $out = array_replace($out, $this->readPass($failed));
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, array> */
+    private function readPass(array $paths): array
+    {
         $writable = array_values(array_filter($paths, fn ($p) => TagTool::canWrite($p)));
         $toolResults = [];
         try {
@@ -64,19 +78,25 @@ class TagReader
             break;
         }
 
+        // MP3/FLAC ohne Ergebnis vom Tag-Tool (Fehler bzw. Tag-Tool ganz ausgefallen) gilt als nicht gelesen:
+        // die getID3-Tags sehen andere Felder (z. B. Kommentar = Kategorie) und dürfen den Index nicht überschreiben
+        $toolFailed = TagTool::canWrite($path) && ! ($toolResult['ok'] ?? false);
         if ($toolResult && ($toolResult['ok'] ?? false)) {
             $tags = $toolResult['tags'];
             $attrs['error'] = null;
         } else {
             $tags = $this->fromGetID3($c);
-            if ($toolResult && ! ($toolResult['ok'] ?? false)) {
-                $attrs['error'] = $toolResult['error'] ?? 'Tags nicht lesbar';
+            if ($toolFailed) {
+                $attrs['error'] = $toolResult['error'] ?? 'Tags nicht lesbar (Tag-Tool nicht erreichbar)';
             }
         }
 
-        if (($attrs['duration'] ?? 0) < 0.1) {
+        $noAudio = ($attrs['duration'] ?? 0) < 0.1;
+        if ($noAudio) {
             $attrs['error'] = trim('Keine Audiodaten – Datei ist defekt oder unvollständig. '.($attrs['error'] ?? ''));
         }
+        // nur intern: Scanner behält bei einem Lesefehler die bisherigen Werte (siehe Scanner::store)
+        $attrs['read_failed'] = $toolFailed || $noAudio;
 
         return $attrs + self::normalize($tags);
     }
@@ -101,6 +121,10 @@ class TagReader
             'genres' => $list($tags['genres'] ?? []),
             'comment' => $str($tags['comment'] ?? ''),
             'compilation' => (bool) ($tags['compilation'] ?? false),
+            // Herkunft (z. B. „YouTube“ bei Downloads) – nur gelesen, nie geschrieben
+            'source' => $str($tags['source'] ?? ''),
+            // Bewertung 1–5 Sterne (MP3: POPM, FLAC: RATING), ohne = null
+            'rating' => max(0, min(5, (int) ($tags['rating'] ?? 0))) ?: null,
         ];
     }
 

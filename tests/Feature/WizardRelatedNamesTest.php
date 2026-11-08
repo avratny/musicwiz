@@ -74,6 +74,7 @@ class WizardRelatedNamesTest extends TestCase
 
         Livewire::test(Artists::class, ['tab' => 'unknown'])
             ->call('wizLookup')
+            ->call('wizLookupDetails')
             ->assertSee('laut MusicBrainz eine Schreibweise')
             ->assertDontSee('René Baumann – ', false)
             ->call('wizSave');

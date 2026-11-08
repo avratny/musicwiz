@@ -6,6 +6,7 @@ use App\Models\Operation;
 use App\Models\Track;
 use App\Support\CleanupChecks;
 use App\Support\FileOps;
+use App\Support\Fingerprint;
 use App\Support\OperationRunner;
 use App\Support\Quality;
 use App\Support\Scanner;
@@ -13,6 +14,7 @@ use App\Support\Settings;
 use App\Support\TagTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class ConflictBestTest extends TestCase
@@ -51,8 +53,52 @@ class ConflictBestTest extends TestCase
         return $path;
     }
 
+    /** Für Tests mit künstlichen Dateien ohne echten Klang: Klangvergleich gilt als "dasselbe Lied". */
+    private function sameSoundAlways(): void
+    {
+        $this->app->instance(Fingerprint::class, new class extends Fingerprint
+        {
+            public function similarity(string $a, string $b): ?float
+            {
+                return 1.0;
+            }
+        });
+    }
+
+    /** Echtes Audio: kleine "Melodie" (Ton wechselt je nach Variante), als FLAC oder MP3. */
+    private function song(string $rel, int $variant, string $format, array $tags): string
+    {
+        $path = $this->base.'/library/artists/'.$rel;
+        File::ensureDirectoryExists(dirname($path));
+        [$f, $step] = $variant === 1 ? [300, 200] : [500, 150];
+        $expr = "0.5*sin(2*PI*($f+$step*floor(mod(t*".($variant + 1).'\,4)))*t)';
+        Process::run(['ffmpeg', '-loglevel', 'error', '-f', 'lavfi', '-i', "aevalsrc=$expr:s=44100:d=30", ...($format === 'mp3' ? ['-b:a', '128k'] : []), $path])->throw();
+        app(TagTool::class)->write([['path' => $path, 'tags' => $tags]]);
+
+        return $path;
+    }
+
+    public function test_only_the_same_song_is_ever_trashed(): void
+    {
+        $tags = ['artist' => 'ABBA', 'title' => 'Waterloo'];
+        // dieselbe Aufnahme, FLAC ersetzt MP3
+        $same = Quality::compare($this->song('Old/a.flac', 1, 'flac', $tags), $this->song('New/a.mp3', 1, 'mp3', $tags));
+        $this->assertSame('source', $same['winner'], $same['reason']);
+        // gleiche Tags und Länge, aber anderer Klang
+        $other = Quality::compare($this->song('Old/b.flac', 1, 'flac', $tags), $this->song('New/b.mp3', 2, 'mp3', $tags));
+        $this->assertSame('both', $other['winner']);
+        $this->assertStringContainsString('klingt anders', $other['reason']);
+        // gleicher Klang, aber laut Tags ein anderes Lied
+        $tagged = Quality::compare($this->song('Old/c.flac', 1, 'flac', $tags), $this->song('New/c.mp3', 1, 'mp3', ['artist' => 'ABBA', 'title' => 'SOS']));
+        $this->assertSame('both', $tagged['winner']);
+        $this->assertStringContainsString('anderes Lied', $tagged['reason']);
+        // nicht vergleichbar (kein Klang): im Zweifel beide behalten
+        $this->assertSame('both', Quality::compare($this->file('Old/d (2).mp3', self::mp3(320)), $this->file('New/d.mp3', self::mp3(128)))['winner']);
+    }
+
     public function test_keep_best_version_on_occupied_target(): void
     {
+        $this->sameSoundAlways();
         $cases = [
             // [Quelle, Ziel, Gewinner]
             'identisch' => [self::mp3(128), self::mp3(128), 'target'],
@@ -153,6 +199,7 @@ class ConflictBestTest extends TestCase
 
     public function test_flac_versions_compared_by_resolution_and_length(): void
     {
+        $this->sameSoundAlways();
         $pairs = [
             'hires' => [self::flac(96000, 24, 200), self::flac(44100, 16, 200), 'source', 'höhere Auflösung'],
             'gleich' => [self::flac(44100, 16, 200, 'x'), self::flac(44100, 16, 200.5), 'target', 'gleichwertig'],

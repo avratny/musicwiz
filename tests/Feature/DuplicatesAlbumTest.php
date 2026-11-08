@@ -136,4 +136,20 @@ class DuplicatesAlbumTest extends TestCase
         app(Scanner::class)->scan('library');
         $this->assertSame([], $this->findings());
     }
+
+    public function test_same_title_on_other_disc_is_no_copy_but_same_slot_is(): void
+    {
+        // "Intro" auf CD 1 und CD 2 – zwei echte Titel
+        $this->track('A/ABBA/Box/1-01 - Intro.mp3', 128, ['artist' => 'ABBA', 'title' => 'Intro', 'album' => 'Box', 'disc' => '1', 'track' => '1']);
+        $this->track('A/ABBA/Box/2-01 - Intro.mp3', 128, ['artist' => 'ABBA', 'title' => 'Intro', 'album' => 'Box', 'disc' => '2', 'track' => '1']);
+        // "(2)"-Kopie mit denselben Tags im selben Album – echte Kopie
+        $orig = $this->track('A/ABBA/Box/1-02 - SOS.mp3', 320, ['artist' => 'ABBA', 'title' => 'SOS', 'album' => 'Box', 'disc' => '1', 'track' => '2']);
+        $copy = $this->track('A/ABBA/Box/1-02 - SOS (2).mp3', 128, ['artist' => 'ABBA', 'title' => 'SOS', 'album' => 'Box', 'disc' => '1', 'track' => '2']);
+        app(Scanner::class)->scan('library');
+
+        $findings = $this->findings();
+        $this->assertArrayNotHasKey('ABBA – Intro', $findings);
+        $this->assertSame([['type' => 'trash', 'path' => $copy]], $findings['ABBA – SOS']['actions']);
+        $this->assertFileExists($orig);
+    }
 }

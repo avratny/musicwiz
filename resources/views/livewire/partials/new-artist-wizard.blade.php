@@ -1,10 +1,29 @@
 {{-- Neue Künstler: einer nach dem anderen erfassen (Schreibweise, MusicBrainz, Discogs, Bild, Genre) --}}
 <div class="flex min-h-0 flex-1 overflow-hidden">
-    {{-- Warteschlange --}}
+    {{-- Warteschlange (nicht im Einzelmodus = Dialog im Editor) --}}
+    @unless ($wizSingle)
     <div class="flex w-72 shrink-0 flex-col border-r border-zinc-800">
         <div class="border-b border-zinc-800 px-4 py-3 text-sm text-zinc-400">
             <span class="font-semibold text-zinc-200">{{ count($wizQueue) }}</span> Namen noch nicht im Verzeichnis
             @if ($wizSkipped)<span class="text-zinc-500"> · {{ count($wizSkipped) }} übersprungen</span>@endif
+            {{-- Vorladen im Hintergrund: Treffer, Bilder und Genres liegen dann schon bereit --}}
+            @php $pf = $prefetch ?? []; @endphp
+            <div class="mt-2 text-xs" @if ($pf['running'] ?? false) wire:poll.5s @endif>
+                @if ($pf['running'] ?? false)
+                    @php $left = max(0, ($pf['total'] ?? 0) - ($pf['done'] ?? 0)); @endphp
+                    <div class="flex items-center gap-2 text-blue-300" title="Inbox-Künstler zuerst (für „… erfassen“ im Editor), dann die Lib. Diese Liste hier zeigt nur Künstler aus der Lib – Inbox-Musik zählt erst nach dem Einordnen.">
+                        <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
+                        Vorladen: {{ $pf['done'] ?? 0 }} von {{ $pf['total'] ?? 0 }} · noch ca. {{ max(1, (int) ceil($left * 4 / 60)) }} Min.
+                    </div>
+                    @isset($pf['inbox'])
+                        <div class="mt-0.5 text-zinc-500">{{ $pf['inbox'] }} aus der Inbox, {{ $pf['library'] }} aus der Lib</div>
+                    @endisset
+                    @if (! empty($pf['current']))<div class="mt-0.5 truncate text-zinc-500" title="{{ $pf['current'] }}">gerade: {{ $pf['current'] }}</div>@endif
+                @else
+                    <button wire:click="startPrefetch" class="text-zinc-500 hover:text-white" title="Alle unbekannten Künstler aus Inbox und Lib im Hintergrund nachschlagen – läuft sonst nach jedem Scan von selbst">↓ Alle im Hintergrund vorladen</button>
+                    @if (! empty($pf['finished_at']))<span class="text-zinc-600"> · zuletzt {{ \Illuminate\Support\Carbon::parse($pf['finished_at'])->diffForHumans() }}</span>@endif
+                @endif
+            </div>
         </div>
         <div class="min-h-0 flex-1 overflow-y-auto p-2">
             @foreach (array_slice($wizQueue, 0, 300, true) as $qName => $qCount)
@@ -16,6 +35,7 @@
             @endforeach
         </div>
     </div>
+    @endunless
 
     <div class="min-h-0 flex-1 overflow-y-auto p-6">
         @if ($wizName === null)
@@ -30,11 +50,16 @@
             <div class="max-w-5xl space-y-5" wire:key="wiz{{ md5($wizName) }}" x-data x-init="$wire.wizLookup()">
                 <div class="flex items-start gap-4">
                     <div class="min-w-0 flex-1">
-                        <div class="text-xs tracking-wide text-zinc-500 uppercase">Neuer Künstler · {{ $wizCount }} {{ $wizCount === 1 ? 'Datei' : 'Dateien' }} im Bestand</div>
+                        <div class="text-xs tracking-wide text-zinc-500 uppercase">Neuer Künstler · {{ $wizCount }} {{ $wizSingle ? 'Titel in diesem Album' : ($wizCount === 1 ? 'Datei' : 'Dateien').' im Bestand' }}</div>
                         <h2 class="truncate text-2xl font-semibold" title="{{ $wizName }}">{{ $wizName }}</h2>
                     </div>
-                    <button wire:click="wizSkip" class="btn-ghost">Überspringen</button>
-                    <button wire:click="wizSave" wire:loading.attr="disabled" class="btn-primary">Speichern &amp; weiter</button>
+                    @if ($wizSingle)
+                        <button wire:click="close" class="btn-ghost">Abbrechen</button>
+                        <button wire:click="wizSave" wire:loading.attr="disabled" class="btn-primary">Speichern</button>
+                    @else
+                        <button wire:click="wizSkip" class="btn-ghost">Überspringen</button>
+                        <button wire:click="wizSave" wire:loading.attr="disabled" class="btn-primary">Speichern &amp; weiter</button>
+                    @endif
                 </div>
 
                 @if ($wizCombined)
@@ -107,8 +132,15 @@
                     @endif
                 </section>
 
-                <div wire:loading.flex wire:target="wizLookup, wizSearchAgain" class="items-center gap-2 text-sm text-blue-300">
-                    <span class="size-2 animate-pulse rounded-full bg-blue-400"></span> sucht bei MusicBrainz und Discogs und prüft eure Lieder …
+                @if ($wizLoaded)
+                    <div class="-mt-2 flex justify-end">
+                        <button wire:click="wizRefresh" class="text-xs text-zinc-500 hover:text-white" title="Ohne Zwischenspeicher neu bei MusicBrainz, Discogs und den Bilderdiensten fragen (Ergebnisse werden sonst {{ config('musicwiz.lookup_cache_days') }} Tage gemerkt)">
+                            <span wire:loading.remove wire:target="wizRefresh">↻ Aktuelle Daten laden</span><span wire:loading wire:target="wizRefresh">lädt aktuelle Daten …</span>
+                        </button>
+                    </div>
+                @endif
+                <div wire:loading.flex wire:target="wizLookup, wizSearchAgain, wizRefresh" class="items-center gap-2 text-sm text-blue-300">
+                    <span class="size-2 animate-pulse rounded-full bg-blue-400"></span> sucht bei MusicBrainz und Discogs und prüft eure Lieder … (MusicBrainz erlaubt nur etwa eine Abfrage pro Sekunde)
                 </div>
 
                 @if ($wizLoaded)
@@ -160,6 +192,12 @@
                         </section>
                     </div>
 
+                    @if (! $wizDetailsLoaded)
+                        {{-- zweiter Schritt: Treffer sind schon da, Bilder/Genres/Schreibweisen kommen nach --}}
+                        <div wire:key="wizd{{ md5($wizName.'|'.$wizSearched) }}" x-data x-init="$wire.wizLookupDetails()" class="flex items-center gap-2 text-sm text-blue-300">
+                            <span class="size-2 animate-pulse rounded-full bg-blue-400"></span> lädt Bilder, Genres und Schreibweisen …
+                        </div>
+                    @else
                     {{-- 4. Bild --}}
                     <section class="card p-4">
                         <div class="mb-2 flex items-center gap-3">
@@ -167,7 +205,7 @@
                             <button wire:click="wizFindImages" class="btn-ghost btn-sm" title="mit der gewählten MusicBrainz-/Discogs-ID neu suchen">
                                 <span wire:loading.remove wire:target="wizFindImages">Neu suchen</span><span wire:loading wire:target="wizFindImages">sucht …</span>
                             </button>
-                            <span class="text-xs text-zinc-500">Klick wählt aus – gespeichert wird mit „Speichern &amp; weiter“.</span>
+                            <span class="text-xs text-zinc-500">Klick wählt aus – gespeichert wird mit „{{ $wizSingle ? 'Speichern' : 'Speichern & weiter' }}“.</span>
                         </div>
                         @if ($wizImages)
                             <div class="grid grid-cols-6 gap-3">
@@ -194,6 +232,7 @@
                         </div>
                         @include('livewire.partials.genre-proposals', ['proposals' => $wizGenres, 'current' => $wizGenre, 'model' => 'wizGenre'])
                     </section>
+                    @endif
                 @endif
             </div>
         @endif

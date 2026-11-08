@@ -4,6 +4,7 @@ namespace App\Support;
 
 use App\Jobs\RunAutoCleanup;
 use App\Models\Operation;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Aufräum-Automatiken: Prüfungen, die in den Einstellungen je Kategorie freigegeben sind,
@@ -15,6 +16,11 @@ class AutoCleanup
     public const OTHER = '_other';
 
     /** Riskantere Prüfungen bekommen in der Oberfläche einen Hinweis. */
+    /** Mehr Schritte auf einmal laufen nie ohne Nachfrage (z. B. nach geändertem Muster: sonst wandert die ganze Lib). */
+    public const LIMIT = 100;
+
+    private const HELD_KEY = 'auto-cleanup.held';
+
     public const RISKY = ['duplicates' => 'verschiebt Dateien in den Papierkorb', 'misplaced' => 'verschiebt Dateien im Bestand', 'leftovers' => 'entfernt leere Ordner und Reste', 'broken' => 'verschiebt defekte Dateien in den Papierkorb'];
 
     public function __construct(private Settings $settings, private CleanupChecks $checks) {}
@@ -77,6 +83,21 @@ class AutoCleanup
         return $out;
     }
 
+    /**
+     * "Defekt" ohne Nachfrage nur für Dateien, die älter als ein Tag sind (nicht gerade beim Kopieren) und auch beim
+     * frischen Nachlesen keine Audiodaten haben (nicht bloß beim Scan kurz unlesbar).
+     */
+    public static function stillBroken(string $path): bool
+    {
+        clearstatcache(true, $path);
+        if (! is_file($path) || @filemtime($path) > time() - 86400) {
+            return false;
+        }
+        $info = @(new \getID3)->analyze($path);
+
+        return (float) ($info['playtime_seconds'] ?? 0) < 0.1;
+    }
+
     /** Automatiken im Hintergrund starten (ein Job, Schritte nacheinander). */
     public function run(): bool
     {
@@ -97,6 +118,7 @@ class AutoCleanup
     public function runNow(OperationRunner $runner): array
     {
         $ops = [];
+        $held = [];
         $definitions = CleanupChecks::definitions();
         $config = $this->config();
         foreach (array_keys($definitions) as $check) {
@@ -110,10 +132,18 @@ class AutoCleanup
             $findings = 0;
             foreach ($this->checks->findings($check) as $f) {
                 $selected = array_values(array_filter($f['actions'], fn ($a) => ! empty($categories[$this->categoryOf($a)])));
+                if ($check === 'broken') {
+                    $selected = array_values(array_filter($selected, fn ($a) => self::stillBroken($a['path'] ?? '')));
+                }
                 if ($selected) {
                     $findings++;
                     array_push($actions, ...$selected);
                 }
+            }
+            if (count($actions) > self::LIMIT) {
+                $held[$check] = ['label' => $definitions[$check][0], 'count' => count($actions)];
+
+                continue;
             }
             if ($actions) {
                 $op = Operation::create(['type' => 'auto', 'description' => 'Automatisch: '.$definitions[$check][0].' ('.$findings.' Funde)',
@@ -123,6 +153,18 @@ class AutoCleanup
             }
         }
 
+        $held ? Cache::forever(self::HELD_KEY, ['at' => now()->toIso8601String(), 'checks' => $held]) : Cache::forget(self::HELD_KEY);
+
         return $ops;
+    }
+
+    /**
+     * Beim letzten Lauf angehaltene Automatiken (zu viele Schritte) – zum Prüfen über „Aufräumen“.
+     *
+     * @return array<string, array{label:string, count:int}>
+     */
+    public function held(): array
+    {
+        return Cache::get(self::HELD_KEY)['checks'] ?? [];
     }
 }

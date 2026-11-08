@@ -40,6 +40,12 @@ class Track extends Model
         return $out;
     }
 
+    /** Aus einem YouTube-Download (Tag SOURCE, bleibt beim Einordnen erhalten). */
+    public function isFromYouTube(): bool
+    {
+        return strcasecmp((string) $this->source, 'YouTube') === 0;
+    }
+
     public function durationLabel(): string
     {
         $s = (int) round($this->duration ?? 0);

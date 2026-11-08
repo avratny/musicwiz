@@ -194,13 +194,15 @@ class EinordnenFlowTest extends TestCase
         $album = Album::firstOrFail();
 
         Livewire::test(Inbox::class)->assertOk()->assertSee('Sunrise');
-        Livewire::test(Library::class)->assertOk()->set('q', 'King')->assertOk()->set('category', 'LIB')->assertOk();
+        Livewire::test(Library::class)->assertOk()->set('q', 'King')->assertOk()->call('showSampler')->assertOk()->call('showArtist', 'Yanou')->assertOk()->set('q', '')->call('showRecent')->assertSee('Zuletzt hinzugefügt')->call('showAll')->assertSet('recent', false);
         Livewire::test(History::class)->assertOk();
         Livewire::test(Cleanup::class)->assertOk();
         Livewire::test(SettingsPage::class)->assertOk()->set('tab', 'categories')->assertSee('library/artists/Y/Yanou/Sunrise (2006)/2-05 - King of My Castle');
 
         Livewire::test(AlbumEditor::class, ['album' => $album])
             ->assertOk()
+            ->assertSet('fields.category', 'LIB') // nur ein Künstler: Lib vorausgewählt
+            ->set('fields.category', null)
             ->call('preview', true)->assertHasErrors('category')
             ->set('fields.category', 'LIB')
             ->call('preview', true)
@@ -209,5 +211,25 @@ class EinordnenFlowTest extends TestCase
 
         $this->assertSame('done', Operation::latest('id')->first()->status);
         $this->assertFileExists($this->base.'/library/artists/Y/Yanou/Sunrise (2006)/02 - Sunrise.mp3');
+    }
+
+    public function test_inbox_preselects_lib_only_for_a_single_artist(): void
+    {
+        $album = function (string $dir, array $artists, string $albumartist = '') {
+            $a = Album::create(['location' => 'inbox', 'dir' => $dir, 'title' => 'X', 'track_count' => count($artists)]);
+            foreach ($artists as $i => $artist) {
+                Track::create(['album_id' => $a->id, 'location' => 'inbox', 'path' => "$dir/$i.mp3", 'dir' => $dir, 'filename' => "$i.mp3", 'ext' => 'mp3',
+                    'title' => "T$i", 'artist' => $artist, 'albumartist' => $albumartist ?: null, 'album' => 'X', 'track' => (string) ($i + 1), 'duration' => 100]);
+            }
+
+            return $a->id;
+        };
+
+        Livewire::test(AlbumEditor::class, ['album' => $album('/i/a', ['Yanou', 'Yanou feat. Liz', 'yanou'])])
+            ->assertSet('fields.category', 'LIB')->assertSee('alle Titel haben denselben Künstler')
+            ->set('fields.category', 'BLACKHOLE')->assertDontSee('alle Titel haben denselben Künstler');
+        Livewire::test(AlbumEditor::class, ['album' => $album('/i/b', ['Yanou', 'ATB'])])->assertSet('fields.category', null);
+        Livewire::test(AlbumEditor::class, ['album' => $album('/i/c', ['Yanou', ''])])->assertSet('fields.category', null);
+        Livewire::test(AlbumEditor::class, ['album' => $album('/i/d', ['Yanou', 'Yanou'], 'Various Artists')])->assertSet('fields.category', null);
     }
 }

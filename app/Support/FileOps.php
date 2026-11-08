@@ -85,10 +85,18 @@ class FileOps
         return true;
     }
 
-    /** Gleiche Datei unter anderem Namen (Groß/klein, Unicode-Form)? Dann nur umbenennen, nie als Konflikt behandeln. */
+    /**
+     * Gleiche Datei unter anderem Namen (Groß/klein, Unicode-Form)? Dann nur umbenennen, nie als Konflikt behandeln.
+     * Steht das Ziel in genau dieser Schreibweise als eigener Eintrag im Ordner, ist es eine andere Datei
+     * (Dateisystem mit Unterscheidung von Groß/klein, z. B. lokale Linux-Platte) – dann Konflikt statt Überschreiben.
+     */
     private static function caseOnly(string $from, string $to): bool
     {
-        return strcasecmp($from, $to) === 0 || self::sameFile($from, $to);
+        if (self::sameFile($from, $to)) {
+            return true;
+        }
+
+        return strcasecmp($from, $to) === 0 && ! self::existsExact($to);
     }
 
     /**
@@ -170,8 +178,29 @@ class FileOps
         }
     }
 
+    /** Enthält der Ordner etwas außer Resten wie .DS_Store? (false auch, wenn er fehlt oder nicht lesbar ist) */
+    public static function hasEntries(string $dir): bool
+    {
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return false;
+        }
+        foreach ($entries as $e) {
+            if ($e !== '.' && $e !== '..' && ! in_array($e, config('musicwiz.junk_files'), true) && ! str_starts_with($e, '._')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function ensureDir(string $dir): void
     {
+        // leerer Basisordner = Share vermutlich nicht eingehängt: nichts ins Mount-Verzeichnis darunter anlegen
+        $base = $this->settings->base();
+        if ($base !== '' && str_starts_with($dir.'/', $base.'/') && ! is_dir($dir) && ! self::hasEntries($base)) {
+            throw new RuntimeException('Basisordner '.$base.' ist leer oder nicht erreichbar – ist das Share eingehängt? Ordner wird nicht angelegt: '.$dir);
+        }
         $this->fixCase($dir);
         if (! is_dir($dir) && ! @mkdir($dir, 0775, true) && ! is_dir($dir)) {
             throw new RuntimeException('Ordner kann nicht angelegt werden: '.$dir);

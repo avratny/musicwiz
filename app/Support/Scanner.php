@@ -56,12 +56,32 @@ class Scanner
     }
 
     /**
+     * Eingestellte Wurzel, unter der laut Index Musik liegt, die aber fehlt oder leer ist – meist ist das Share nicht
+     * eingehängt. Aktionen darauf würden sonst ins leere Mount-Verzeichnis schreiben (Dateien später unter dem Share versteckt).
+     *
+     * @param  list<string|null>|null  $paths  nur Wurzeln prüfen, unter denen einer dieser Pfade liegt
+     */
+    public function unreachableRoot(?array $paths = null): ?string
+    {
+        foreach ($this->configuredRoots() as $root) {
+            if ($root === '' || ($paths !== null && ! collect($paths)->contains(fn ($p) => $p && str_starts_with($p.'/', $root.'/')))) {
+                continue;
+            }
+            if (! FileOps::hasEntries($root) && Track::where('path', 'like', $root.'/%')->exists()) {
+                return $root;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param  bool  $allowMassRemoval  auch entfernen, wenn auffällig viele bekannte Dateien fehlen (nach Rückfrage)
      */
     public function scan(string $location, bool $allowMassRemoval = false): array
     {
         $this->status(['running' => true, 'location' => $location, 'phase' => 'Ordner lesen', 'done' => 0, 'total' => 0, 'started_at' => now()->toIso8601String(),
-            'error' => null, 'held' => null, 'unreadable' => null]);
+            'error' => null, 'held' => null, 'unreadable' => null, 'auto_skipped' => null]);
 
         // Fehlt eine Wurzel, unter der schon Dateien erfasst sind (Share weg, Mount fehlt), nichts anfassen
         foreach ($this->configuredRoots() as $root) {
@@ -276,7 +296,8 @@ class Scanner
 
                 continue;
             }
-            if (in_array($entry, $junk, true) || str_starts_with($entry, '._')) {
+            // Zwischendatei eines abgebrochenen Tag-Schreibens: das Original ist unverändert, die Kopie ist ein Rest
+            if (in_array($entry, $junk, true) || str_starts_with($entry, '._') || str_ends_with($entry, TagTool::WRITE_SUFFIX)) {
                 $leftovers[$path] = 'junk';
 
                 continue;
@@ -383,7 +404,23 @@ class Scanner
     {
         $now = now();
         $rows = [];
+        // Lesefehler bei einer Datei, die schon mit gültigen Daten im Index steht: alte Werte behalten, nur den Fehler
+        // vermerken und beim nächsten Scan neu lesen (mtime 0). Sonst würde ein kurzer Share-Aussetzer Tags und Länge
+        // löschen – und Aufräumen hielte die Datei für defekt bzw. das Album für uneinheitlich.
+        $failed = array_keys(array_filter($read, fn ($a) => $a['read_failed'] ?? false));
+        $keep = $failed ? Track::whereIn('path', $failed)->where('duration', '>=', 0.1)->pluck('path')->flip()->all() : [];
+        foreach (array_keys($keep) as $path) {
+            Track::where('path', $path)->update([
+                'error' => 'Zuletzt nicht lesbar, bisherige Werte behalten: '.($read[$path]['error'] ?? 'Lesefehler'),
+                'mtime' => 0,
+                'updated_at' => $now,
+            ]);
+        }
         foreach ($read as $path => $attrs) {
+            unset($attrs['read_failed']);
+            if (isset($keep[$path])) {
+                continue;
+            }
             $row = $attrs + [
                 'location' => $location,
                 'path' => $path,

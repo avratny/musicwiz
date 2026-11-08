@@ -112,7 +112,7 @@
     @endif
 
     @if ($assignPreview)
-        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm">
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data x-on:keydown.escape.window="$wire.set('assignPreview', null)">
             <div class="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: Zuordnung schreiben · {{ $assignPreview['steps'] }} Schritte</h2>

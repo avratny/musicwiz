@@ -54,6 +54,12 @@
                     @empty
                         <p class="p-4 text-sm text-zinc-500">Noch leer. Unter „Vorschläge“ und „Neue Künstler erfassen“ lassen sich Künstler übernehmen.</p>
                     @endforelse
+                    @if ($artistTotal > $artists->count())
+                        <div class="flex items-center gap-2 px-2 py-3">
+                            <button wire:click="moreArtists" class="btn-ghost btn-sm">Mehr anzeigen</button>
+                            <span class="text-xs text-zinc-500">{{ $artists->count() }} von {{ $artistTotal }}</span>
+                        </div>
+                    @endif
                 </div>
             </div>
 
@@ -185,6 +191,7 @@
                                         </button>
                                     @endif
                                 </div>
+                                @error('newAlias')<p class="mt-1 text-xs text-red-400">{{ $message }}</p>@enderror
                             </div>
                         </div>
                     </div>

@@ -5,7 +5,7 @@
 @endphp
 <div class="flex h-full flex-col overflow-hidden" @if ($operation) wire:poll.1s="checkOperation" @endif>
     <x-page-header :title="$fields['album'] ?: $album->title" :subtitle="$album->discCount() > 1 ? $album->discCount().' CDs: '.implode(' · ', array_map(fn ($d) => basename($d), $album->allDirs())) : $rel($album->dir)">
-        <a href="{{ $isInbox ? route('inbox') : route('library') }}" wire:navigate class="btn-ghost">← {{ $isInbox ? 'Inbox' : 'Lib' }}</a>
+        <a href="{{ $isInbox ? route('inbox') : route('library', $album->is_compilation ? ['sampler' => 1] : ['artist' => $album->folder_artist]) }}" wire:navigate class="btn-ghost">← {{ $isInbox ? 'Inbox' : 'Lib' }}</a>
     </x-page-header>
 
     @if ($existing && ($existing['album'] || $existing['songs']))
@@ -177,6 +177,9 @@
                         </button>
                     @endforeach
                 </div>
+                @if ($categoryGuessed && $fields['category'] === $categoryGuessed)
+                    <p class="mt-1 text-xs text-zinc-500">Vorausgewählt: alle Titel haben denselben Künstler.</p>
+                @endif
                 @error('category')<p class="mt-1 text-sm text-red-400">{{ $message }}</p>@enderror
             </div>
 
@@ -203,6 +206,9 @@
                     @if ($vaWarning)
                         <p class="mt-1 text-xs text-amber-300">„{{ $compilationArtist }}“ als Album-Interpret, aber die Kategorie ist keine Compilation.</p>
                     @endif
+                    @foreach ($albumArtistNew as $n)
+                        <button wire:click="$dispatch('open-new-artist', { name: @js($n), album: {{ $album->id }} })" class="mt-1 mr-2 text-xs text-violet-300 hover:underline" title="Im Künstlerverzeichnis erfassen (MusicBrainz, Bild, Genre)">neu: {{ $n }} erfassen …</button>
+                    @endforeach
                 @endif
             </div>
             @if ($persons)
@@ -306,7 +312,10 @@
                 @if ($hints && collect($hints)->contains('type', 'fix'))
                     <button wire:click="applyAllArtistCorrections" class="btn-ghost btn-sm text-blue-300">Alle Schreibweisen übernehmen</button>
                 @endif
-                <span class="ml-auto text-zinc-500">{{ count($rows) }} Tracks · {{ $album->durationLabel() }}</span>
+                <span class="ml-auto flex items-center gap-2 text-zinc-500" title="Album bewerten – setzt alle Titel">
+                    Album: <x-stars :value="collect($rows)->pluck('rating')->filter()->avg()" method="rateAlbum" :id="$album->id" />
+                </span>
+                <span class="text-zinc-500">{{ count($rows) }} Tracks · {{ $album->durationLabel() }}</span>
             </div>
             <div class="min-h-0 flex-1 overflow-auto">
                 <table class="w-full text-sm">
@@ -318,6 +327,7 @@
                         <th class="th">Interpret</th>
                         @if ($perTrackGenres)<th class="th w-40">Genre</th>@endif
                         <th class="th w-16 text-right">Länge</th>
+                        <th class="th w-28">Bewertung</th>
                         <th class="th w-10"></th>
                     </tr>
                     </thead>
@@ -326,7 +336,7 @@
                         $discCounts = array_count_values(array_map(fn ($r) => (string) $r['disc'], $rows));
                         $showDiscHeaders = count($discCounts) > 1 || $album->discCount() > 1;
                         $prevDisc = null;
-                        $cols = $perTrackGenres ? 7 : 6;
+                        $cols = $perTrackGenres ? 8 : 7;
                     @endphp
                     @foreach ($rows as $i => $row)
                         @if ($showDiscHeaders && (string) $row['disc'] !== $prevDisc)
@@ -386,7 +396,11 @@
                                     @if ($hints[$i]['type'] === 'fix')
                                         <button wire:click="applyArtist({{ $i }}, @js($hints[$i]['value']))" class="mt-0.5 text-[11px] text-blue-400 hover:underline">→ {{ $hints[$i]['value'] }}</button>
                                     @else
-                                        <span class="mt-0.5 block text-[11px] text-violet-300">neu: {{ $hints[$i]['value'] }}</span>
+                                        <span class="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-violet-300">neu:
+                                            @foreach ($hints[$i]['names'] as $n)
+                                                <button wire:click="$dispatch('open-new-artist', { name: @js($n), album: {{ $album->id }} })" class="hover:underline" title="Im Künstlerverzeichnis erfassen (MusicBrainz, Bild, Genre)">{{ $n }} erfassen …</button>
+                                            @endforeach
+                                        </span>
                                     @endif
                                 @endif
                             </td>
@@ -396,6 +410,7 @@
                                 </td>
                             @endif
                             <td class="td text-right text-zinc-400 tabular-nums">{{ $row['duration'] }}</td>
+                            <td class="td">@if ($row['writable'])<x-stars :value="$row['rating'] ?? null" method="rateTrack" :id="$row['id']" />@endif</td>
                             <td class="td">
                                 <x-play-button :id="$row['id']" :seconds="$row['seconds'] ?? null" :title="$row['title']" :artist="$row['artist']" :album="$fields['album']" :cover="$album->coverUrl(120)" />
                             </td>
@@ -432,7 +447,7 @@
             $conflicts = collect($plan['rows'])->where('conflict', true)->count();
             $show = fn ($v) => is_array($v) ? implode(' ; ', $v) : (is_bool($v) ? ($v ? 'ja' : 'nein') : ($v === '' ? '∅' : $v));
         @endphp
-        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" wire:key="preview">
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" wire:key="preview" x-data x-on:keydown.escape.window="$wire.closePreview()">
             <div class="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center gap-3 border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: {{ $planMove ? ($isInbox ? 'Einordnen' : 'Speichern & verschieben') : 'Tags speichern' }}</h2>
@@ -507,4 +522,7 @@
             </div>
         </div>
     @endif
+
+    {{-- „Neuen Künstler erfassen“ als Dialog, nur für den angeklickten Namen --}}
+    <livewire:new-artist-modal />
 </div>

@@ -125,6 +125,51 @@ class Settings
         return null;
     }
 
+    /**
+     * Ordner, die sich nicht vertragen: leer, "." bzw. "..", oder ineinander (z. B. Papierkorb in einem Kategorie-Ordner –
+     * dann würde der Papierkorb als Lib eingelesen und von Aufräumen zurückverschoben).
+     *
+     * @return list<string>
+     */
+    public function pathProblems(): array
+    {
+        $problems = [];
+        $norm = fn ($p) => rtrim((string) preg_replace('#/+#', '/', trim((string) $p)), '/');
+        if ($norm($this->get('base')) === '') {
+            $problems[] = 'Basisordner fehlt.';
+        }
+        $dirs = ['Inbox' => $this->inbox(), 'Papierkorb' => $norm($this->get('trash')), 'Künstlerbilder' => $norm($this->get('artist_images'))];
+        foreach ($this->categories() as $c) {
+            $parts = explode('/', trim((string) $c['folder'], '/ '));
+            if (trim((string) $c['folder'], '/ ') === '' || array_intersect($parts, ['.', '..', ''])) {
+                $problems[] = 'Kategorie „'.$c['name'].'“: Zielordner muss ein Unterordner des Basisordners sein (nicht leer, ohne „.“/„..“).';
+
+                continue;
+            }
+            $dirs['Kategorie „'.$c['name'].'“'] = $norm($this->categoryRoot($c));
+        }
+        foreach ($dirs as $label => $dir) {
+            if ($dir === '') {
+                $problems[] = $label.': Ordner fehlt.';
+            }
+        }
+        $dirs = array_filter($dirs);
+        foreach ($dirs as $a => $da) {
+            foreach ($dirs as $b => $db) {
+                if ($a === $b) {
+                    continue;
+                }
+                if (strcasecmp($da, $db) === 0) {
+                    $problems[] = $a.' und '.$b.' sind derselbe Ordner ('.$da.').';
+                } elseif (str_starts_with(mb_strtolower($db.'/'), mb_strtolower($da.'/'))) {
+                    $problems[] = $b.' liegt im Ordner von '.$a.' ('.$db.') – Ordner dürfen nicht ineinander liegen.';
+                }
+            }
+        }
+
+        return array_values(array_unique($problems));
+    }
+
     public function categoryRoot(array $category): string
     {
         return $this->base().'/'.$category['folder'];

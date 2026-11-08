@@ -12,7 +12,24 @@ use RuntimeException;
  */
 class Lookup
 {
+    /** true: Zwischenspeicher umgehen und mit frischen Daten überschreiben („Aktuelle Daten laden“) */
+    public bool $fresh = false;
+
     public function __construct(private Settings $settings) {}
+
+    /** Antworten der Dienste zwischenspeichern (Standard 10 Tage – Künstlerdaten ändern sich selten). */
+    private function cached(string $key, callable $fetch): mixed
+    {
+        $ttl = now()->addDays(max(1, (int) config('musicwiz.lookup_cache_days', 10)));
+        if ($this->fresh) {
+            $value = $fetch();
+            Cache::put($key, $value, $ttl);
+
+            return $value;
+        }
+
+        return Cache::remember($key, $ttl, $fetch);
+    }
 
     public static function userAgent(): string
     {
@@ -49,6 +66,73 @@ class Lookup
         usort($hits, fn ($a, $b) => [ArtistNames::compareKey($b['name']) === $key, $b['score']] <=> [ArtistNames::compareKey($a['name']) === $key, $a['score']]);
 
         return array_slice($hits, 0, $limit);
+    }
+
+    /**
+     * Welche dieser Künstler (MBIDs) haben eines dieser Lieder? Eine einzige Abfrage statt einer je Künstler und Titel
+     * (MusicBrainz erlaubt nur etwa eine Abfrage pro Sekunde).
+     *
+     * @param  list<string>  $mbids
+     * @param  list<string>  $titles
+     * @return array<string, string> MBID => gefundener Titel
+     */
+    public function musicbrainzArtistsWithSongs(array $mbids, array $titles): array
+    {
+        $titles = array_values(array_unique(array_filter(array_map(fn ($t) => trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $t)) ?: $t, $titles))));
+        if (! $mbids || ! $titles) {
+            return [];
+        }
+        $artists = implode(' OR ', array_map(fn ($m) => 'arid:'.$m, $mbids));
+        $songs = implode(' OR ', array_map(fn ($t) => 'recording:"'.addcslashes($t, '"\\').'"', $titles));
+        $data = $this->mb('recording', ['query' => '('.$artists.') AND ('.$songs.')', 'limit' => 50]);
+        $keys = array_map(fn ($t) => ArtistNames::compareKey($t), $titles);
+        $out = [];
+        foreach ($data['recordings'] ?? [] as $rec) {
+            foreach ($rec['artist-credit'] ?? [] as $credit) {
+                $id = $credit['artist']['id'] ?? null;
+                if (! $id || isset($out[$id]) || ! in_array($id, $mbids, true)) {
+                    continue;
+                }
+                // Titel aus unserer Liste, der in der Aufnahme steckt (Suche ist unscharf: "Runaway" findet auch "Runaway (Live)")
+                $recKey = ArtistNames::compareKey((string) ($rec['title'] ?? ''));
+                foreach ($keys as $i => $k) {
+                    if ($k !== '' && str_contains($recKey, $k)) {
+                        $out[$id] = $titles[$i];
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Künstler-Treffer bei MusicBrainz samt Liedprüfung (für den Assistenten „Neue Künstler“ und dessen Vorladen –
+     * gleiche Abfragen, damit das Vorladen den Cache füllt).
+     *
+     * @param  list<string>  $titles  eigene Liedtitel des Künstlers
+     * @return list<array> Treffer mit exact (Name passt) und songs (gefundene eigene Titel)
+     */
+    public function artistCandidates(string $name, array $titles): array
+    {
+        $key = ArtistNames::compareKey($name);
+        $hits = array_slice($this->musicbrainzArtists($name, 6), 0, 6);
+        foreach ($hits as &$h) {
+            $h['exact'] = ArtistNames::compareKey($h['name']) === $key;
+            $h['songs'] = [];
+        }
+        unset($h);
+        // Liedprüfung für die drei aussichtsreichsten Treffer: welcher hat eure Lieder? (Gleichnamige auseinanderhalten)
+        $check = array_column(array_slice(array_filter($hits, fn ($h) => $h['exact'] || $h['score'] >= 90), 0, 3), 'mbid');
+        $found = $this->musicbrainzArtistsWithSongs($check, array_slice($titles, 0, 3));
+        foreach ($hits as &$h) {
+            if (isset($found[$h['mbid']])) {
+                $h['songs'] = [$found[$h['mbid']]];
+            }
+        }
+
+        return $hits;
     }
 
     /** Gibt es bei diesem Künstler (MBID) eine Aufnahme mit diesem Titel? */
@@ -227,14 +311,17 @@ class Lookup
     {
         $key = 'mb:'.$path.':'.md5(json_encode($query));
 
-        return Cache::remember($key, now()->addDay(), function () use ($path, $query) {
-            // Höflich bleiben: höchstens etwa eine Abfrage pro Sekunde
-            $last = (float) Cache::get('mb:last', 0);
-            $wait = (float) config('musicwiz.mb_pause', 1.1) - (microtime(true) - $last);
-            if ($wait > 0) {
-                usleep((int) ($wait * 1_000_000));
-            }
-            Cache::put('mb:last', microtime(true));
+        return $this->cached($key, function () use ($path, $query) {
+            // Höflich bleiben: höchstens etwa eine Abfrage pro Sekunde – auch wenn Oberfläche und Vorladen (Worker)
+            // gleichzeitig fragen (Sperre über den gemeinsamen Cache)
+            Cache::lock('mb:pace', 10)->block(20, function () {
+                $last = (float) Cache::get('mb:last', 0);
+                $wait = (float) config('musicwiz.mb_pause', 1.1) - (microtime(true) - $last);
+                if ($wait > 0) {
+                    usleep((int) ($wait * 1_000_000));
+                }
+                Cache::put('mb:last', microtime(true));
+            });
             // MusicBrainz antwortet bei Last mit 503 – dann kurz warten und erneut fragen
             $r = Http::timeout(15)->retry(4, 1500, fn ($e) => $e instanceof RequestException && $e->response->status() === 503, throw: false)
                 ->withHeaders(['User-Agent' => self::userAgent(), 'Accept' => 'application/json'])
@@ -295,7 +382,7 @@ class Lookup
         }
         $key = 'discogs:'.$path.':'.md5(json_encode($query));
 
-        return Cache::remember($key, now()->addDay(), function () use ($path, $query) {
+        return $this->cached($key, function () use ($path, $query) {
             $r = Http::timeout(15)->withHeaders([
                 'User-Agent' => self::userAgent(),
                 'Authorization' => 'Discogs token='.trim($this->settings->get('discogs_token')),
@@ -312,14 +399,16 @@ class Lookup
 
     public function deezerArtistImages(string $name): array
     {
-        $r = Http::timeout(15)->get('https://api.deezer.com/search/artist', ['q' => $name, 'limit' => 6]);
-        if (! $r->successful()) {
-            throw new RuntimeException('Deezer antwortet nicht ('.$r->status().')');
-        }
+        return $this->cached('deezer:artist:'.md5($name), function () use ($name) {
+            $r = Http::timeout(15)->get('https://api.deezer.com/search/artist', ['q' => $name, 'limit' => 6]);
+            if (! $r->successful()) {
+                throw new RuntimeException('Deezer antwortet nicht ('.$r->status().')');
+            }
 
-        return array_values(array_filter(array_map(fn ($a) => empty($a['picture_xl']) || str_contains($a['picture_xl'], '/artist//') ? null : [
-            'url' => $a['picture_xl'], 'thumb' => $a['picture_medium'] ?? $a['picture_xl'], 'source' => 'Deezer: '.$a['name'], 'size' => '1000×1000',
-        ], $r->json('data') ?? [])));
+            return array_values(array_filter(array_map(fn ($a) => empty($a['picture_xl']) || str_contains($a['picture_xl'], '/artist//') ? null : [
+                'url' => $a['picture_xl'], 'thumb' => $a['picture_medium'] ?? $a['picture_xl'], 'source' => 'Deezer: '.$a['name'], 'size' => '1000×1000',
+            ], $r->json('data') ?? [])));
+        });
     }
 
     public function fanartArtistImages(string $mbid): array
@@ -328,22 +417,21 @@ class Lookup
         if ($key === '') {
             throw new RuntimeException('Kein Fanart.tv-API-Key in den Einstellungen.');
         }
-        $r = Http::timeout(15)->get('https://webservice.fanart.tv/v3/music/'.$mbid, ['api_key' => $key]);
-        if ($r->status() === 404) {
-            return [];
-        }
-        if (! $r->successful()) {
-            throw new RuntimeException('Fanart.tv antwortet nicht ('.$r->status().')');
-        }
-        $out = [];
-        foreach (['artistthumb', 'hdmusiclogo'] as $type) {
-            foreach ($r->json($type) ?? [] as $img) {
-                if ($type === 'artistthumb') {
-                    $out[] = ['url' => $img['url'], 'thumb' => str_replace('/fanart/', '/preview/', $img['url']), 'source' => 'Fanart.tv', 'size' => ''];
-                }
-            }
-        }
 
-        return $out;
+        return $this->cached('fanart:'.$mbid, function () use ($mbid, $key) {
+            $r = Http::timeout(15)->get('https://webservice.fanart.tv/v3/music/'.$mbid, ['api_key' => $key]);
+            if ($r->status() === 404) {
+                return [];
+            }
+            if (! $r->successful()) {
+                throw new RuntimeException('Fanart.tv antwortet nicht ('.$r->status().')');
+            }
+            $out = [];
+            foreach ($r->json('artistthumb') ?? [] as $img) {
+                $out[] = ['url' => $img['url'], 'thumb' => str_replace('/fanart/', '/preview/', $img['url']), 'source' => 'Fanart.tv', 'size' => ''];
+            }
+
+            return $out;
+        });
     }
 }

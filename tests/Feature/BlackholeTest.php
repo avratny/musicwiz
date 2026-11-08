@@ -74,15 +74,16 @@ class BlackholeTest extends TestCase
 
         $this->assertSame(['Alpha' => 1], app(ArtistDirectory::class)->namesInCollection());
         $this->assertSame(['LIB', 'LIB COMPILATION'], app(AutoCleanup::class)->columns());
-        Livewire::test(Library::class)->assertSee('1 Alben')->assertDontSee('BLACKHOLE')
+        Livewire::test(Library::class)->assertSee('1 Interpreten · 1 Alben')->assertSee('Alpha')->assertDontSee('Beta')->assertDontSee('BLACKHOLE')
             ->set('q', 'Zwei')->assertDontSee('Ungehört');
-        // Blackhole sieht aus wie die Lib: Buchstabe → Interpret → Alben, Klick klappt die Titel auf statt des Editors
+        // Blackhole sieht aus wie die Lib: alle Interpreten links, Klick aufs Album klappt die Titel auf statt des Editors
         $album = Album::where('location', 'blackhole')->first();
-        Livewire::test(Blackhole::class)->assertSee('1 Alben')->assertSee('BLACKHOLE COMPILATION')->assertDontSee('LIB COMPILATION')
-            ->call('setLetter', 'B')->assertSee('Beta')->assertDontSee('Alpha')
-            ->set('artist', 'Beta')->assertSee('Ungehört')->assertDontSee(route('library.album', $album))
+        Livewire::test(Blackhole::class)->assertSee('1 Interpreten · 1 Alben')->assertSee('Beta')->assertDontSee('Alpha')
+            ->assertSee('Alle')->assertSee('Ungehört')
+            ->call('showArtist', 'Beta')->assertSee('Ungehört')->assertDontSee(route('library.album', $album))
             ->set('open', $album->id)->assertSee('Album → In die Inbox')->assertSee('Zwei')
-            ->set('open', null)->set('q', 'Zwei')->assertSee('Ungehört')->assertSee('→ In die Inbox')->assertDontSee('Gehört (2000)');
+            ->set('open', null)->set('q', 'Zwei')->assertSee('Ungehört')->assertDontSee('Gehört (2000)')
+            ->call('setView', 'table')->assertSee('Zwei')->assertSee('→ In die Inbox');
 
         // Album im Blackhole wird nicht bearbeitet
         $this->assertStringContainsString('/blackhole?open='.$album->id, $album->editUrl());
@@ -120,10 +121,16 @@ class BlackholeTest extends TestCase
         $this->assertDirectoryDoesNotExist($dir);
         $this->assertSame(0, Track::where('location', 'blackhole')->count());
         $this->assertSame(2, Track::where('location', 'inbox')->count());
+        // Kategorie-Kommentar ist weg; vorausgewählt wird höchstens „Lib“ (nur ein Künstler), nie wieder Blackhole
+        $this->assertSame('', app(TagTool::class)->read([$back.'/01 - King of My Castle.mp3'])[$back.'/01 - King of My Castle.mp3']['tags']['comment']);
+        $inbox = Album::where('location', 'inbox')->where('dir', $back)->firstOrFail();
+        $this->assertNull($inbox->category);
+        Livewire::test(AlbumEditor::class, ['album' => $inbox->id])->assertSet('fields.category', 'LIB')->assertSet('categoryGuessed', 'LIB');
 
-        // rückgängig: wieder im Blackhole
+        // rückgängig: wieder im Blackhole, samt Kommentar
         OperationRunner::dispatchUndo(Operation::where('type', 'to_inbox')->latest('id')->first());
         $this->assertFileExists($dir.'/01 - King of My Castle.mp3');
+        $this->assertSame('BLACKHOLE', app(TagTool::class)->read([$dir.'/01 - King of My Castle.mp3'])[$dir.'/01 - King of My Castle.mp3']['tags']['comment']);
         $this->assertSame(1, Track::where('location', 'blackhole')->count());
     }
 

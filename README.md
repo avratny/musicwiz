@@ -60,7 +60,11 @@ Ausnahmen lassen sich zusätzlich unter **Einstellungen → Sicherung** als Date
 ### Update
 
 In Dockge beim Stack **„Update“** (zieht das neueste Image und startet neu). Die Datenbank wird beim Start automatisch
-aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.1.0-beta.1` setzen.
+aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.2` (immer die neueste 0.2.x)
+bzw. `MUSICWIZ_TAG=0.2.0` setzen.
+
+Update auf 0.2: Der nächste Scan liest einmal alle Dateien neu ein (neue Felder Bewertung und Herkunft) – das dauert je nach
+Sammlung eine Weile; Aufräum-Automatiken laufen erst nach einem vollständigen Scan.
 
 yt-dlp lässt sich zwischendurch auf der Seite **YouTube-Download** aktualisieren (YouTube ändert häufig etwas);
 mit dem nächsten Image-Update kommt ohnehin die aktuelle Version.
@@ -129,5 +133,5 @@ MP3 wird als ID3v2.4 geschrieben (einstellbar). Planung und Anforderungen: [`Mus
 Push auf `main` baut `ghcr.io/avratny/musicwiz:latest`. Für eine Version ein Tag pushen:
 
 ```sh
-git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1   # → Image :0.1.0-beta.1
+git tag v0.2.0 && git push origin v0.2.0   # → Image :0.2.0 und :0.2
 ```

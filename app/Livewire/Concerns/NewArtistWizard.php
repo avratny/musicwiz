@@ -2,11 +2,13 @@
 
 namespace App\Livewire\Concerns;
 
+use App\Jobs\PrefetchArtistLookup;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistGroupAnalyzer;
+use App\Support\ArtistImages;
 use App\Support\ArtistNames;
 use App\Support\Covers;
 use App\Support\Lookup;
@@ -55,16 +57,46 @@ trait NewArtistWizard
 
     public bool $wizLoaded = false;
 
+    /** Bilder, Genres und Schreibweisen geladen (zweiter Schritt nach den Treffern – die erscheinen so früher) */
+    public bool $wizDetailsLoaded = false;
+
+    /** „Aktuelle Daten laden“: auch der zweite Schritt (Bilder, Genres, Schreibweisen) geht am Zwischenspeicher vorbei */
+    public bool $wizFresh = false;
+
+    /** schon im Hintergrund vorgeladene Namen (nicht doppelt anstoßen) */
+    public array $wizPrefetched = [];
+
     /** Name, mit dem zuletzt bei MusicBrainz/Discogs gesucht wurde (anfangs der Bestandsname) */
     public string $wizSearched = '';
 
     public array $wizErrors = [];
 
+    /** Einzelmodus (Dialog im Album-Editor): nur dieser eine Name, keine Warteschlange */
+    public bool $wizSingle = false;
+
     /** @return array<string, int> offene Namen (häufigste zuerst) */
     private function wizQueue(ArtistDirectory $directory): array
     {
+        if ($this->wizSingle) {
+            return $this->wizName !== null ? [$this->wizName => count($this->wizSampleTracks())] : [];
+        }
+
         return array_diff_key($this->wizOpenNames($directory), array_flip($this->wizSkipped));
     }
+
+    /**
+     * Lieder des Namens zum Anhören und für die Liedprüfung bei MusicBrainz (Standard: aus dem Bestand;
+     * der Dialog im Editor nimmt die Lieder des Albums – auch aus der Inbox).
+     *
+     * @return list<array{id:int, seconds:?float, title:string, artist:string, album:string}>
+     */
+    protected function wizSampleTracks(): array
+    {
+        return app(ArtistGroupAnalyzer::class)->profiles()[(string) $this->wizName]['tracks'] ?? [];
+    }
+
+    /** Einzelmodus: nach Speichern/Zuordnen/Schließen (der Dialog meldet sich beim Editor). */
+    protected function wizFinished(): void {}
 
     /** @return array<string, int> alle Namen aus dem Bestand, die noch nicht im Verzeichnis stehen (auch übersprungene) */
     private function wizOpenNames(ArtistDirectory $directory): array
@@ -162,6 +194,8 @@ trait NewArtistWizard
         $this->wizMbid = $this->wizDiscogsId = $this->wizImage = null;
         $this->wizGenre = '';
         $this->wizLoaded = false;
+        $this->wizDetailsLoaded = false;
+        $this->wizFresh = false;
         $this->wizSearched = (string) $name;
     }
 
@@ -192,29 +226,13 @@ trait NewArtistWizard
     private function wizRunLookup(string $name, Lookup $lookup, ArtistGroupAnalyzer $analyzer): void
     {
         $this->wizLoaded = true;
+        $this->wizDetailsLoaded = false;
         $this->wizSearched = $name;
         $key = ArtistNames::compareKey($name);
-        // Liedtitel aus dem Bestand – immer zum Bestandsnamen, auch wenn mit einer anderen Schreibweise gesucht wird
-        $titles = array_slice(array_values($analyzer->profiles()[(string) $this->wizName]['titles'] ?? []), 0, 2);
 
         try {
-            $hits = array_slice($lookup->musicbrainzArtists($name, 6), 0, 6);
-            // Liedprüfung: welcher Treffer hat eure Lieder? (Gleichnamige Künstler sauber auseinanderhalten)
-            $checked = 0;
-            foreach ($hits as &$h) {
-                $h['exact'] = ArtistNames::compareKey($h['name']) === $key;
-                $h['songs'] = [];
-                if ($checked < 3 && ($h['exact'] || $h['score'] >= 90)) {
-                    $checked++;
-                    foreach ($titles as $t) {
-                        if ($lookup->musicbrainzRecordingByArtist($h['mbid'], $t)) {
-                            $h['songs'][] = $t;
-                            break;
-                        }
-                    }
-                }
-            }
-            unset($h);
+            // Liedtitel immer zum Bestandsnamen, auch wenn mit einer anderen Schreibweise gesucht wird
+            $hits = $lookup->artistCandidates($name, $this->wizTitles($analyzer));
             $this->wizMb = $hits;
             $withSongs = array_values(array_filter($hits, fn ($h) => $h['songs']));
             $exact = array_values(array_filter($hits, fn ($h) => $h['exact']));
@@ -235,9 +253,57 @@ trait NewArtistWizard
                 $this->wizErrors[] = 'Discogs: '.$e->getMessage();
             }
         }
+        // Bilder, Genres und Schreibweisen folgen mit wizLookupDetails() (von der Ansicht angestoßen)
+    }
 
+    /** Alles für den aktuellen Namen neu bei den Diensten holen – ohne Zwischenspeicher (der wird dabei erneuert). */
+    public function wizRefresh(Lookup $lookup, ArtistGroupAnalyzer $analyzer): void
+    {
+        if ((string) $this->wizName === '') {
+            return;
+        }
+        $lookup->fresh = true;
+        $this->wizFresh = true;
+        $this->wizMb = $this->wizDiscogs = $this->wizImages = $this->wizErrors = $this->wizGenres = $this->wizMbAliases = [];
+        $this->wizMbid = $this->wizDiscogsId = $this->wizImage = null;
+        $this->wizRunLookup($this->wizSearched ?: (string) $this->wizName, $lookup, $analyzer);
+    }
+
+    /** Zweiter Schritt: Genres, MusicBrainz-Schreibweisen und Bilder zur gewählten Auswahl. */
+    public function wizLookupDetails(Lookup $lookup): void
+    {
+        if (! $this->wizLoaded || $this->wizDetailsLoaded) {
+            return;
+        }
+        $this->wizDetailsLoaded = true;
+        if ($this->wizFresh) {
+            $lookup->fresh = true;
+            $this->wizFresh = false;
+        }
         $this->wizLoadGenres(true);
         $this->wizFindImages($lookup);
+    }
+
+    /** @return list<string> eigene Liedtitel des aktuellen Namens (für die Liedprüfung bei MusicBrainz) */
+    private function wizTitles(ArtistGroupAnalyzer $analyzer): array
+    {
+        return $this->wizSingle
+            ? array_slice(array_values(array_unique(array_filter(array_column($this->wizSampleTracks(), 'title')))), 0, 3)
+            : array_slice(array_values($analyzer->profiles()[(string) $this->wizName]['titles'] ?? []), 0, 3);
+    }
+
+    /** Die nächsten Namen im Hintergrund nachschlagen, damit sie beim Öffnen schon da sind (nicht bei sync-Warteschlange). */
+    private function wizPrefetch(array $names, callable $titles): void
+    {
+        if (config('queue.default') === 'sync') {
+            return;
+        }
+        foreach ($names as $name) {
+            if (! in_array($name, $this->wizPrefetched, true)) {
+                $this->wizPrefetched[] = $name;
+                PrefetchArtistLookup::dispatch($name, $titles($name));
+            }
+        }
     }
 
     /** Genre-Vorschläge zur aktuellen Auswahl (MusicBrainz-/Discogs-ID) laden; $fill: Feld mit dem besten Vorschlag belegen. */
@@ -322,6 +388,9 @@ trait NewArtistWizard
             'discogs_id' => $artist->discogs_id ?: $this->wizDiscogsId,
             'default_genre' => $artist->default_genre ?: ($this->wizGenre ?: null),
         ]))->save();
+        if (! $this->wizDetailsLoaded) {
+            $this->wizLoadMbAliases(); // vor dem zweiten Schritt gespeichert: Schreibweisen trotzdem mitnehmen
+        }
         $aliases = $this->wizStoreAliases($artist, $orig, $directory);
         // übrige Schreibweisen von MusicBrainz im Hintergrund mitnehmen (erkennt künftige Schreibweisen, z. B. aus der Inbox)
         if ($artist->mbid === $this->wizMbid && $this->wizMbAliases) {
@@ -333,10 +402,7 @@ trait NewArtistWizard
         }
         if ($this->wizImage && ! $artist->image) {
             try {
-                $previous = $this->selected;
-                $this->selected = $artist->id;
-                $this->storeImage($covers->download($this->wizImage));
-                $this->selected = $previous;
+                ArtistImages::store($artist, $covers->download($this->wizImage));
             } catch (\Throwable $e) {
                 $msg .= ' – Bild nicht gespeichert: '.$e->getMessage();
             }
@@ -374,6 +440,11 @@ trait NewArtistWizard
 
     private function wizNext(ArtistDirectory $directory): void
     {
+        if ($this->wizSingle) {
+            $this->wizFinished();
+
+            return;
+        }
         $this->wizReset(array_key_first(array_diff_key($this->wizQueue($directory), [(string) $this->wizName => true])));
     }
 
@@ -401,7 +472,10 @@ trait NewArtistWizard
             }
         }
         $profiles = $analyzer->profiles();
-        $profile = $name !== null ? ($profiles[$name] ?? []) : [];
+        if (! $this->wizSingle) {
+            $next = array_slice(array_keys(array_diff_key($queue, [(string) $name => true])), 0, 2);
+            $this->wizPrefetch($next, fn ($n) => array_slice(array_values($profiles[$n]['titles'] ?? []), 0, 3));
+        }
         $related = $this->wizRelated($directory);
         foreach ($related as &$r) {
             $this->wizTake[$r['key']] ??= $r['default'];
@@ -413,7 +487,7 @@ trait NewArtistWizard
             'wizQueue' => $queue,
             'wizCount' => $name !== null ? ($queue[$name] ?? 0) : 0,
             'wizSimilar' => $similar,
-            'wizTracks' => array_slice($profile['tracks'] ?? [], 0, 6),
+            'wizTracks' => $name !== null ? array_slice($this->wizSampleTracks(), 0, 6) : [],
             'wizRelated' => $related,
             'wizCombined' => $name !== null && ArtistNames::looksCombined($name),
             'wizMbName' => collect($this->wizMb)->firstWhere('mbid', $this->wizMbid)['name'] ?? null,

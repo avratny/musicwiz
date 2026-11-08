@@ -1,6 +1,12 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
 <div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching) wire:poll.2s @endif>
     <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
+    @foreach ($autoHeld as $heldCheck => $h)
+        <div class="mx-6 mt-3 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
+            Automatik „{{ $h['label'] }}“ angehalten: {{ $h['count'] }} Schritte auf einmal (mehr als {{ \App\Support\AutoCleanup::LIMIT }} laufen nie ohne Nachfrage).
+            <button wire:click="$set('check', @js($heldCheck))" class="underline">Hier mit Vorschau prüfen</button>
+        </div>
+    @endforeach
     <div class="flex min-h-0 flex-1 overflow-hidden">
         <nav class="w-80 shrink-0 overflow-y-auto border-r border-zinc-800 p-3">
             @foreach (\App\Support\CleanupChecks::STEPS as $n => [$stepLabel, $stepHint, $stepChecks])
@@ -29,6 +35,9 @@
                     <div class="font-medium">{{ $defs[$check][0] }}</div>
                     <div class="text-xs text-zinc-500">{{ $defs[$check][1] }} {{ $total }} Fund(e).</div>
                 </div>
+                @if ($check === 'encoding')
+                    <a href="{{ route('text-repair') }}" wire:navigate class="btn-ghost btn-sm" title="Codepage, verlorene Zeichen und alles andere einzeln entscheiden – auch in der Inbox">Zeichen-Assistent …</a>
+                @endif
                 @if ($fixable && $total)
                     <button wire:click="selectAll" class="btn-ghost btn-sm">Alle markieren</button>
                     <button wire:click="previewFix(false)" class="btn-ghost" @disabled(! $selected || $active->isNotEmpty())>Markierte beheben ({{ count($selected) }}) …</button>
@@ -199,7 +208,7 @@
             $shown = array_slice($preview['actions'], 0, 300);
             $hasMoves = collect($preview['actions'])->contains(fn ($a) => in_array($a['type'], ['move', 'apply']) && ! empty($a['target']));
         @endphp
-        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm">
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data x-on:keydown.escape.window="$wire.set('preview', null)">
             <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: {{ $defs[$check][2] }} · {{ $preview['count'] }} Funde, {{ count($preview['actions']) }} Schritte</h2>

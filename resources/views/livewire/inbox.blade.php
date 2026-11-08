@@ -1,6 +1,7 @@
 <div class="flex h-full flex-col overflow-hidden" @if ($scan['running'] ?? false) wire:poll.2s @endif>
     <x-page-header title="Inbox" :subtitle="$albums->count().($albums->count() === 1 ? ' Album · ' : ' Alben · ').$inbox">
         <input type="search" wire:model.live.debounce.300ms="q" placeholder="Suchen…" class="input w-64">
+        <a href="{{ route('text-repair', ['scope' => 'inbox']) }}" wire:navigate class="btn-ghost" title="Kaputte Zeichen in den Tags (z. B. „KÃ¶nig“) vor dem Einordnen richten">Zeichen-Assistent</a>
         <button wire:click="startScan('inbox')" class="btn-primary" @disabled($scan['running'] ?? false)>
             <svg class="size-4 {{ ($scan['running'] ?? false) && $scan['location'] === 'inbox' ? 'animate-spin' : '' }}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v6h6M20 20v-6h-6M5.6 15a7 7 0 0 0 12.3 2M18.4 9A7 7 0 0 0 6.1 7"/></svg>
             Inbox scannen

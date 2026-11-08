@@ -46,6 +46,7 @@ class CleanupChecks
             'broken' => ['Defekte Dateien', 'Ohne Audiodaten (Länge 0) oder nicht lesbar – z. B. abgebrochene Rips.', 'In den Papierkorb'],
             'duplicates' => ['Mögliche Duplikate', 'Gleicher Interpret, Titel und Länge, „(2)“-Dateien, gleiche Aufnahme als MP3 und FLAC.', 'Beste Version behalten, Rest in den Papierkorb'],
             'extension' => ['Uneinheitliche Endungen', 'z. B. „.Mp3“ statt „.mp3“.', 'Endung klein schreiben'],
+            'encoding' => ['Kaputte Zeichen in Tags', 'Falsch gelesene Umlaute („KÃ¶nig“), unsichtbare Zeichen, Unicode-Form – sicher behebbar; falsche Codepage und verlorene Zeichen im Zeichen-Assistenten.', 'Sichere Korrekturen schreiben'],
             'ambiguous' => ['Gleichnamige Künstler ohne Zuordnung', 'Der Name gibt es mehrfach (z. B. „Adam [DE]“ / „Adam [GB]“) – diese Lieder sind noch keiner Person zugeordnet.', null],
             'combined_manual' => ['Kombi mit &, und, and, Komma', 'Wird nie automatisch getrennt – im Künstlerverzeichnis entscheiden.', null],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
@@ -69,7 +70,7 @@ class CleanupChecks
     /** Schritte: Reihenfolge, in der aufgeräumt werden sollte. */
     public const STEPS = [
         1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'duplicates', 'extension']],
-        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['ambiguous', 'combined_manual', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'comment', 'missing_tags']],
+        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'comment', 'missing_tags']],
         3 => ['Genres', 'Genre-Liste anwenden', ['genre_unlisted', 'genre_mixed', 'genre_missing', 'electronic_sub']],
         4 => ['Ablage', 'Erst jetzt an den Regelort verschieben', ['misplaced']],
         5 => ['Abschluss', 'Reste, Cover, Künstlerbilder', ['leftovers', 'cover', 'cover_embed', 'artist_image']],
@@ -195,6 +196,47 @@ class CleanupChecks
     }
 
     // ---------------------------------------------------------------- Prüfungen
+
+    /**
+     * Kaputte Zeichen: sicher behebbare Werte (Mojibake, Unsichtbares, Unicode-Form) als Aktion; alles andere
+     * (Codepage, verlorene Zeichen) nur melden – das wird im Zeichen-Assistenten entschieden.
+     */
+    private function checkEncoding(): array
+    {
+        $ignored = $this->exceptions('encoding');
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $changes = [];
+            $open = [];
+            $actions = [];
+            foreach ($tracks as $t) {
+                $safe = [];
+                foreach (TextRepair::issues($t->tags(), $ignored) as $issue) {
+                    if ($issue['analysis']['safe'] !== null) {
+                        $safe[TextRepair::key($issue['field'], $issue['value'])] = $issue['analysis']['safe'];
+                        $changes[$issue['value']] = '„'.$issue['value'].'“ → „'.$issue['analysis']['safe'].'“ ('.implode(', ', array_map(fn ($p) => TextRepair::LABELS[$p], $issue['analysis']['problems'])).')';
+                    } else {
+                        $open[$issue['value']] = '„'.$issue['value'].'“ ('.implode(', ', array_map(fn ($p) => TextRepair::LABELS[$p], $issue['analysis']['problems'])).')';
+                    }
+                }
+                $tags = $safe ? TextRepair::replaced($t->tags(), fn ($field, $value) => $safe[TextRepair::key($field, $value)] ?? null) : [];
+                if ($tags && $t->writable) {
+                    $actions[] = ['type' => 'apply', 'path' => $t->path, 'tags' => $tags];
+                }
+            }
+            if (! $changes && ! $open) {
+                continue;
+            }
+            $lines = array_slice(array_values($changes), 0, 5);
+            if ($open) {
+                $lines[] = 'Im Zeichen-Assistenten zu entscheiden: '.implode(', ', array_slice(array_values($open), 0, 3)).(count($open) > 3 ? ' …' : '');
+            }
+            $album = $this->albums()[$albumId] ?? null;
+            $out[] = ['id' => 'a'.$albumId, 'title' => $album ? $this->albumTitle($album) : 'Ohne Album', 'detail' => implode("\n", $lines), 'link' => $this->link($album), 'actions' => $actions];
+        }
+
+        return $out;
+    }
 
     private function checkMisplaced(): array
     {
@@ -756,15 +798,18 @@ class CleanupChecks
         $slots = $list->filter(fn ($t) => $this->inAlbum($t))->groupBy('album_id');
         $loose = $list->reject(fn ($t) => $this->inAlbum($t))->values();
 
-        // innerhalb eines Albums doppelt (z. B. "Titel (2).flac" im Albumordner): beste Fassung bleibt im Album
+        // innerhalb eines Albums doppelt (z. B. "Titel (2).flac" im Albumordner): beste Fassung bleibt im Album.
+        // Nur auf demselben Titelplatz (CD + Nr.) bzw. als "(2)"-Kopie – "Intro" auf CD 1 und CD 2 sind zwei Titel.
         $slotBest = [];
         foreach ($slots as $albumId => $members) {
-            $b = $bestOf($members);
-            $slotBest[$albumId] = $b;
-            foreach ($members as $m) {
-                if ($m->id !== $b->id) {
-                    $roles[$m->id] = ['track' => $m, 'icon' => '✗', 'text' => 'zweite Kopie im selben Album → Papierkorb'];
-                    $actions[] = ['type' => 'trash', 'path' => $m->path];
+            foreach ($members->groupBy($this->trackPosition($members)) as $pos => $same) {
+                $b = $bestOf($same);
+                $slotBest[$albumId.'|'.$pos] = $b;
+                foreach ($same as $m) {
+                    if ($m->id !== $b->id) {
+                        $roles[$m->id] = ['track' => $m, 'icon' => '✗', 'text' => 'zweite Kopie im selben Album → Papierkorb'];
+                        $actions[] = ['type' => 'trash', 'path' => $m->path];
+                    }
                 }
             }
         }
@@ -822,6 +867,26 @@ class CleanupChecks
         }
 
         return ['keep' => $keep, 'roles' => array_values($roles), 'actions' => $actions, 'note' => $note, 'choosable' => false];
+    }
+
+    /**
+     * Titelplatz im Album: CD + Nummer; eine "(2)"-Kopie zählt zum Platz ihres Originals. Ohne Nummer eigener Platz
+     * (lieber eine Kopie übersehen als einen echten Titel wegwerfen).
+     *
+     * @return \Closure(Track): string
+     */
+    private function trackPosition(Collection $members): \Closure
+    {
+        $own = fn (Track $t) => (int) $t->track > 0 ? 'n'.max(1, (int) $t->disc).'-'.(int) $t->track : 'p'.$t->path;
+        $byPath = $members->keyBy('path');
+
+        return function (Track $t) use ($own, $byPath) {
+            if (preg_match('/^(.*?)\s*\(\d\)(\.\w+)$/', $t->filename, $m) && ($orig = $byPath[$t->dir.'/'.$m[1].$m[2]] ?? null)) {
+                return $own($orig);
+            }
+
+            return $own($t);
+        };
     }
 
     private function checkLeftovers(): array

@@ -2,6 +2,8 @@
 
 namespace App\Livewire;
 
+use App\Jobs\PrefetchArtistLookup;
+use App\Livewire\Concerns\RatesMusic;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\DiscSet;
@@ -20,13 +22,14 @@ use App\Support\PathBuilder;
 use App\Support\Scanner;
 use App\Support\Settings;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Component;
 use Livewire\WithFileUploads;
 
 #[Layout('layouts.app')]
 class AlbumEditor extends Component
 {
-    use WithFileUploads;
+    use RatesMusic, WithFileUploads;
 
     public int $albumId;
 
@@ -41,6 +44,12 @@ class AlbumEditor extends Component
     public string $coverUrl = '';
 
     public bool $removeCover = false;
+
+    /** Inbox: Kategorie „Lib“ vorgeschlagen, weil alle Titel denselben Künstler haben (nur Vorauswahl, nichts geschrieben) */
+    public ?string $categoryGuessed = null;
+
+    /** unbekannte Künstler, die schon im Hintergrund nachgeschlagen werden (Dialog „erfassen“ ist dann sofort gefüllt) */
+    public array $prefetched = [];
 
     public ?array $plan = null;
 
@@ -94,6 +103,11 @@ class AlbumEditor extends Component
         $first = $tracks->first();
         $mode = fn (string $k) => $tracks->pluck($k)->filter()->countBy()->sortDesc()->keys()->first();
         $category = $album->category;
+        // Inbox ohne Kategorie-Kommentar: ein einziger Künstler bei allen Titeln → Lib vorauswählen
+        $this->categoryGuessed = null;
+        if ($category === null && $album->location === 'inbox' && ($guess = $this->singleArtistCategory($tracks->all(), (string) ($mode('albumartist') ?? '')))) {
+            $category = $this->categoryGuessed = $guess;
+        }
 
         $isSet = $album->discCount() > 1;
         $this->fields = [
@@ -121,9 +135,72 @@ class AlbumEditor extends Component
             'ext' => $t->ext,
             'writable' => $t->writable,
             'error' => $t->error,
+            'rating' => $t->rating,
         ])->values()->all();
         $this->discForAll = max(1, (int) ($mode('disc') ?? 1));
         $this->persons = $this->detectPersons($tracks->all());
+    }
+
+    /**
+     * Kategorie „Lib“ (Künstler, kein Sampler), wenn alle Titel denselben Hauptkünstler haben – „feat.“-Gäste zählen
+     * nicht. Kein Vorschlag bei fehlendem Künstler oder Sampler-Albumkünstler („Various Artists“).
+     *
+     * @param  list<Track>  $tracks
+     */
+    private function singleArtistCategory(array $tracks, string $albumArtist): ?string
+    {
+        $settings = app(Settings::class);
+        if (! $tracks || strcasecmp(trim($albumArtist), (string) $settings->get('compilation_artist')) === 0) {
+            return null;
+        }
+        $main = [];
+        foreach ($tracks as $t) {
+            $first = trim((string) (ArtistNames::split($t->artist)[0] ?? ''));
+            if ($first === '') {
+                return null;
+            }
+            $main[mb_strtolower(PathBuilder::folderArtist(['artist' => $first]))] = true;
+        }
+        if (count($main) !== 1) {
+            return null;
+        }
+        $lib = collect($settings->categoriesIn('library'))->first(fn ($c) => ! $c['compilation']);
+
+        return $lib['name'] ?? null;
+    }
+
+    /** Unbekannte Künstler im Hintergrund nachschlagen (MusicBrainz, Discogs, Bilder) – nicht bei sync-Warteschlange. */
+    private function prefetchUnknown(array $names): void
+    {
+        if (config('queue.default') === 'sync') {
+            return;
+        }
+        foreach (array_unique($names) as $name) {
+            if (in_array($name, $this->prefetched, true)) {
+                continue;
+            }
+            $this->prefetched[] = $name;
+            $key = ArtistNames::compareKey($name);
+            $titles = array_values(array_unique(array_column(array_filter($this->rows,
+                fn ($r) => collect([...ArtistNames::split($r['artist']), ...ArtistNames::split($this->fields['albumartist'])])->contains(fn ($n) => ArtistNames::compareKey($n) === $key)), 'title')));
+            PrefetchArtistLookup::dispatch($name, array_slice(array_filter($titles), 0, 3));
+        }
+    }
+
+    /** Künstler im Dialog erfasst: Hinweise („neu: …“, Schreibweisen) neu berechnen */
+    #[On('artist-directory-changed')]
+    public function artistDirectoryChanged(): void {}
+
+    /** Nach dem Bewerten die Sterne in der Liste nachziehen (der Rest des Formulars bleibt, wie er ist). */
+    protected function afterRating(?object $operation): void
+    {
+        $ratings = Track::whereIn('id', array_column($this->rows, 'id'))->pluck('rating', 'id');
+        foreach ($this->rows as $i => $row) {
+            $this->rows[$i]['rating'] = $ratings[$row['id']] ?? null;
+        }
+        if ($operation) {
+            $this->dispatch('activity-changed');
+        }
     }
 
     public function album(): Album
@@ -582,13 +659,16 @@ class AlbumEditor extends Component
             if ($row['artist'] !== '' && $corrected !== $row['artist']) {
                 $hints[$i] = ['type' => 'fix', 'value' => $corrected];
             } else {
-                $unknown = array_filter(ArtistNames::split($row['artist']), fn ($n) => $directory->check($n)['status'] === 'new');
+                $unknown = array_values(array_filter(ArtistNames::split($row['artist']), fn ($n) => $directory->check($n)['status'] === 'new'));
                 if ($unknown) {
-                    $hints[$i] = ['type' => 'new', 'value' => implode(', ', $unknown)];
+                    $hints[$i] = ['type' => 'new', 'value' => implode(', ', $unknown), 'names' => $unknown];
                 }
             }
         }
         $albumArtistFix = app(PathBuilder::class)->uniformSpelling($directory->correctText($this->fields['albumartist']));
+        $albumArtistNew = array_values(array_filter(ArtistNames::split($this->fields['albumartist']),
+            fn ($n) => strcasecmp($n, (string) $compilationArtist) !== 0 && $directory->check($n)['status'] === 'new'));
+        $this->prefetchUnknown([...$albumArtistNew, ...array_merge(...array_map(fn ($h) => $h['names'] ?? [], array_values($hints)))]);
         $renames = $directory->renamesFor([$this->fields['albumartist'], ...array_column($this->rows, 'artist')]);
 
         // Gleichnamige Künstler: auch Namen berücksichtigen, die gerade erst eingetippt wurden
@@ -634,6 +714,7 @@ class AlbumEditor extends Component
             'discMap' => $album->location === 'inbox' ? $this->currentDiscMap($album) : [],
             'manualDirs' => collect(DiscSet::all())->flatMap(fn ($s) => array_column($s->members, 'dir'))->all(),
             'albumArtistFix' => $albumArtistFix !== $this->fields['albumartist'] ? $albumArtistFix : null,
+            'albumArtistNew' => $albumArtistNew,
             'defaultGenre' => $defaultGenre,
             'genreSuggestion' => $genreSuggestion,
             'unlistedGenres' => array_values(array_filter($trackGenres, fn ($g) => ! $genres->isListed($g))),

@@ -44,6 +44,8 @@ services:
     healthcheck:
       disable: true
     command: ["php", "artisan", "queue:work", "--queue=default,research", "--sleep=1", "--tries=1", "--timeout=0"]
+    # bei Update/Neustart die laufende Aktion zu Ende bringen lassen statt sie nach 10 s hart abzubrechen
+    stop_grace_period: 2m
     depends_on:
       app:
         condition: service_healthy

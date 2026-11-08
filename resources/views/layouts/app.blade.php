@@ -8,6 +8,7 @@
     <link rel="alternate icon" href="/favicon.ico">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <meta name="theme-color" content="#09090b">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{{ isset($title) ? $title.' · ' : '' }}MusicWiz</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     @livewireStyles

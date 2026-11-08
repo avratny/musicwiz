@@ -155,6 +155,11 @@
                     @endforeach
                     </tbody>
                 </table>
+                @foreach ($autoHeld as $h)
+                    <div class="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
+                        „{{ $h['label'] }}“ wurde angehalten: {{ $h['count'] }} Schritte auf einmal (mehr als {{ \App\Support\AutoCleanup::LIMIT }} laufen nie ohne Nachfrage). Bitte über <a href="{{ route('cleanup') }}" wire:navigate class="underline">Aufräumen</a> mit Vorschau prüfen.
+                    </div>
+                @endforeach
                 <div class="mt-4 flex items-center gap-3">
                     <button wire:click="runAuto" wire:confirm="Alle angehakten Automatiken jetzt ausführen?" class="btn-primary" @disabled(! $autoConfig)>Jetzt ausführen</button>
                     <span class="text-xs text-zinc-500">Läuft sonst automatisch nach jedem Lib-Scan.</span>
@@ -198,6 +203,9 @@
                                 </label>
                             @endforeach
                         </div>
+                        @if (($importSummary['auto_cleanup'] ?? 0) && in_array('settings', $importSections, true))
+                            <p class="mt-2 text-xs text-amber-300">Die Einstellungen enthalten {{ $importSummary['auto_cleanup'] }} freigegebene Automatik(en) – sie laufen nach dem nächsten Lib-Scan ohne Nachfrage (höchstens {{ \App\Support\AutoCleanup::LIMIT }} Schritte je Automatik, sonst wird angehalten). Prüfen unter „Automatiken“.</p>
+                        @endif
                         <button wire:click="runImport" wire:confirm="Gewählte Bereiche durch die Sicherung ersetzen?" class="btn-primary mt-3" @disabled(! $importSections)>Einspielen</button>
                     @endif
                 </div>
@@ -238,9 +246,9 @@
 
         @if ($tab === 'access')
             <div class="grid max-w-3xl gap-5">
-                <div><label class="label">Discogs-Token</label><input type="password" wire:model="s.discogs_token" class="input font-mono" autocomplete="off">
+                <div><label class="label">Discogs-Token</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.discogs_token" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
                     <p class="mt-1 text-xs text-zinc-500">discogs.com › Settings › Developers › „Generate new token“ (60 Abfragen/min).</p></div>
-                <div><label class="label">Fanart.tv-API-Key</label><input type="password" wire:model="s.fanart_key" class="input font-mono" autocomplete="off">
+                <div><label class="label">Fanart.tv-API-Key</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.fanart_key" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
                     <p class="mt-1 text-xs text-zinc-500">Kostenloser Key auf fanart.tv; Suche läuft über die MusicBrainz-ID des Künstlers.</p></div>
                 <p class="text-xs text-zinc-500">MusicBrainz und Deezer brauchen keine Anmeldung. Der Container braucht für das Nachschlagen Internetzugang.</p>
             </div>

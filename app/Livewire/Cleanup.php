@@ -175,8 +175,10 @@ class Cleanup extends Component
 
     public function render(CleanupChecks $checks, Settings $settings)
     {
-        // laufende Aktionen (auch von woanders gestartet, z. B. Automatiken) beobachten
-        $active = Operation::whereIn('status', ['pending', 'running'])->orderBy('id')->get();
+        // laufende Aktionen (auch von woanders gestartet, z. B. Automatiken) beobachten – außer Downloads (eigene
+        // Warteschlange, fassen die Lib nicht an) und erst später eingeplanten: die sperren Aufräumen nicht
+        $active = Operation::whereIn('status', ['pending', 'running'])->where('type', '!=', 'download')->orderBy('id')->get()
+            ->reject(fn (Operation $op) => $op->isPlanned())->values();
         foreach ($active as $op) {
             if (! in_array($op->id, $this->watching, true)) {
                 $this->watching[] = $op->id;
@@ -210,6 +212,7 @@ class Cleanup extends Component
             'step' => CleanupChecks::stepOf($this->check),
             'active' => $active,
             'auto' => app(AutoCleanup::class)->config(),
+            'autoHeld' => app(AutoCleanup::class)->held(),
             'findings' => array_slice($findings, 0, $this->limit),
             'total' => count($findings),
             'dismissed' => $dismissed,

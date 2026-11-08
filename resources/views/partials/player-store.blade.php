@@ -3,11 +3,15 @@
 document.addEventListener('alpine:init', () => {
     window.Alpine.store('player', {
         track: null, // { id, src, title, artist, album, cover, seconds }
+        rating: 0, // Sterne des laufenden Titels (0 = keine)
+        rateable: false,
         ticker: null,
         error: null,
         playing: false,
         time: 0,
         duration: 0,
+        dragging: false, // Zeitregler wird gerade gezogen: nicht nachführen, erst beim Loslassen springen
+        dragTime: 0,
         volume: Number(localStorage.getItem('mw-volume') ?? 0.8),
 
         audio() {
@@ -25,6 +29,7 @@ document.addEventListener('alpine:init', () => {
             }
             this.track = track;
             this.error = null;
+            this.loadRating(track.id);
             this.time = 0;
             this.duration = Number(track.seconds) || 0;
             a.src = track.src;
@@ -60,6 +65,36 @@ document.addEventListener('alpine:init', () => {
             const codes = { 1: 'abgebrochen', 2: 'Netzwerkfehler', 3: 'Datei ist defekt (Dekodierfehler)', 4: 'Format oder Datei wird nicht unterstützt' };
             this.error = 'Kann nicht abgespielt werden: ' + (codes[a.error?.code] ?? 'unbekannter Fehler');
             this.playing = false;
+        },
+
+        async loadRating(id) {
+            this.rating = 0;
+            this.rateable = false;
+            try {
+                const r = await fetch('/media/rating/' + id, { headers: { Accept: 'application/json' } });
+                if (r.ok && this.track?.id === id) Object.assign(this, await r.json());
+            } catch (e) {}
+        },
+
+        /** Bewerten (derselbe Stern noch mal = Bewertung entfernen); schreibt in die Datei, als Aktion im Verlauf */
+        async rate(stars) {
+            if (!this.track || !this.rateable) return;
+            const id = this.track.id;
+            const value = stars === this.rating ? 0 : stars;
+            const before = this.rating;
+            this.rating = value;
+            try {
+                const r = await fetch('/media/rating/' + id, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content ?? '' },
+                    body: JSON.stringify({ rating: value }),
+                });
+                if (!r.ok) throw new Error();
+                window.Livewire?.dispatch('rating-changed');
+                window.Livewire?.dispatch('activity-changed');
+            } catch (e) {
+                if (this.track?.id === id) this.rating = before;
+            }
         },
 
         toggle() {

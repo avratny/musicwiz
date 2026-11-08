@@ -48,10 +48,13 @@ class TagTool
         return $results;
     }
 
-    /** Eingebettetes Cover in eine Datei schreiben. */
-    public function extractCover(string $audioPath, string $target): bool
+    /** Zwischendatei beim Schreiben (liegt nur nach einem Abbruch herum und ist dann gefahrlos löschbar). */
+    public const WRITE_SUFFIX = '.musicwiz-write';
+
+    /** Eingebettetes Cover in eine Datei schreiben ($frontOnly: nur ein echtes Frontcover, kein Ersatzbild). */
+    public function extractCover(string $audioPath, string $target, bool $frontOnly = false): bool
     {
-        $result = Process::timeout(60)->run(['python3', $this->script(), 'cover', $audioPath, $target]);
+        $result = Process::timeout(60)->run(['python3', $this->script(), 'cover', $audioPath, $target, ...($frontOnly ? ['--front'] : [])]);
         $data = json_decode($result->output(), true);
 
         return $result->successful() && ($data['ok'] ?? false);

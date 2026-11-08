@@ -50,6 +50,18 @@ class CleanupLiveTest extends TestCase
             ->assertSeeHtml('wire:poll.2s');
     }
 
+    public function test_downloads_and_planned_operations_do_not_block(): void
+    {
+        Operation::create(['type' => 'download', 'description' => 'Download läuft', 'status' => 'running', 'total' => 1]);
+        Operation::create(['type' => 'cleanup', 'description' => 'Für morgen', 'status' => 'pending', 'total' => 1,
+            'payload' => ['actions' => [], 'options' => ['not_before' => now()->addDay()->toIso8601String()]]]);
+
+        Livewire::test(Cleanup::class)
+            ->assertViewHas('active', fn ($a) => $a->isEmpty())
+            ->assertSet('watching', [])
+            ->assertDontSeeHtml('wire:poll.2s');
+    }
+
     public function test_apply_single_finding_from_row(): void
     {
         $base = storage_path('framework/testing/row-'.bin2hex(random_bytes(4)));

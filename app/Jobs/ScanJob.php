@@ -19,11 +19,24 @@ class ScanJob implements ShouldQueue
 
     public function handle(Scanner $scanner, AutoCleanup $auto): void
     {
-        $scanner->scan($this->location, $this->allowMassRemoval);
-        // Freigegebene Aufräum-Automatiken nach dem Bestand-Scan ausführen
-        if ($this->location === 'library') {
-            $auto->run();
+        $result = $scanner->scan($this->location, $this->allowMassRemoval);
+        // neue, noch unbekannte Künstler im Hintergrund nachschlagen (der Assistent ist dann sofort gefüllt)
+        if (in_array($this->location, ['inbox', 'library'], true)) {
+            PrefetchUnknownArtists::start();
         }
+        if ($this->location !== 'library') {
+            return;
+        }
+        // Freigegebene Aufräum-Automatiken nach dem Bestand-Scan ausführen – aber nicht auf einem unvollständigen Index
+        // (nicht lesbare Ordner, zurückgehaltenes Entfernen): sonst planen sie mit Dateien, die es nicht mehr gibt
+        if ($result['held'] || $result['unreadable']) {
+            if ($auto->config()) {
+                $scanner->status(['auto_skipped' => 'Aufräum-Automatiken nicht ausgeführt, weil der Scan unvollständig war. Nach einem vollständigen Scan laufen sie wieder.']);
+            }
+
+            return;
+        }
+        $auto->run();
     }
 
     public function failed(\Throwable $e): void

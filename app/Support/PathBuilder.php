@@ -32,9 +32,13 @@ class PathBuilder
     public function values(array $tags, bool $multiDisc, string $sourcePath): array
     {
         $album = trim((string) ($tags['album'] ?? ''));
+        // Album aus lauter unzulässigen Zeichen (z. B. "..."): wie ohne Album, sonst fiele der Ordner ganz weg
+        if (! $this->usable($album)) {
+            $album = '';
+        }
         $folderArtist = self::folderArtist($tags); // Ordner heißt immer genau wie der Künstler im Tag
         $title = trim((string) ($tags['title'] ?? ''));
-        if ($title === '') {
+        if (! $this->usable($title)) {
             $title = pathinfo($sourcePath, PATHINFO_FILENAME);
         }
 
@@ -51,10 +55,20 @@ class PathBuilder
         ];
     }
 
+    /** Bleibt vom Wert nach dem Bereinigen etwas Brauchbares für einen Datei- bzw. Ordnernamen übrig? */
+    private function usable(string $value): bool
+    {
+        return trim($this->clean($value), '. ') !== '';
+    }
+
+    /** Höchstlänge eines Ordner- bzw. Dateinamens in Byte (Dateisysteme erlauben 255; Luft für "(2)" und Zwischennamen) */
+    public const MAX_SEGMENT_BYTES = 200;
+
     public function render(string $pattern, array $values): string
     {
         $segments = [];
         foreach (explode('/', $pattern) as $segment) {
+            $isFile = str_contains($segment, '{ext}');
             foreach ($values as $key => $value) {
                 if ($key === 'ext') {
                     continue;
@@ -69,13 +83,27 @@ class PathBuilder
             }
             $segment = str_replace('{ext}', $values['ext'] ?? '', $segment);
             $segment = trim(preg_replace('/\s{2,}/u', ' ', $segment));
-            $segment = rtrim($segment, '. ');
-            if ($segment !== '' && $segment !== '.') {
+            // führende Punkte machen Ordner/Dateien unsichtbar (".38 Special"), abschließende verbietet Windows/SMB
+            $segment = trim($segment, '. ');
+            $segment = $this->limit($segment, $isFile ? (string) ($values['ext'] ?? '') : '');
+            if ($segment !== '') {
                 $segments[] = $segment;
             }
         }
 
         return implode('/', $segments);
+    }
+
+    /** Zu lange Namen an einer Zeichengrenze kürzen; die Dateiendung bleibt erhalten. */
+    private function limit(string $segment, string $ext): string
+    {
+        if (strlen($segment) <= self::MAX_SEGMENT_BYTES) {
+            return $segment;
+        }
+        $suffix = $ext !== '' && str_ends_with($segment, '.'.$ext) ? '.'.$ext : '';
+        $name = substr($segment, 0, strlen($segment) - strlen($suffix));
+
+        return rtrim(mb_strcut($name, 0, self::MAX_SEGMENT_BYTES - strlen($suffix), 'UTF-8'), '. ').$suffix;
     }
 
     /** Zeichen ersetzen, die in Pfaden nicht erlaubt sind. */

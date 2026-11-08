@@ -85,6 +85,7 @@ class ArtistGenreLookupTest extends TestCase
         Livewire::test(Artists::class, ['tab' => 'unknown'])
             ->call('wizLookup')
             ->assertSet('wizMbid', 'beck')
+            ->call('wizLookupDetails')
             ->assertSet('wizGenre', 'Trance')
             ->assertSee('MusicBrainz:');
     }

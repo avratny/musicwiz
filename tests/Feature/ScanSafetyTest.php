@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\RunAutoCleanup;
+use App\Jobs\ScanJob;
 use App\Models\Album;
 use App\Models\Track;
+use App\Support\AutoCleanup;
 use App\Support\Scanner;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\File;
 use RuntimeException;
 use Tests\TestCase;
@@ -123,5 +127,31 @@ class ScanSafetyTest extends TestCase
 
         $this->assertSame(1, Album::count());
         $this->assertSame(2, Album::first()->track_count);
+    }
+
+    public function test_automations_are_skipped_after_incomplete_scan(): void
+    {
+        if (function_exists('posix_getuid') && posix_getuid() === 0) {
+            $this->markTestSkipped('root kann jeden Ordner lesen');
+        }
+        app(Settings::class)->set(['auto_cleanup' => ['leftovers' => ['LIB' => true]]]);
+        $locked = $this->base.'/library/artists/L/Locked';
+        foreach (['library/artists/O/Open', 'library/artists/L/Locked'] as $dir) {
+            File::ensureDirectoryExists($this->base.'/'.$dir);
+            file_put_contents($this->base.'/'.$dir.'/1.mp3', str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 4));
+        }
+        Bus::fake([RunAutoCleanup::class]);
+
+        (new ScanJob('library'))->handle(app(Scanner::class), app(AutoCleanup::class));
+        Bus::assertDispatchedTimes(RunAutoCleanup::class, 1);
+
+        chmod($locked, 0000);
+        try {
+            (new ScanJob('library'))->handle(app(Scanner::class), app(AutoCleanup::class));
+        } finally {
+            chmod($locked, 0775);
+        }
+        Bus::assertDispatchedTimes(RunAutoCleanup::class, 1);
+        $this->assertStringContainsString('nicht ausgeführt', app(Scanner::class)->status()['auto_skipped']);
     }
 }
