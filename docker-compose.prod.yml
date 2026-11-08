@@ -1,0 +1,62 @@
+# MusicWiz – Betrieb (z. B. als Stack in Dockge). Das Image baut GitHub Actions bei jedem Push.
+# Werte in der .env des Stacks setzen (siehe README):
+#   MUSIC_SHARE=/mnt/music   INBOX_SHARE=/mnt/inbox   PUID=1000   PGID=1000   MUSICWIZ_PORT=8000
+x-env: &env
+  PUID: ${PUID:-1000}
+  PGID: ${PGID:-1000}
+  TZ: ${TZ:-Europe/Vienna}
+  APP_URL: ${APP_URL:-http://localhost:8000}
+  # Startwerte – gepflegt wird alles in der App unter Einstellungen
+  MUSIC_BASE: /music
+  MUSIC_INBOX: /inbox
+  MUSIC_TRASH: /music/_papierkorb
+  MUSIC_ARTIST_IMAGES: /music/_artists
+
+x-app: &app
+  image: ghcr.io/avratny/musicwiz:${MUSICWIZ_TAG:-latest}
+  restart: unless-stopped
+  environment: *env
+  volumes:
+    - ${MUSIC_SHARE:?MUSIC_SHARE fehlt}:/music
+    - ${INBOX_SHARE:-./inbox}:/inbox
+    # Datenbank, Schlüssel, Sicherungen fürs Rückgängigmachen, Cache – bleibt bei Updates erhalten
+    - ./data:/app/storage/app
+
+services:
+  app:
+    <<: *app
+    ports:
+      - "${MUSICWIZ_PORT:-8000}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public"]
+
+  # Verschieben, Tags schreiben, Scans
+  queue:
+    <<: *app
+    environment:
+      <<: *env
+      RUN_MIGRATIONS: "0"
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "queue:work", "--queue=default,research", "--sleep=1", "--tries=1", "--timeout=0"]
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # YouTube-Downloads (eigene Warteschlange, damit sie andere Aktionen nicht aufhalten)
+  downloads:
+    <<: *app
+    environment:
+      <<: *env
+      RUN_MIGRATIONS: "0"
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "queue:work", "--queue=downloads", "--sleep=1", "--tries=1", "--timeout=0"]
+    depends_on:
+      app:
+        condition: service_healthy

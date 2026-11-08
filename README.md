@@ -1,0 +1,132 @@
+# MusicWiz
+
+Web-App zum Einordnen, Taggen und Aufräumen einer großen Musiksammlung (MP3, FLAC, …) – gedacht als Ablöse für MediaMonkey.
+Läuft als Docker-Stack, z. B. in [Dockge](https://github.com/louislam/dockge). Oberfläche auf Deutsch.
+
+> **Beta.** Vor dem ersten Einsatz auf dem echten Bestand: Sicherung der Musik (bzw. Roon-Backup) anlegen.
+
+**Grundsatz: Nichts passiert automatisch.** Gescannt wird per Knopf; geschrieben, verschoben oder umbenannt wird erst nach
+bestätigter Vorschau. Jede Aktion steht im Verlauf und lässt sich rückgängig machen. Aussortiertes landet im Papierkorb, nie direkt gelöscht.
+
+## Funktionen
+
+- **Inbox** – neue Alben einlesen, Tags prüfen und korrigieren (MusicBrainz, Discogs, Cover), nach festem Namensschema in den Bestand einordnen.
+  Mehrfach-CDs werden zusammengefasst, vorhandene Alben und bessere Fassungen erkannt.
+- **Bestand** – Übersicht über die eingeordnete Sammlung, Album-Editor mit Vorschau.
+- **Künstler** – Künstlerverzeichnis mit Schreibweisen, MusicBrainz-/Discogs-ID, Bild und Standard-Genre; gleichnamige Künstler
+  auseinanderhalten; neue Namen aus dem Bestand Schritt für Schritt erfassen.
+- **Aufräumen** – Prüfungen in fünf Schritten (Defekte Dateien, Duplikate, Schreibweisen, Genres, Cover, Ablageort, Reste …),
+  jeweils mit Vorschau und „Übernehmen“. Einzelne Prüfungen lassen sich als Automatik freigeben (standardmäßig alles aus).
+- **YouTube-Download** – Ton als MP3 (beste VBR-Stufe, mit Tags und Cover) direkt in die Inbox; einstellbare Pausen,
+  Bandbreite und Tagesgrenze, damit YouTube nicht sperrt. Herkunft steht im Tag `SOURCE`.
+- **Verlauf & Papierkorb** – jede Dateiänderung mit alten/neuen Pfaden und Tags, rückgängig machbar; Papierkorb mit Wiederherstellen.
+- **Einstellungen** – Pfade, Kategorien und Namensschema, Genre-Liste und -Zuordnung, Sicherung/Wiederherstellung als Datei.
+
+## Installation mit Dockge
+
+Das Image wird bei jedem Push von GitHub Actions gebaut: `ghcr.io/avratny/musicwiz` (x86-64/amd64).
+
+1. In Dockge **„+ Compose“**, Stack-Name z. B. `musicwiz`.
+2. Als `compose.yaml` den Inhalt von [`docker-compose.prod.yml`](docker-compose.prod.yml) einfügen.
+3. Im **.env**-Feld des Stacks die eigenen Werte eintragen:
+
+   ```env
+   # Musik-Share auf dem Server (→ /music im Container)
+   MUSIC_SHARE=/mnt/music
+   # Inbox, falls sie nicht im Musik-Share liegt (→ /inbox); sonst weglassen und in den Einstellungen /music/… eintragen
+   INBOX_SHARE=/mnt/inbox
+   # Besitzer des Shares (ls -ln /mnt/music) – neue und verschobene Dateien gehören dann diesem Benutzer
+   PUID=1000
+   PGID=1000
+   # Port im LAN
+   MUSICWIZ_PORT=8000
+   # Adresse, unter der MusicWiz erreichbar ist
+   APP_URL=http://nas.local:8000
+   ```
+
+4. **Deploy.** Danach läuft MusicWiz unter `http://<server>:8000`.
+5. In der App unter **Einstellungen** Basisordner, Inbox, Papierkorb, Kategorien und Namensschema prüfen, dann **Inbox → Scannen**.
+
+Der Stack besteht aus drei Containern aus demselben Image: `app` (Oberfläche), `queue` (Verschieben, Tags schreiben, Scans)
+und `downloads` (YouTube). Der Anwendungsschlüssel (`APP_KEY`) wird beim ersten Start erzeugt und in `./data` abgelegt.
+
+### Daten und Sicherung
+
+Alles, was MusicWiz selbst speichert, liegt im Stack-Ordner unter `./data`: SQLite-Datenbank, Schlüssel, Sicherungen fürs
+Rückgängigmachen (alte Cover und Tags), Cache. Diesen Ordner mitsichern. Einstellungen, Künstlerverzeichnis, Genre-Liste und
+Ausnahmen lassen sich zusätzlich unter **Einstellungen → Sicherung** als Datei exportieren.
+
+### Update
+
+In Dockge beim Stack **„Update“** (zieht das neueste Image und startet neu). Die Datenbank wird beim Start automatisch
+aktualisiert. Für eine feste Version statt `latest` in der `.env` z. B. `MUSICWIZ_TAG=0.1.0-beta.1` setzen.
+
+yt-dlp lässt sich zwischendurch auf der Seite **YouTube-Download** aktualisieren (YouTube ändert häufig etwas);
+mit dem nächsten Image-Update kommt ohnehin die aktuelle Version.
+
+### Hinter Traefik
+
+Statt `ports` die üblichen Labels beim Dienst `app` ergänzen (interner Port **8080**) und das Traefik-Netz einbinden, z. B.:
+
+```yaml
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.musicwiz.rule=Host(`musicwiz.example.lan`)
+      - traefik.http.services.musicwiz.loadbalancer.server.port=8080
+    networks: [traefik, default]
+```
+
+### Befehle im Container
+
+Artisan-Befehle als Share-Benutzer ausführen (sonst entstehen Dateien, die root gehören):
+
+```sh
+docker compose exec -u 1000:1000 app php artisan musicwiz:scan inbox
+```
+
+## Entwicklung
+
+Voraussetzung: Docker. PHP, Composer und Node laufen in Containern (lokal ist kein PHP nötig).
+
+```sh
+./dev.sh start      # bauen, Datenbank anlegen, starten → http://localhost:8000
+./dev.sh stop
+./dev.sh logs       # Logs verfolgen
+./dev.sh test       # Tests (inkl. Ende-zu-Ende: Scan → Einordnen → Rückgängig)
+./dev.sh artisan musicwiz:scan inbox|library   # Scan wie der Knopf in der App
+./dev.sh shell
+docker compose exec app vendor/bin/pint       # Code formatieren
+```
+
+In der Entwicklung ist `./demofiles` im Container als `/music` eingebunden (`inbox`, `library`, `blackhole`); der Ordner ist
+nicht im Repository. Container: `app` (FrankenPHP), `queue` und `downloads` (Jobs, Queue auf SQLite), `assets` (Vite/Tailwind im Watch-Modus).
+
+Stack: Laravel 13, Livewire 4, Tailwind 4, SQLite; Tags über mutagen (`tools/tagtool.py`) und getID3; yt-dlp + ffmpeg für YouTube.
+
+### Aufbau
+
+| Teil | Ort |
+| --- | --- |
+| Tag-Tool (Schreiben und Lesen der Tag-Felder, mutagen) | `tools/tagtool.py` |
+| Technik & Cover lesen (getID3), Scan gedrosselt/inkrementell | `app/Support/TagReader.php`, `Scanner.php` |
+| Namensschema / Zielpfade | `app/Support/PathBuilder.php` |
+| Interpreten-Regeln, Künstlerverzeichnis | `app/Support/ArtistNames.php`, `ArtistDirectory.php` |
+| Editor-Vorschau → Aktionen | `app/Support/AlbumPlanner.php` |
+| Ausführen + Verlauf + Rückgängig | `app/Support/OperationRunner.php`, `FileOps.php` |
+| Aufräum-Prüfungen | `app/Support/CleanupChecks.php` |
+| Nachschlagen (MusicBrainz, Discogs, Deezer, Fanart.tv) | `app/Support/Lookup.php` |
+| YouTube-Download (yt-dlp) | `app/Support/YouTube.php` |
+| Oberfläche (Livewire) | `app/Livewire`, `resources/views/livewire` |
+| Image und Start im Betrieb | `docker/Dockerfile` (Ziel `prod`), `docker/entrypoint.sh` |
+
+Tag-Felder lesen und schreiben beide über das Tag-Tool, damit `TXXX:ARTISTS` und der Kommentar ohne Beschreibung
+(`COMM::XXX`, wie MediaMonkey) zuverlässig gleich behandelt werden; getID3 liefert Länge, Bitrate und Cover.
+MP3 wird als ID3v2.4 geschrieben (einstellbar). Planung und Anforderungen: [`MusicWiz – Planung.md`](MusicWiz%20–%20Planung.md).
+
+### Release
+
+Push auf `main` baut `ghcr.io/avratny/musicwiz:latest`. Für eine Version ein Tag pushen:
+
+```sh
+git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1   # → Image :0.1.0-beta.1
+```

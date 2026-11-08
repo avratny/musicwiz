@@ -1,0 +1,17 @@
+demofiles
+node_modules
+vendor
+public/build
+public/hot
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing
+storage/app/private/*
+database/*.sqlite*
+data
+.env
+.git
+.DS_Store
+*.md

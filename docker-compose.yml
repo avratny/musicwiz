@@ -1,0 +1,53 @@
+# Entwicklung: Code wird eingebunden, Musik-Basis zeigt auf ./demofiles
+# Start/Stopp über ./dev.sh
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/Dockerfile
+    target: base
+    args:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+  image: musicwiz-dev
+  volumes:
+    - ./:/app
+    - ./demofiles:/music
+  environment:
+    MUSIC_BASE: /music
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  app:
+    <<: *app
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/up"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public"]
+    ports:
+      - "${APP_PORT:-8000}:8080"
+
+  queue:
+    <<: *app
+    healthcheck:
+      disable: true
+    # listen statt work: Codeänderungen greifen ohne Neustart
+    command: ["php", "artisan", "queue:listen", "--queue=default,research", "--sleep=1", "--tries=1", "--timeout=0"]
+    depends_on: [app]
+
+  # YouTube-Downloads laufen getrennt, damit sie andere Aktionen nicht aufhalten
+  downloads:
+    <<: *app
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "queue:listen", "--queue=downloads", "--sleep=1", "--tries=1", "--timeout=0"]
+    depends_on: [app]
+
+  assets:
+    image: node:22-bookworm-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npx vite build --watch"]
