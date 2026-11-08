@@ -18,7 +18,7 @@ class MissingTagsTest extends TestCase
     public function test_track_number_only_required_with_several_tracks(): void
     {
         $base = storage_path('framework/testing/missing-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $files = [
             'A/ABBA/Single (1976)/Fernando.mp3' => 'Single',
             'A/ABBA/Gold (1992)/Waterloo.mp3' => 'Gold',

@@ -23,7 +23,7 @@ class ElectronicSubDismissTest extends TestCase
     public function test_album_can_be_dismissed_and_stays_dismissed_after_move(): void
     {
         $base = storage_path('framework/testing/esub-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $path = $base.'/library/artists/J/Jeff Zarling/Northwind (2026)/01 - Spirit.mp3';
         File::ensureDirectoryExists(dirname($path));
         file_put_contents($path, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));

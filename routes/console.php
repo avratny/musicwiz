@@ -8,10 +8,10 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('musicwiz:scan {location : inbox oder library} {--force : auch entfernen, wenn auffällig viele Dateien fehlen}', function (Scanner $scanner) {
+Artisan::command('musicwiz:scan {location : inbox, library oder blackhole} {--force : auch entfernen, wenn auffällig viele Dateien fehlen}', function (Scanner $scanner) {
     $location = $this->argument('location');
-    if (! in_array($location, ['inbox', 'library'], true)) {
-        $this->error('inbox oder library');
+    if (! in_array($location, ['inbox', 'library', 'blackhole'], true)) {
+        $this->error('inbox, library oder blackhole');
 
         return 1;
     }

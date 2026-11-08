@@ -184,7 +184,7 @@ class FileOps
      */
     private function fixCase(string $dir): void
     {
-        $roots = array_filter([$this->settings->base(), ...$this->settings->inboxPaths()], fn ($r) => str_starts_with($dir.'/', $r.'/'));
+        $roots = array_filter([$this->settings->base(), $this->settings->inbox()], fn ($r) => str_starts_with($dir.'/', $r.'/'));
         if (! $roots) {
             return;
         }
@@ -234,7 +234,7 @@ class FileOps
      */
     public function removeEmptyDirs(string $dir): void
     {
-        $stops = array_merge([$this->settings->base(), rtrim($this->settings->get('trash'), '/')], $this->settings->inboxPaths(),
+        $stops = array_merge([$this->settings->base(), rtrim($this->settings->get('trash'), '/'), $this->settings->inbox()],
             array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categories()));
         $junk = config('musicwiz.junk_files');
         while ($dir !== '/' && $dir !== '' && ! in_array($dir, $stops, true) && is_dir($dir)) {

@@ -21,7 +21,7 @@ class InboxMatcherTest extends TestCase
     public function test_existing_album_and_songs_are_shown(): void
     {
         $base = storage_path('framework/testing/match-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $put = function (string $rel, array $tags) use ($base) {
             $p = $base.'/'.$rel;
             File::ensureDirectoryExists(dirname($p));
@@ -47,7 +47,7 @@ class InboxMatcherTest extends TestCase
 
         $this->assertTrue($m->match($gold)['duplicate']);
         Livewire::test(Inbox::class)->assertSee('im Bestand')->assertSee('1/2 im Bestand');
-        Livewire::test(AlbumEditor::class, ['album' => $gold])->assertSee('Dieses Album gibt es schon im Bestand')->assertSee('im Bestand: Gold · MP3');
+        Livewire::test(AlbumEditor::class, ['album' => $gold])->assertSee('Dieses Album gibt es schon in der Lib')->assertSee('in der Lib: Gold · MP3');
         Livewire::test(AlbumEditor::class, ['album' => $arrival])->assertSee('1× ohne Album (ABBA)');
         File::deleteDirectory($base);
     }
@@ -55,7 +55,7 @@ class InboxMatcherTest extends TestCase
     public function test_same_album_with_other_songs_is_only_a_part(): void
     {
         $base = storage_path('framework/testing/match2-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $put = function (string $rel, array $tags) use ($base) {
             $p = $base.'/'.$rel;
             File::ensureDirectoryExists(dirname($p));
@@ -74,7 +74,7 @@ class InboxMatcherTest extends TestCase
         $this->assertFalse($r['duplicate']);
         $this->assertSame([[2], [1]], [$r['album_discs'], $r['inbox_discs']]);
         Livewire::test(Inbox::class)->assertSee('Teil im Bestand')->assertDontSee('>im Bestand<', false);
-        Livewire::test(AlbumEditor::class, ['album' => $inbox])->assertSee('Ein Teil dieses Albums liegt schon im Bestand')->assertSee('Dort: CD 2 (1 Lied) – hier: CD 1 (2 Lieder)');
+        Livewire::test(AlbumEditor::class, ['album' => $inbox])->assertSee('Ein Teil dieses Albums liegt schon in der Lib')->assertSee('Dort: CD 2 (1 Lied) – hier: CD 1 (2 Lieder)');
         File::deleteDirectory($base);
     }
 }

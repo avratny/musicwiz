@@ -21,11 +21,11 @@ MusicWiz ist eine eigene Web-App, die MediaMonkey ablöst: Sie ordnet neue Musik
 
 ## Oberfläche
 
-Eine Seitenleiste führt zu den Bereichen; die beiden Hauptpunkte sind Inbox und Bestand.
+Eine Seitenleiste führt zu den Bereichen; die Hauptpunkte sind Inbox, Lib und Blackhole – ein Kreislauf: Inbox → Lib oder Blackhole, Lib → Blackhole, Blackhole → zurück in die Inbox.
 
 - **Inbox:** neue Alben mit Anzahl als Badge; Album öffnen, Tags und Cover bearbeiten, Kategorie wählen, einordnen.
-- **Bestand:** die eingeordnete Sammlung durchsuchen und bearbeiten.
-  - Filter nach Kategorie (LIB, LIB COMPILATION, BLACKHOLE, BLACKHOLE COMPILATION).
+- **Lib:** die eingeordnete Sammlung durchsuchen und bearbeiten (im Album-Editor auch direkt ins Blackhole verschieben).
+  - Filter nach Kategorie (LIB, LIB COMPILATION).
   - Navigation Buchstabe → Interpret → Album, Sampler direkt nach Album.
   - Suche über Interpret, Titel und Album.
   - Album öffnet denselben Editor wie in der Inbox; ein Album lässt sich auch in eine andere Kategorie umhängen.
@@ -94,7 +94,7 @@ Vier Kategorien bestimmen Zielordner und Kommentar-Tag; entschieden ist ein neue
 - **`{Nr}`:** Tracknummer immer zweistellig (`05`). Hat das Album mehrere CDs, steht die CD-Nummer davor (`2-05`), bei einer CD nicht. Mehrere CDs erkennt die App an der Gesamtzahl im Tag (z. B. `1/2`) oder daran, dass im Album verschiedene CD-Nummern vorkommen. Ohne Tracknummer entfällt ` {Nr} -  `.
 - **`({Jahr})`:** fällt weg, wenn kein Jahr im Tag steht; fehlt das Album, heißt der Ordner „Kein Album“.
 - **Compilation-Flag folgt immer der Kategorie:** Bei LIB COMPILATION und BLACKHOLE COMPILATION setzt die App das Flag (`TCMP=1` bzw. `COMPILATION=1`) und Album-Interpret = „Various Artists“. Bei LIB und BLACKHOLE entfernt sie das Flag; steht dann noch „Various Artists“ als Album-Interpret, weist die App darauf hin.
-- BLACKHOLE ist der Ordner für Musik, die Andreas nicht hört.
+- BLACKHOLE ist der Ordner für Musik, die Andreas nicht hört. Dorthin wird nur verschoben – sonst interessiert nicht, was dort liegt: eigener Bereich mit eigenem Scan, nicht in der Lib, kein Aufräumen (auch keine Duplikate) und keine Automatiken, kein Abgleich beim Einordnen („schon in der Lib?“), zählt nicht für Künstler, Genres und Schreibweisen. Die Seite **Blackhole** bietet nur eine Suche; ein Album oder einzelne Titel lassen sich von dort zurück in die Inbox holen (Tags bleiben, als Aktion im Verlauf, rückgängig machbar). Bearbeitet wird im Blackhole nichts.
 - Ohne Interpret wird nichts eingeordnet; die App fragt nach. Existiert eine Zieldatei schon, zeigt die App das vor dem Verschieben an; eine vorhandene cover.jpg wandert mit.
 - **Bestand umstellen:** Die rund 15.500 vorhandenen Dateien folgen noch dem alten MediaMonkey-Schema. Die Umstellung läuft über die Aufräum-Prüfung „Datei liegt nicht am Regelort“, einmal mit Vorschau; vorher Roon-Backup, danach liest Roon neu ein.
 
@@ -103,8 +103,8 @@ Vier Kategorien bestimmen Zielordner und Kommentar-Tag; entschieden ist ein neue
 Kein Pfad ist fest im Code: Alles wird auf einer Einstellungsseite gepflegt und in SQLite gespeichert, Startwerte kommen aus der `.env`.
 
 - **Basis:** Wurzel des Musik-Shares im Container (z. B. `/music`).
-- **Inbox:** ein oder mehrere Inbox-Ordner.
-- **Kategorien als Liste:** je Kategorie Name (= Wert im Kommentar-Tag), Zielordner, Dateinamen-Muster und ob es eine Compilation ist. Weitere Kategorien lassen sich ohne Programmieren ergänzen.
+- **Inbox:** genau ein Inbox-Ordner.
+- **Feste Kategorien:** Lib und Blackhole mit je einem Ordner für Künstler und einem für Sampler; einstellbar sind Name (= Wert im Kommentar-Tag), Zielordner und Dateinamen-Muster.
 - **Muster mit Platzhaltern:** `{buchstabe}`, `{ordner_interpret}`, `{album}`, `{nr}`, `{interpret}`, `{jahr}, {titel}`, `{ext}`, z. B. `{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}`.
 - **Weitere Werte:** Text für fehlendes Album („Kein Album“), Ordner für Nicht-Buchstaben (`0-9`), Album-Interpret für Sampler („Various Artists“), Ersatzzeichen für `:` und `/`, Papierkorb-Ordner, Ordner für Künstlerbilder, Zugangsdaten für Discogs und Fanart.tv, Genre-Liste.
 - **Live-Vorschau:** Beim Ändern eines Musters zeigt die App an Beispieldateien, wie die Pfade aussehen würden.

@@ -23,7 +23,7 @@ class LooseFolderTest extends TestCase
     public function test_loose_folder_rules(): void
     {
         $base = storage_path('framework/testing/loose-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $songs = ['Waterloo' => ['Pop'], 'Dancing Queen' => ['Electronic'], 'SOS' => []];
         foreach ($songs as $title => $genres) {
             $path = $base."/library/artists/A/ABBA/Kein Album/$title.mp3";
@@ -56,7 +56,7 @@ class LooseFolderTest extends TestCase
     public function test_track_and_disc_numbers_are_cleared_without_album(): void
     {
         $base = storage_path('framework/testing/loose2-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $make = function (string $file, string $title) use ($base) {
             $path = $base."/library/artists/A/ABBA/Kein Album/$file";
             File::ensureDirectoryExists(dirname($path));

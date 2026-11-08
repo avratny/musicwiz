@@ -37,7 +37,7 @@ class AutoCleanup
     public function columns(): array
     {
         // nur Kategorien: Aufräumen gilt nur im Bestand, außerhalb der Kategorie-Ordner gibt es keine Funde
-        return array_column($this->settings->categories(), 'name');
+        return array_column($this->settings->categoriesIn('library'), 'name');
     }
 
     /** Behebbare Prüfungen. */

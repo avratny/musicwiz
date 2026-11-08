@@ -20,7 +20,7 @@ class NextInboxAlbumTest extends TestCase
     public function test_after_filing_go_to_next_inbox_album(): void
     {
         $base = storage_path('framework/testing/next-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         foreach (['ABBA' => 'Gold', 'Cher' => 'Believe', 'Eminem' => 'Encore'] as $artist => $album) {
             $p = "$base/inbox/$artist/$album/01 Song.mp3";
             File::ensureDirectoryExists(dirname($p));

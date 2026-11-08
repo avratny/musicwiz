@@ -62,7 +62,7 @@ class Inbox extends Component
             'renames' => $renames,
             'existing' => app(InboxMatcher::class)->forAlbums($albums),
             'scan' => $this->scanStatus(),
-            'inboxPaths' => $settings->inboxPaths(),
+            'inbox' => $settings->inbox(),
         ]);
     }
 }

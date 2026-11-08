@@ -24,7 +24,7 @@ class YouTubeDownloadTest extends TestCase
     {
         parent::setUp();
         $this->base = storage_path('framework/testing/yt-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $this->base, 'inbox_paths' => [$this->base.'/inbox'], 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $this->base, 'inbox' => $this->base.'/inbox', 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         File::ensureDirectoryExists($this->base.'/inbox');
 
         // Ersatz für yt-dlp: legt MP3s unter -P an und meldet sie wie das echte Werkzeug.

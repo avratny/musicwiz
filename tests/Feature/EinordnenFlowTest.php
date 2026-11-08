@@ -39,7 +39,7 @@ class EinordnenFlowTest extends TestCase
         File::ensureDirectoryExists($this->base.'/inbox/Yanou/Sunrise');
         app(Settings::class)->set([
             'base' => $this->base,
-            'inbox_paths' => [$this->base.'/inbox'],
+            'inbox' => $this->base.'/inbox',
             'trash' => $this->base.'/_papierkorb',
             'artist_images' => $this->base.'/_artists',
             'scan_throttle_ms' => 0,

@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
- * Liest Inbox und Bestand per Knopf ein: gedrosselt und inkrementell (unveränderte Dateien werden übersprungen).
+ * Liest Inbox, Lib und Blackhole per Knopf ein (jeder Bereich für sich): gedrosselt und inkrementell (unveränderte Dateien werden übersprungen).
  */
 class Scanner
 {
@@ -40,8 +40,8 @@ class Scanner
     public function roots(string $location): array
     {
         $roots = $location === 'inbox'
-            ? $this->settings->inboxPaths()
-            : array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categories());
+            ? [$this->settings->inbox()]
+            : array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categoriesIn($location));
 
         return array_values(array_unique(array_filter($roots, 'is_dir')));
     }
@@ -50,7 +50,7 @@ class Scanner
     private function configuredRoots(): array
     {
         return array_values(array_unique(array_map(fn ($r) => rtrim($r, '/'), [
-            ...$this->settings->inboxPaths(),
+            $this->settings->inbox(),
             ...array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categories()),
         ])));
     }
@@ -182,7 +182,7 @@ class Scanner
         foreach (array_chunk($existing, self::BATCH) as $chunk) {
             $byLocation = [];
             foreach ($chunk as $p) {
-                $byLocation[$this->settings->isInInbox($p) ? 'inbox' : 'library'][] = $p;
+                $byLocation[$this->settings->locationOf($p)][] = $p;
                 $dirs[dirname($p)] = true;
             }
             foreach ($byLocation as $location => $list) {
@@ -642,7 +642,7 @@ class Scanner
         $pluck = fn ($k) => array_map(fn ($t) => is_scalar($t->{$k}) ? (string) $t->{$k} : null, $tracks);
 
         $location = $tracks[0]->location;
-        $category = $location === 'library'
+        $category = $location !== 'inbox'
             ? ($this->settings->categoryForPath($dir.'/')['name'] ?? null)
             : ($this->settings->category($mode($pluck('comment')))['name'] ?? null);
         $isCompilation = (bool) ($this->settings->category($category)['compilation'] ?? false)

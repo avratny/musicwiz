@@ -1,6 +1,6 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
 <div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching) wire:poll.2s @endif>
-    <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten des Bestands (nicht der Inbox). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
+    <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
     <div class="flex min-h-0 flex-1 overflow-hidden">
         <nav class="w-80 shrink-0 overflow-y-auto border-r border-zinc-800 p-3">
             @foreach (\App\Support\CleanupChecks::STEPS as $n => [$stepLabel, $stepHint, $stepChecks])

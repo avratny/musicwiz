@@ -13,10 +13,13 @@ use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 
-#[Layout('layouts.app'), Title('Bestand')]
+#[Layout('layouts.app'), Title('Lib')]
 class Library extends Component
 {
     use StartsScans;
+
+    /** Bereich: library bzw. blackhole (gleiche Ansicht, siehe Blackhole) */
+    protected string $area = 'library';
 
     #[Url]
     public string $category = '';
@@ -43,12 +46,18 @@ class Library extends Component
         $this->artist = '';
     }
 
+    /** Zusätzliche Daten für die Ansicht (Blackhole: aufgeklapptes Album). */
+    protected function extraData(): array
+    {
+        return [];
+    }
+
     public function render(Settings $settings, ArtistDirectory $directory)
     {
-        $categories = $settings->categories();
-        $cat = $settings->category($this->category);
+        $categories = $settings->categoriesIn($this->area);
+        $cat = collect($categories)->firstWhere('name', $this->category);
         $samplerMode = $this->letter === 'sampler' || ($cat['compilation'] ?? false);
-        $base = Album::where('location', 'library')->when($cat, fn ($q) => $q->where('category', $cat['name']));
+        $base = Album::where('location', $this->area)->when($cat, fn ($q) => $q->where('category', $cat['name']));
 
         $letters = (clone $base)->where('is_compilation', false)->whereNotNull('letter')
             ->selectRaw('letter, count(distinct folder_artist) as n')->groupBy('letter')->pluck('n', 'letter')->all();
@@ -66,7 +75,7 @@ class Library extends Component
 
         if (trim($this->q) !== '') {
             $term = '%'.trim($this->q).'%';
-            $results = Track::where('location', 'library')
+            $results = Track::where('location', $this->area)
                 ->when($cat, fn ($q) => $q->whereHas('albumRecord', fn ($a) => $a->where('category', $cat['name'])))
                 ->where(fn ($w) => $w->where('artist', 'like', $term)->orWhere('title', 'like', $term)->orWhere('album', 'like', $term)->orWhere('albumartist', 'like', $term))
                 ->with('albumRecord')->orderBy('artist')->orderBy('album')->limit(300)->get();
@@ -83,6 +92,7 @@ class Library extends Component
         }
 
         return view('livewire.library', [
+            'area' => $this->area,
             'categories' => $categories,
             'letters' => $letters,
             'samplerCount' => $samplerCount,
@@ -93,6 +103,6 @@ class Library extends Component
             'artistModel' => $artistModel,
             'total' => (clone $base)->count(),
             'scan' => $this->scanStatus(),
-        ]);
+        ] + $this->extraData());
     }
 }

@@ -22,7 +22,7 @@
         @if ($tab === 'general')
             <div class="grid max-w-4xl grid-cols-2 gap-5">
                 <div class="col-span-2"><label class="label">Basis (Wurzel des Musik-Shares im Container)</label><input wire:model="s.base" class="input font-mono"></div>
-                <div class="col-span-2"><label class="label">Inbox-Ordner (einer pro Zeile)</label><textarea wire:model="inboxText" rows="3" class="input font-mono"></textarea></div>
+                <div class="col-span-2"><label class="label">Inbox-Ordner</label><input wire:model="s.inbox" class="input font-mono"></div>
                 <div><label class="label">Papierkorb-Ordner</label><input wire:model="s.trash" class="input font-mono"></div>
                 <div><label class="label">Ordner für Künstlerbilder</label><input wire:model="s.artist_images" class="input font-mono"></div>
                 <div><label class="label">Text für fehlendes Album</label><input wire:model="s.no_album" class="input"></div>
@@ -44,25 +44,25 @@
             <p class="mb-4 max-w-4xl text-sm text-zinc-400">
                 Platzhalter: <code class="text-violet-300">{buchstabe} {ordner_interpret} {album} {nr} {interpret} {jahr} {titel} {ext}</code>.
                 Leere Platzhalter fallen samt Klammern bzw. Trenner weg. Der Name ist zugleich der Wert im Kommentar-Tag.
+                Die Kategorien sind fest: Lib und Blackhole mit je einem Ordner für Künstler und einem für Sampler.
             </p>
             <div class="space-y-4">
                 @foreach ($s['categories'] as $i => $c)
-                    <div class="card p-4" wire:key="cat{{ $i }}">
+                    @if ($i === 0 || $s['categories'][$i - 1]['area'] !== $c['area'])
+                        <h3 class="pt-2 text-sm font-semibold uppercase tracking-wide text-zinc-400">{{ $c['area'] === 'blackhole' ? 'Blackhole' : 'Lib' }}</h3>
+                    @endif
+                    <div class="card p-4" wire:key="cat{{ $c['role'] }}">
                         <div class="grid grid-cols-[14rem_14rem_1fr_auto] items-end gap-3">
                             <div><label class="label">Name (Kommentar)</label><input wire:model.live.debounce.500ms="s.categories.{{ $i }}.name" class="input font-semibold"></div>
                             <div><label class="label">Zielordner (unter Basis)</label><input wire:model.live.debounce.500ms="s.categories.{{ $i }}.folder" class="input font-mono"></div>
                             <div><label class="label">Dateinamen-Muster</label><input wire:model.live.debounce.500ms="s.categories.{{ $i }}.pattern" class="input font-mono"></div>
-                            <div class="flex items-center gap-3 pb-2">
-                                <label class="flex items-center gap-2 text-sm"><input type="checkbox" wire:model.live="s.categories.{{ $i }}.compilation" class="rounded border-zinc-600 bg-zinc-800"> Compilation</label>
-                                <button wire:click="removeCategory({{ $i }})" class="text-zinc-500 hover:text-red-400" title="Entfernen">✕</button>
-                            </div>
+                            <div class="pb-2 text-sm text-zinc-400">{{ $c['compilation'] ? 'Sampler' : 'Künstler' }}</div>
                         </div>
                         <div class="mt-3 space-y-0.5 rounded-lg bg-zinc-950/60 p-3 font-mono text-xs text-blue-300">
                             @foreach ($categoriesPreview[$i] ?? [] as $p)<div class="truncate" title="{{ $p }}">{{ $p }}</div>@endforeach
                         </div>
                     </div>
                 @endforeach
-                <button wire:click="addCategory" class="btn-ghost">+ Kategorie</button>
             </div>
         @endif
 
@@ -94,7 +94,7 @@
 
         @if ($tab === 'mapping')
             <div class="max-w-4xl">
-                <p class="mb-4 text-sm text-zinc-400">Jeder Genre-Wert aus dem Bestand, der nicht auf der Liste steht, wird einmal einem Listen-Genre zugeordnet. Daraus entstehen Vorschläge in der Inbox; angewendet wird über „Aufräumen“.</p>
+                <p class="mb-4 text-sm text-zinc-400">Jeder Genre-Wert aus Lib und Inbox, der nicht auf der Liste steht, wird einmal einem Listen-Genre zugeordnet. Daraus entstehen Vorschläge in der Inbox; angewendet wird über „Aufräumen“.</p>
                 <input type="search" wire:model.live.debounce.300ms="mappingFilter" placeholder="Filtern …" class="input mb-4 w-72">
                 <table class="w-full text-sm">
                     <thead><tr><th class="th">Wert im Bestand</th><th class="th w-24 text-right">Dateien</th><th class="th w-80">Listen-Genre</th></tr></thead>
@@ -121,7 +121,7 @@
         @if ($tab === 'auto')
             <div class="max-w-6xl">
                 <p class="mb-4 text-sm text-zinc-400">
-                    Angehakte Aufräumaktionen werden <strong class="text-zinc-200">ohne Nachfrage</strong> erledigt – nach jedem Bestand-Scan oder per Knopf.
+                    Angehakte Aufräumaktionen werden <strong class="text-zinc-200">ohne Nachfrage</strong> erledigt – nach jedem Lib-Scan oder per Knopf.
                     Sie stehen im Protokoll und im Verlauf und lassen sich dort rückgängig machen. Die Kategorie ergibt sich aus dem Ordner der Datei.
                     Aufräumen gilt nur im Bestand – die Inbox wird beim Einordnen bereinigt. Standardmäßig ist alles aus.
                 </p>
@@ -157,7 +157,7 @@
                 </table>
                 <div class="mt-4 flex items-center gap-3">
                     <button wire:click="runAuto" wire:confirm="Alle angehakten Automatiken jetzt ausführen?" class="btn-primary" @disabled(! $autoConfig)>Jetzt ausführen</button>
-                    <span class="text-xs text-zinc-500">Läuft sonst automatisch nach jedem Bestand-Scan.</span>
+                    <span class="text-xs text-zinc-500">Läuft sonst automatisch nach jedem Lib-Scan.</span>
                 </div>
             </div>
         @endif

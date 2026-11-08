@@ -5,7 +5,7 @@
 @endphp
 <div class="flex h-full flex-col overflow-hidden" @if ($operation) wire:poll.1s="checkOperation" @endif>
     <x-page-header :title="$fields['album'] ?: $album->title" :subtitle="$album->discCount() > 1 ? $album->discCount().' CDs: '.implode(' · ', array_map(fn ($d) => basename($d), $album->allDirs())) : $rel($album->dir)">
-        <a href="{{ $isInbox ? route('inbox') : route('library') }}" wire:navigate class="btn-ghost">← {{ $isInbox ? 'Inbox' : 'Bestand' }}</a>
+        <a href="{{ $isInbox ? route('inbox') : route('library') }}" wire:navigate class="btn-ghost">← {{ $isInbox ? 'Inbox' : 'Lib' }}</a>
     </x-page-header>
 
     @if ($existing && ($existing['album'] || $existing['songs']))
@@ -13,17 +13,17 @@
             <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
                 @php $cds = fn ($d) => $d ? 'CD '.implode(', ', $d) : ''; @endphp
                 @if ($existing['album'] && $existing['duplicate'])
-                    <strong>Dieses Album gibt es schon im Bestand:</strong>
+                    <strong>Dieses Album gibt es schon in der Lib:</strong>
                     <a href="{{ route('library.album', $existing['album']) }}" wire:navigate class="underline">{{ $rel($existing['album']->dir) }}</a>
                     – {{ $existing['songs'] }} von {{ $existing['total'] }} Liedern sind schon da (in der Liste markiert).
                     Beim Einordnen entscheidet die Vorschau pro Datei (bessere Version behalten).
                 @elseif ($existing['album'])
-                    <strong>Ein Teil dieses Albums liegt schon im Bestand:</strong>
+                    <strong>Ein Teil dieses Albums liegt schon in der Lib:</strong>
                     <a href="{{ route('library.album', $existing['album']) }}" wire:navigate class="underline">{{ $rel($existing['album']->dir) }}</a>.
                     Dort: {{ $cds($existing['album_discs']) }} ({{ $existing['album_tracks'] }} {{ $existing['album_tracks'] === 1 ? 'Lied' : 'Lieder' }}) – hier: {{ $cds($existing['inbox_discs']) }} ({{ $existing['total'] }} Lieder){{ $existing['songs'] ? ', davon '.$existing['songs'].' schon vorhanden' : ', keines davon doppelt' }}.
                     Gehört vermutlich zusammen – mit gleicher Kategorie und gleichem Albumnamen landet beides im selben Ordner.
                 @else
-                    {{ $existing['songs'] }} von {{ $existing['total'] }} Liedern gibt es schon im Bestand – in der Liste markiert:
+                    {{ $existing['songs'] }} von {{ $existing['total'] }} Liedern gibt es schon in der Lib – in der Liste markiert:
                 @endif
                 @if (! ($existing['album'] && $existing['duplicate']) && ! empty($existing['where']))
                     <span class="mt-1 flex flex-wrap gap-x-3 gap-y-1">
@@ -56,7 +56,7 @@
             @if (session('status'))
                 <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
                     {{ session('status') }}
-                    @if (session('filed_url'))<a href="{{ session('filed_url') }}" wire:navigate class="ml-2 underline">im Bestand ansehen</a>@endif
+                    @if (session('filed_url'))<a href="{{ session('filed_url') }}" wire:navigate class="ml-2 underline">ansehen</a>@endif
                 </div>
             @endif
             @if (session('error'))<div class="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm whitespace-pre-line text-red-200">{{ session('error') }}</div>@endif
@@ -370,7 +370,7 @@
                                     @if (! empty($existing['tracks'][$row['id']]))
                                         @php $hit = $existing['tracks'][$row['id']]; @endphp
                                         <span class="badge-amber" title="{{ implode("\n", array_map(fn ($h) => $rel($h['path']).' ('.strtoupper($h['ext']).(in_array($h['ext'], ['flac', 'wav']) ? '' : ', '.round(($h['bitrate'] ?? 0) / 1000).' kbit/s').')', $hit)) }}">
-                                            im Bestand: {{ \Illuminate\Support\Str::limit($hit[0]['album'] ?: 'ohne Album', 28) }} · {{ implode(', ', array_unique(array_map(fn ($h) => strtoupper($h['ext']), $hit))) }}{{ count($hit) > 1 ? ' ('.count($hit).'×)' : '' }}
+                                            in der Lib: {{ \Illuminate\Support\Str::limit($hit[0]['album'] ?: 'ohne Album', 28) }} · {{ implode(', ', array_unique(array_map(fn ($h) => strtoupper($h['ext']), $hit))) }}{{ count($hit) > 1 ? ' ('.count($hit).'×)' : '' }}
                                         </span>
                                     @endif
                                     @if (($row['seconds'] ?? 1) < 0.1)

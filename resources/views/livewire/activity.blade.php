@@ -3,7 +3,7 @@
         <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 p-3 text-xs">
             <div class="flex items-center gap-2 font-medium text-blue-200">
                 <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
-                Scan {{ $scan['location'] === 'inbox' ? 'Inbox' : 'Bestand' }} · {{ $scan['phase'] ?? '' }}
+                Scan {{ ['inbox' => 'Inbox', 'library' => 'Lib', 'blackhole' => 'Blackhole'][$scan['location']] ?? 'Lib' }} · {{ $scan['phase'] ?? '' }}
             </div>
             @if (($scan['total'] ?? 0) > 0)
                 <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">

@@ -10,7 +10,7 @@ trait StartsScans
     /** @param  bool  $allowMassRemoval  fehlende Dateien auch dann aus dem Index entfernen, wenn es auffällig viele sind */
     public function startScan(string $location, bool $allowMassRemoval = false): void
     {
-        if (! in_array($location, ['inbox', 'library'], true)) {
+        if (! in_array($location, ['inbox', 'library', 'blackhole'], true)) {
             return;
         }
         $scanner = app(Scanner::class);

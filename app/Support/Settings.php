@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
  */
 class Settings
 {
-    public const KEYS = ['base', 'inbox_paths', 'trash', 'artist_images', 'categories', 'no_album', 'non_letter_folder',
+    public const KEYS = ['base', 'inbox', 'trash', 'artist_images', 'categories', 'no_album', 'non_letter_folder',
         'compilation_artist', 'replace_colon', 'replace_slash', 'id3_version', 'scan_throttle_ms', 'small_cover_px',
         'discogs_token', 'fanart_key', 'auto_cleanup',
         'yt_sleep_min', 'yt_sleep_max', 'yt_sleep_requests', 'yt_rate_mb', 'yt_daily_limit'];
@@ -24,6 +24,10 @@ class Settings
             $this->cache = [];
             foreach (self::KEYS as $key) {
                 $this->cache[$key] = array_key_exists($key, $stored) && $stored[$key] !== null ? $stored[$key] : config('musicwiz.'.$key);
+            }
+            // früher mehrere Inbox-Ordner: der erste gilt
+            if (! isset($stored['inbox']) && ! empty($stored['inbox_paths'])) {
+                $this->cache['inbox'] = (string) ((array) $stored['inbox_paths'])[0];
             }
         }
 
@@ -65,15 +69,49 @@ class Settings
         return rtrim($this->get('base'), '/');
     }
 
-    /** @return list<array{name:string, folder:string, pattern:string, compilation:bool}> */
+    /**
+     * Feste Kategorien: je Bereich (Lib, Blackhole) ein Ordner für Künstler und einer für Sampler.
+     * Einstellbar sind nur Name (Kommentar-Tag), Zielordner und Muster.
+     *
+     * @return list<array{role:string, area:string, name:string, folder:string, pattern:string, compilation:bool}>
+     */
     public function categories(): array
     {
-        return array_values(array_map(fn ($c) => [
-            'name' => (string) $c['name'],
-            'folder' => trim((string) $c['folder'], '/'),
-            'pattern' => (string) $c['pattern'],
-            'compilation' => (bool) ($c['compilation'] ?? false),
-        ], $this->get('categories', [])));
+        $stored = (array) $this->get('categories', []);
+        $defaults = config('musicwiz.categories');
+        $out = [];
+        foreach (self::ROLES as $role => [$area, $compilation]) {
+            // ältere Einstellungen: freie Liste statt fester Rollen – über den Namen zuordnen
+            $c = $stored[$role]
+                ?? collect($stored)->first(fn ($c) => is_array($c) && ($c['role'] ?? null) === $role)
+                ?? collect($stored)->first(fn ($c) => is_array($c) && strcasecmp((string) ($c['name'] ?? ''), $defaults[$role]['name']) === 0)
+                ?? [];
+            $c = array_merge($defaults[$role], array_filter((array) $c, fn ($v) => is_string($v) && trim($v) !== ''));
+            $out[] = [
+                'role' => $role,
+                'area' => $area,
+                'name' => trim((string) $c['name']),
+                'folder' => trim((string) $c['folder'], '/ '),
+                'pattern' => trim((string) $c['pattern']),
+                'compilation' => $compilation,
+            ];
+        }
+
+        return $out;
+    }
+
+    /** Rolle => [Bereich, Compilation] */
+    public const ROLES = [
+        'lib' => ['library', false],
+        'lib_compilation' => ['library', true],
+        'blackhole' => ['blackhole', false],
+        'blackhole_compilation' => ['blackhole', true],
+    ];
+
+    /** @return list<array{role:string, area:string, name:string, folder:string, pattern:string, compilation:bool}> */
+    public function categoriesIn(string $area): array
+    {
+        return array_values(array_filter($this->categories(), fn ($c) => $c['area'] === $area));
     }
 
     public function category(?string $name): ?array
@@ -106,20 +144,23 @@ class Settings
         return $best;
     }
 
-    /** @return list<string> */
-    public function inboxPaths(): array
+    public function inbox(): string
     {
-        return array_values(array_filter(array_map(fn ($p) => rtrim(trim($p), '/'), (array) $this->get('inbox_paths', []))));
+        return rtrim(trim((string) $this->get('inbox')), '/');
     }
 
     public function isInInbox(string $path): bool
     {
-        foreach ($this->inboxPaths() as $p) {
-            if (str_starts_with($path, $p.'/')) {
-                return true;
-            }
+        return $this->inbox() !== '' && str_starts_with($path, $this->inbox().'/');
+    }
+
+    /** Bereich eines Pfads im Index: inbox, blackhole oder library. */
+    public function locationOf(string $path): string
+    {
+        if ($this->isInInbox($path)) {
+            return 'inbox';
         }
 
-        return false;
+        return ($this->categoryForPath($path)['area'] ?? null) === 'blackhole' ? 'blackhole' : 'library';
     }
 }

@@ -19,7 +19,7 @@ class CleanupLiveTest extends TestCase
     public function test_list_and_badges_refresh_after_fix(): void
     {
         $base = storage_path('framework/testing/live-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         File::ensureDirectoryExists($base.'/library/artists/A/ABBA/Kein Album');
         foreach (['Waterloo', 'SOS'] as $t) {
             file_put_contents($base."/library/artists/A/ABBA/Kein Album/$t.MP3", str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));
@@ -53,7 +53,7 @@ class CleanupLiveTest extends TestCase
     public function test_apply_single_finding_from_row(): void
     {
         $base = storage_path('framework/testing/row-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         foreach (['Apollo vs. Crystal Lake' => 'Free', 'Cerla vs. Manian' => 'Jump'] as $artist => $title) {
             $path = $base."/library/sampler/Hits $title/01 - $artist - $title.mp3";
             File::ensureDirectoryExists(dirname($path));

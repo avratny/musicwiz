@@ -25,7 +25,7 @@ class TrashTest extends TestCase
     {
         parent::setUp();
         $this->base = storage_path('framework/testing/trash-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $this->base, 'inbox_paths' => [$this->base.'/inbox'], 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $this->base, 'inbox' => $this->base.'/inbox', 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         File::ensureDirectoryExists($this->base.'/library/artists/A/ABBA/Gold');
         foreach (['01 - Waterloo.mp3', '02 - SOS.mp3'] as $f) {
             file_put_contents($this->base.'/library/artists/A/ABBA/Gold/'.$f, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));

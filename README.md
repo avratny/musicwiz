@@ -12,7 +12,8 @@ bestätigter Vorschau. Jede Aktion steht im Verlauf und lässt sich rückgängig
 
 - **Inbox** – neue Alben einlesen, Tags prüfen und korrigieren (MusicBrainz, Discogs, Cover), nach festem Namensschema in den Bestand einordnen.
   Mehrfach-CDs werden zusammengefasst, vorhandene Alben und bessere Fassungen erkannt.
-- **Bestand** – Übersicht über die eingeordnete Sammlung, Album-Editor mit Vorschau.
+- **Lib** – Übersicht über die eingeordnete Sammlung, Album-Editor mit Vorschau; Alben lassen sich von hier direkt ins Blackhole verschieben.
+- **Blackhole** – Musik, die nicht gehört wird: eigener Scan, nur Suche; Album oder Titel lassen sich zurück in die Inbox holen.
 - **Künstler** – Künstlerverzeichnis mit Schreibweisen, MusicBrainz-/Discogs-ID, Bild und Standard-Genre; gleichnamige Künstler
   auseinanderhalten; neue Namen aus dem Bestand Schritt für Schritt erfassen.
 - **Aufräumen** – Prüfungen in fünf Schritten (Defekte Dateien, Duplikate, Schreibweisen, Genres, Cover, Ablageort, Reste …),
@@ -93,7 +94,7 @@ Voraussetzung: Docker. PHP, Composer und Node laufen in Containern (lokal ist ke
 ./dev.sh stop
 ./dev.sh logs       # Logs verfolgen
 ./dev.sh test       # Tests (inkl. Ende-zu-Ende: Scan → Einordnen → Rückgängig)
-./dev.sh artisan musicwiz:scan inbox|library   # Scan wie der Knopf in der App
+./dev.sh artisan musicwiz:scan inbox|library|blackhole   # Scan wie der Knopf in der App
 ./dev.sh shell
 docker compose exec app vendor/bin/pint       # Code formatieren
 ```

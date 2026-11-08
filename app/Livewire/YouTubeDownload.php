@@ -24,8 +24,6 @@ class YouTubeDownload extends Component
     /** Bei Links mit Video und Playlist die ganze Playlist laden */
     public bool $playlist = false;
 
-    public string $inbox = '';
-
     public ?string $message = null;
 
     public ?string $updateOutput = null;
@@ -35,9 +33,8 @@ class YouTubeDownload extends Component
 
     public bool $limitsSaved = false;
 
-    public function mount(Settings $settings, YouTube $youtube): void
+    public function mount(YouTube $youtube): void
     {
-        $this->inbox = $settings->inboxPaths()[0] ?? '';
         $this->limits = $youtube->limits();
     }
 
@@ -74,12 +71,12 @@ class YouTubeDownload extends Component
 
             return;
         }
-        if (! in_array($this->inbox, $settings->inboxPaths(), true)) {
+        if ($settings->inbox() === '') {
             $this->message = '⚠ Kein Inbox-Ordner eingerichtet (Einstellungen).';
 
             return;
         }
-        $dir = $this->inbox.'/'.YouTube::FOLDER;
+        $dir = $settings->inbox().'/'.YouTube::FOLDER;
         Storage::makeDirectory('youtube');
         // Archiv je Link: Fortsetzungen und neue Versuche überspringen schon geladene Titel ohne erneute Anfrage
         $actions = array_map(fn ($u) => ['type' => 'download', 'url' => $u, 'dir' => $dir, 'playlist' => $this->playlist,
@@ -185,7 +182,7 @@ class YouTubeDownload extends Component
             'today' => YouTube::countToday(),
             'deletable' => $ops->contains(fn ($op) => ! $op->isActive() || $op->isPlanned()),
             'retried' => self::retriedIds()->all(),
-            'inboxPaths' => $settings->inboxPaths(),
+            'inbox' => $settings->inbox(),
             'version' => Cache::remember('ytdlp-version', 600, fn () => $youtube->version() ?? ''),
             'base' => $settings->base(),
         ]);

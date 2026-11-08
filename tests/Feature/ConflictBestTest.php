@@ -25,7 +25,7 @@ class ConflictBestTest extends TestCase
     {
         parent::setUp();
         $this->base = storage_path('framework/testing/conflict-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $this->base, 'inbox_paths' => [$this->base.'/inbox'], 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $this->base, 'inbox' => $this->base.'/inbox', 'trash' => $this->base.'/_papierkorb', 'scan_throttle_ms' => 0]);
     }
 
     protected function tearDown(): void

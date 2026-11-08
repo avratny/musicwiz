@@ -24,7 +24,7 @@ class OperationSafetyTest extends TestCase
         File::ensureDirectoryExists($this->base.'/inbox');
         app(Settings::class)->set([
             'base' => $this->base,
-            'inbox_paths' => [$this->base.'/inbox'],
+            'inbox' => $this->base.'/inbox',
             'trash' => $this->base.'/_papierkorb',
             'scan_throttle_ms' => 0,
         ]);

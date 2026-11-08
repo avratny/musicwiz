@@ -77,6 +77,12 @@ class AlbumEditor extends Component
     {
         $album = $album instanceof Album ? $album : Album::find((int) $album);
         abort_unless($album, 404);
+        // im Blackhole wird nichts bearbeitet – nur gesucht und zurück in die Inbox geholt
+        if ($album->location === 'blackhole') {
+            $this->redirect($album->editUrl(), navigate: true);
+
+            return;
+        }
         $this->albumId = $album->id;
         $this->loadAlbum($album);
     }
@@ -374,6 +380,9 @@ class AlbumEditor extends Component
 
             return $this->redirect($album->editUrl(), navigate: true);
         }
+        if ($album->location === 'blackhole') {
+            return $this->redirect($album->editUrl(), navigate: true);
+        }
         $this->loadAlbum($album);
 
         return null;
@@ -560,8 +569,8 @@ class AlbumEditor extends Component
     public function render(Settings $settings, Genres $genres, ArtistDirectory $directory)
     {
         $album = Album::find($this->albumId);
-        if (! $album) {
-            // während des Umzugs ist das alte Album schon weg
+        if (! $album || $album->location === 'blackhole') {
+            // während des Umzugs ist das alte Album schon weg (bzw. liegt im Blackhole – dorthin wird weitergeleitet)
             return view('livewire.album-editor-moving');
         }
         $category = $settings->category($this->fields['category']);

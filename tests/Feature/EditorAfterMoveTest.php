@@ -19,7 +19,7 @@ class EditorAfterMoveTest extends TestCase
     public function test_editor_survives_album_moving_away(): void
     {
         $base = storage_path('framework/testing/after-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $p = $base.'/inbox/VA/Hits/01 A - Song.mp3';
         File::ensureDirectoryExists(dirname($p));
         file_put_contents($p, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));

@@ -4,15 +4,16 @@
 // diese Werte greifen nur, solange dort nichts gespeichert ist.
 return [
     'base' => env('MUSIC_BASE', '/music'),
-    'inbox_paths' => array_filter(explode(',', env('MUSIC_INBOX', '/music/inbox'))),
+    'inbox' => env('MUSIC_INBOX', '/music/inbox'),
     'trash' => env('MUSIC_TRASH', '/music/_papierkorb'),
     'artist_images' => env('MUSIC_ARTIST_IMAGES', '/music/_artists'),
 
+    // feste Kategorien je Bereich (Lib, Blackhole): Name = Wert im Kommentar-Tag, Zielordner unter der Basis, Muster
     'categories' => [
-        ['name' => 'LIB', 'folder' => 'library/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}', 'compilation' => false],
-        ['name' => 'LIB COMPILATION', 'folder' => 'library/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}', 'compilation' => true],
-        ['name' => 'BLACKHOLE', 'folder' => 'blackhole/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}', 'compilation' => false],
-        ['name' => 'BLACKHOLE COMPILATION', 'folder' => 'blackhole/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}', 'compilation' => true],
+        'lib' => ['name' => 'LIB', 'folder' => 'library/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
+        'lib_compilation' => ['name' => 'LIB COMPILATION', 'folder' => 'library/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
+        'blackhole' => ['name' => 'BLACKHOLE', 'folder' => 'blackhole/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
+        'blackhole_compilation' => ['name' => 'BLACKHOLE COMPILATION', 'folder' => 'blackhole/sampler', 'pattern' => '{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
     ],
 
     'no_album' => 'Kein Album',

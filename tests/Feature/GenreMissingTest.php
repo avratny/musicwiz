@@ -20,7 +20,7 @@ class GenreMissingTest extends TestCase
     public function test_albums_without_genre_get_a_suggestion(): void
     {
         $base = storage_path('framework/testing/genremissing-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $base, 'inbox_paths' => [$base.'/inbox'], 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
+        app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'trash' => $base.'/_papierkorb', 'scan_throttle_ms' => 0]);
         $files = [
             'A/ABBA/Gold (1992)/01 - Waterloo.mp3' => ['ABBA', 'Gold', ['Pop']],
             'A/ABBA/Gold (1992)/02 - SOS.mp3' => ['ABBA', 'Gold', ['Pop']],

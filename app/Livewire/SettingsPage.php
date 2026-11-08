@@ -29,8 +29,6 @@ class SettingsPage extends Component
 
     public array $s = [];
 
-    public string $inboxText = '';
-
     public string $newGenre = '';
 
     public ?int $newGenreParent = null;
@@ -70,15 +68,13 @@ class SettingsPage extends Component
     {
         $this->s = $settings->all();
         $this->s['categories'] = $settings->categories();
-        $this->inboxText = implode("\n", $settings->inboxPaths());
     }
 
     public function save(Settings $settings): void
     {
-        $this->s['inbox_paths'] = array_values(array_filter(array_map('trim', explode("\n", $this->inboxText))));
         $this->validate([
             's.base' => 'required|string',
-            's.categories' => 'array|min:1',
+            's.inbox' => 'required|string',
             's.categories.*.name' => 'required|string|distinct',
             's.categories.*.folder' => 'required|string',
             's.categories.*.pattern' => ['required', 'string', 'regex:/\{ext\}$/'],
@@ -93,21 +89,12 @@ class SettingsPage extends Component
         $values['id3_version'] = (int) $values['id3_version'];
         $values['scan_throttle_ms'] = (int) $values['scan_throttle_ms'];
         $values['small_cover_px'] = (int) $values['small_cover_px'];
-        $values['categories'] = array_map(fn ($c) => ['name' => trim($c['name']), 'folder' => trim($c['folder'], '/ '), 'pattern' => trim($c['pattern']), 'compilation' => (bool) ($c['compilation'] ?? false)], $values['categories']);
+        $values['inbox'] = rtrim(trim($values['inbox']), '/');
+        // feste Rollen: gespeichert werden nur Name, Zielordner und Muster
+        $values['categories'] = collect($values['categories'])->mapWithKeys(fn ($c) => [$c['role'] => ['name' => trim($c['name']), 'folder' => trim($c['folder'], '/ '), 'pattern' => trim($c['pattern'])]])->all();
         $settings->set($values);
         $this->load($settings);
-        session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; der Bestand wird nur über „Aufräumen“ verschoben.');
-    }
-
-    public function addCategory(): void
-    {
-        $this->s['categories'][] = ['name' => 'NEU', 'folder' => 'library/neu', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}', 'compilation' => false];
-    }
-
-    public function removeCategory(int $i): void
-    {
-        unset($this->s['categories'][$i]);
-        $this->s['categories'] = array_values($this->s['categories']);
+        session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; die Lib wird nur über „Aufräumen“ verschoben.');
     }
 
     // ---------------------------------------------------------------- Genres
@@ -275,7 +262,7 @@ class SettingsPage extends Component
             // Genre-Häufigkeiten über den ganzen Bestand nur bei geändertem Datenstand neu zählen
             $all = Cache::remember('genre-counts:'.DataVersion::tracks(), now()->addHour(), function () {
                 $all = [];
-                foreach (Track::query()->select('genres')->cursor() as $t) {
+                foreach (Track::where('location', '!=', 'blackhole')->select('genres')->cursor() as $t) {
                     foreach ($t->genres ?? [] as $g) {
                         $all[$g] = ($all[$g] ?? 0) + 1;
                     }

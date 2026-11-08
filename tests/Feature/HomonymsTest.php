@@ -27,7 +27,7 @@ class HomonymsTest extends TestCase
     {
         parent::setUp();
         $this->base = storage_path('framework/testing/homonyms-'.bin2hex(random_bytes(4)));
-        app(Settings::class)->set(['base' => $this->base, 'inbox_paths' => [$this->base.'/inbox'], 'trash' => $this->base.'/_papierkorb',
+        app(Settings::class)->set(['base' => $this->base, 'inbox' => $this->base.'/inbox', 'trash' => $this->base.'/_papierkorb',
             'artist_images' => $this->base.'/_artists', 'scan_throttle_ms' => 0]);
         $mp3 = str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 20);
         $tool = app(TagTool::class);

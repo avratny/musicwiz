@@ -31,7 +31,8 @@
             $ytActive = \App\Models\Operation::where('type', 'download')->whereIn('status', ['pending', 'running'])->get()->reject->isPlanned()->count();
             $nav = [
                 ['inbox', 'Inbox', 'M3 13h4l2 3h6l2-3h4M5 5h14l2 8v6H3v-6l2-8Z', $inboxCount],
-                ['library', 'Bestand', 'M4 4h4v16H4zM10 4h4v16h-4zM16 5l3.5-1 3 15.5-3.5 1z', null],
+                ['library', 'Lib', 'M4 4h4v16H4zM10 4h4v16h-4zM16 5l3.5-1 3 15.5-3.5 1z', null],
+                ['blackhole', 'Blackhole', 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-5a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z', null],
                 ['youtube', 'YouTube-Download', 'M12 4v11m0 0-4-4m4 4 4-4M5 20h14', $ytActive ?: null],
                 ['trash', 'Papierkorb', 'M4 7h16M10 11v6M14 11v6M5 7l1 13h12l1-13M9 7V4h6v3', app(\App\Support\Trash::class)->count() ?: null],
             ];

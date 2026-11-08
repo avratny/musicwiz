@@ -10,8 +10,10 @@ Route::redirect('/', '/inbox');
 
 Route::livewire('/inbox', Livewire\Inbox::class)->name('inbox');
 Route::livewire('/inbox/{album}', Livewire\AlbumEditor::class)->name('inbox.album');
-Route::livewire('/bestand', Livewire\Library::class)->name('library');
-Route::livewire('/bestand/album/{album}', Livewire\AlbumEditor::class)->name('library.album');
+Route::livewire('/lib', Livewire\Library::class)->name('library');
+Route::livewire('/lib/album/{album}', Livewire\AlbumEditor::class)->name('library.album');
+Route::livewire('/blackhole', Livewire\Blackhole::class)->name('blackhole');
+Route::redirect('/bestand', '/lib');
 Route::livewire('/youtube', Livewire\YouTubeDownload::class)->name('youtube');
 Route::livewire('/papierkorb', Livewire\TrashPage::class)->name('trash');
 Route::livewire('/kuenstler', Livewire\Artists::class)->name('artists');

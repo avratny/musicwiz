@@ -189,7 +189,12 @@ class SettingsBackup
             if (in_array('settings', $sections, true)) {
                 $keep = Setting::whereIn('key', self::SECRETS)->pluck('value', 'key')->all(); // Zugangsdaten bleiben, wenn nicht exportiert
                 Setting::query()->delete();
-                foreach ($keep + ($data['settings'] ?? []) as $key => $value) {
+                $imported = $data['settings'] ?? [];
+                // ältere Sicherungen: mehrere Inbox-Ordner – der erste gilt
+                if (! isset($imported['inbox']) && ! empty($imported['inbox_paths'])) {
+                    $imported['inbox'] = (string) ((array) $imported['inbox_paths'])[0];
+                }
+                foreach ($keep + $imported as $key => $value) {
                     if (in_array($key, Settings::KEYS, true)) {
                         Setting::create(['key' => $key, 'value' => $value]);
                     }

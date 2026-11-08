@@ -13,16 +13,6 @@
                     <input type="checkbox" wire:model="playlist" class="rounded border-zinc-600 bg-zinc-800">
                     Bei Video-Links mit Playlist die ganze Playlist laden
                 </label>
-                @if (count($inboxPaths) > 1)
-                    <label class="flex items-center gap-2 text-zinc-300">
-                        Ziel:
-                        <select wire:model="inbox" class="input-sm w-auto">
-                            @foreach ($inboxPaths as $p)
-                                <option value="{{ $p }}">{{ $p }}</option>
-                            @endforeach
-                        </select>
-                    </label>
-                @endif
                 <span class="text-zinc-500">→ {{ $inbox }}/{{ \App\Support\YouTube::FOLDER }}/…</span>
                 <button type="submit" class="btn-primary btn-sm ml-auto">Herunterladen</button>
             </div>

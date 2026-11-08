@@ -82,7 +82,11 @@ class Album extends Model
 
     public function editUrl(): string
     {
-        return $this->location === 'inbox' ? route('inbox.album', $this) : route('library.album', $this);
+        return match ($this->location) {
+            'inbox' => route('inbox.album', $this),
+            'blackhole' => route('blackhole', ['open' => $this->id]),
+            default => route('library.album', $this),
+        };
     }
 
     public function durationLabel(): string
