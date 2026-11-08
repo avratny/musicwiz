@@ -107,7 +107,7 @@
              x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
-                    <h2 class="text-lg font-semibold">Vorschau: {{ count($preview['changes']) }} Werte, {{ count($preview['actions']) }} Dateien</h2>
+                    <h2 class="text-lg font-semibold">Vorschau: {{ $preview['changeCount'] }} Werte, {{ $preview['actionCount'] }} Dateien</h2>
                     <button wire:click="$set('preview', null)" class="ml-auto text-zinc-400 hover:text-white">✕</button>
                 </div>
                 <div class="min-h-0 overflow-y-auto px-6 py-4 text-sm">
@@ -125,9 +125,10 @@
                             @endforeach
                             </tbody>
                         </table>
+                        @if ($preview['changeCount'] > count($preview['changes']))<p class="mt-2 text-zinc-500">… und {{ $preview['changeCount'] - count($preview['changes']) }} weitere.</p>@endif
                     @endif
-                    @if ($preview['keep'])
-                        <p class="mt-4 text-zinc-400">Als richtig markiert (wird nicht mehr gemeldet): <span class="font-mono">{{ implode(', ', $preview['keep']) }}</span></p>
+                    @if ($preview['keepCount'])
+                        <p class="mt-4 text-zinc-400">Als richtig markiert (wird nicht mehr gemeldet): <span class="font-mono">{{ implode(', ', $preview['keep']) }}{{ $preview['keepCount'] > count($preview['keep']) ? ' … (+'.($preview['keepCount'] - count($preview['keep'])).')' : '' }}</span></p>
                     @endif
                     @if ($preview['unwritable'])
                         <p class="mt-4 text-amber-300">{{ $preview['unwritable'] }} Datei(en) haben ein Format, das nicht beschrieben werden kann (nur MP3 und FLAC) – die bleiben unverändert.</p>
@@ -136,7 +137,7 @@
                 <div class="flex items-center gap-3 border-t border-zinc-800 px-6 py-4">
                     <span class="text-xs text-zinc-500">Läuft als Aktion im Hintergrund, rückgängig machbar im Verlauf.</span>
                     <button wire:click="$set('preview', null)" class="btn-ghost ml-auto">Abbrechen</button>
-                    <button wire:click="confirm" class="btn-primary" @disabled(! $preview['actions'] && ! $preview['keep'])>{{ $preview['actions'] ? 'Schreiben' : 'Übernehmen' }}</button>
+                    <button wire:click="confirm" class="btn-primary" @disabled(! $preview['actionCount'] && ! $preview['keepCount'])>{{ $preview['actionCount'] ? 'Schreiben' : 'Übernehmen' }}</button>
                 </div>
             </div>
         </div>

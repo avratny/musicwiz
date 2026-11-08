@@ -612,13 +612,18 @@ class CleanupChecks
                 return $tags;
             });
             $detail = [];
-            if ($titles->count() > 1) {
-                $detail[] = 'Album: '.$titles->keys()->map(fn ($k) => $k === '' ? '∅' : $k)->implode(' / ');
+            $changes = [];
+            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa]] as $field => [$values, $target]) {
+                if ($values->count() <= 1) {
+                    continue;
+                }
+                $detail[] = $field.': '.$values->keys()->map(fn ($k) => $k === '' ? '∅' : $k)->implode(' / ');
+                // je bisherigem Wert: wie viele Titel, und wohin (der häufigste Wert bleibt)
+                foreach ($values as $value => $n) {
+                    $changes[] = ['field' => $field, 'from' => (string) $value, 'count' => $n, 'to' => (string) $value === $target ? null : $target];
+                }
             }
-            if ($aas->count() > 1) {
-                $detail[] = 'Album-Interpret: '.$aas->keys()->map(fn ($k) => $k === '' ? '∅' : $k)->implode(' / ');
-            }
-            $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', $detail), 'link' => $this->link($album), 'actions' => $actions];
+            $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', $detail), 'changes' => $changes, 'link' => $this->link($album), 'actions' => $actions];
         }
 
         return $out;
@@ -648,15 +653,20 @@ class CleanupChecks
             });
             if ($actions) {
                 $detail = [];
+                $changes = [];
                 $old = $tracks->filter(fn ($t) => (string) $t->albumartist !== $va)->map(fn ($t) => (string) $t->albumartist)->countBy();
                 if ($old->isNotEmpty()) {
                     $detail[] = 'Album-Interpret '.$old->keys()->map(fn ($k) => '„'.($k === '' ? '∅' : $k).'“')->implode(', ').' → „'.$va.'“ ('.$old->sum().' Titel)';
+                    foreach ($old as $value => $n) {
+                        $changes[] = ['field' => 'Album-Interpret', 'from' => (string) $value, 'count' => $n, 'to' => $va];
+                    }
                 }
                 $noFlag = $tracks->filter(fn ($t) => ! $t->compilation)->count();
                 if ($noFlag) {
                     $detail[] = 'Compilation-Flag 0 → 1 ('.$noFlag.' Titel)';
+                    $changes[] = ['field' => 'Compilation-Flag', 'from' => 'nicht gesetzt', 'count' => $noFlag, 'to' => '1'];
                 }
-                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode("\n", $detail), 'link' => $this->link($album), 'actions' => $actions];
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode("\n", $detail), 'changes' => $changes, 'link' => $this->link($album), 'actions' => $actions];
             }
         }
 

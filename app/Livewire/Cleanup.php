@@ -107,18 +107,33 @@ class Cleanup extends Component
                 }
             }
         }
-        $this->preview = ['actions' => $actions, 'count' => count($findings), 'all' => $all, 'notes' => $notes];
+        // Aktionen nur im Server-Zwischenspeicher: im Seitenzustand würden tausende Pfade bei jedem Aktualisieren
+        // hin- und hergeschickt (Livewire-Grenze 1 MB) – angezeigt werden ohnehin nur die ersten 300
+        $token = bin2hex(random_bytes(8));
+        Cache::put(self::PREVIEW_KEY.$token, ['actions' => $actions, 'count' => count($findings)], now()->addHours(2));
+        $this->preview = [
+            'token' => $token, 'count' => count($findings), 'all' => $all, 'total' => count($actions),
+            'shown' => array_slice($actions, 0, self::PREVIEW_SHOWN),
+            'notes' => array_filter($notes, fn ($i) => $i < self::PREVIEW_SHOWN, ARRAY_FILTER_USE_KEY),
+            'notesCount' => count($notes),
+            'hasMoves' => collect($actions)->contains(fn ($a) => in_array($a['type'], ['move', 'apply'], true) && ! empty($a['target'])),
+        ];
     }
+
+    private const PREVIEW_KEY = 'cleanup.preview.';
+
+    private const PREVIEW_SHOWN = 300;
 
     public function confirm(): void
     {
-        if (! $this->preview || ! $this->preview['actions']) {
+        $stored = $this->preview ? Cache::pull(self::PREVIEW_KEY.$this->preview['token']) : null;
+        if (! $stored || ! $stored['actions']) {
             $this->preview = null;
 
             return;
         }
         $label = CleanupChecks::definitions()[$this->check][0] ?? $this->check;
-        $op = OperationRunner::dispatch('cleanup', 'Aufräumen: '.$label.' ('.$this->preview['count'].' Funde)', $this->preview['actions'], ['on_conflict' => $this->onConflict]);
+        $op = OperationRunner::dispatch('cleanup', 'Aufräumen: '.$label.' ('.$stored['count'].' Funde)', $stored['actions'], ['on_conflict' => $this->onConflict]);
         $this->watching[] = $op->id;
         $this->preview = null;
         $this->selected = [];
@@ -128,8 +143,9 @@ class Cleanup extends Component
 
     private function actionsFor(array $finding): array
     {
-        if ($this->check === 'duplicates' && ($finding['choosable'] ?? false) && isset($this->keep[$finding['id']])) {
-            $keep = $this->keep[$finding['id']];
+        if ($this->check === 'duplicates' && ($finding['choosable'] ?? false) && ($this->keep[$finding['id']] ?? $finding['default_keep'] ?? null)) {
+            // nicht angefasst: vorgeschlagene Fassung (gespeichert wird die Auswahl nur für sichtbare Funde)
+            $keep = $this->keep[$finding['id']] ?? $finding['default_keep'];
 
             return array_values(array_map(fn ($o) => ['type' => 'trash', 'path' => $o['path']], array_filter($finding['options'], fn ($o) => $o['path'] !== $keep)));
         }
@@ -220,8 +236,9 @@ class Cleanup extends Component
         [$all, $staleList, $pending] = $checks->withDismissed && $fresh ? [$checks->findings($this->check), false, false] : $checks->displayFindings($this->check);
         $dismissed = array_values(array_filter($all, fn ($f) => $f['dismissed'] ?? false));
         $findings = array_values(array_filter($all, fn ($f) => ! ($f['dismissed'] ?? false)));
-        foreach ($findings as $f) {
-            // vorgeschlagene Fassung vorauswählen (sonst wäre keine Option markiert)
+        // vorgeschlagene Fassung vorauswählen – nur für sichtbare Funde (der Seitenzustand bleibt klein); für alle
+        // übrigen gilt beim Beheben der Vorschlag (actionsFor)
+        foreach (array_slice($findings, 0, $this->limit) as $f) {
             if (($f['choosable'] ?? false) && ! isset($this->keep[$f['id']])) {
                 $this->keep[$f['id']] = $f['default_keep'];
             }

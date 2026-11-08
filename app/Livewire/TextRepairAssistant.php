@@ -94,20 +94,30 @@ class TextRepairAssistant extends Component
                 $actions[] = ['type' => 'apply', 'path' => $t->path, 'tags' => $tags];
             }
         }
-        $this->preview = ['changes' => $changes, 'keep' => $keep, 'actions' => $actions, 'unwritable' => $unwritable];
+        // Aktionen und „so lassen“ nur im Server-Zwischenspeicher – im Seitenzustand würden sie bei jedem Klick
+        // mitgeschickt (Livewire-Grenze 1 MB); angezeigt werden die ersten 300 Änderungen
+        $token = bin2hex(random_bytes(8));
+        Cache::put(self::PREVIEW_KEY.$token, ['keep' => $keep, 'actions' => $actions, 'changes' => count($changes)], now()->addHours(2));
+        $this->preview = ['token' => $token, 'changes' => array_slice($changes, 0, 300), 'changeCount' => count($changes),
+            'keep' => array_slice($keep, 0, 50), 'keepCount' => count($keep), 'actionCount' => count($actions), 'unwritable' => $unwritable];
     }
+
+    private const PREVIEW_KEY = 'text-repair.preview.';
 
     public function confirm(): void
     {
-        if (! $this->preview) {
+        $stored = $this->preview ? Cache::pull(self::PREVIEW_KEY.$this->preview['token']) : null;
+        if (! $stored) {
+            $this->preview = null;
+
             return;
         }
-        foreach ($this->preview['keep'] as $key => $value) {
+        foreach ($stored['keep'] as $key => $value) {
             CleanupException::firstOrCreate(['check' => 'encoding', 'item_key' => $key], ['label' => $value]);
         }
-        if ($this->preview['actions']) {
-            $n = count($this->preview['changes']);
-            $op = OperationRunner::dispatch('repair', 'Zeichen reparieren: '.$n.' '.($n === 1 ? 'Wert' : 'Werte'), $this->preview['actions']);
+        if ($stored['actions']) {
+            $n = $stored['changes'];
+            $op = OperationRunner::dispatch('repair', 'Zeichen reparieren: '.$n.' '.($n === 1 ? 'Wert' : 'Werte'), $stored['actions']);
             $this->watching[] = $op->id;
             $this->dispatch('activity-changed');
         }
@@ -246,7 +256,8 @@ class TextRepairAssistant extends Component
             $this->items = null;
         }
         $items = $this->items();
-        foreach ($items as $item) {
+        // nur sichtbare Werte vorbelegen – der Seitenzustand bleibt klein (für alle übrigen gilt die Vorauswahl)
+        foreach (array_slice($items, 0, $this->limit) as $item) {
             $this->choice[$item['id']] ??= $this->defaultChoice($item);
             // „Eigene Eingabe“ mit dem Text vorbelegen (erster Vorschlag, sonst der bisherige Wert) – nur noch anpassen
             $this->custom[$item['id']] ??= $item['options'][0]['value'] ?? $item['value'];

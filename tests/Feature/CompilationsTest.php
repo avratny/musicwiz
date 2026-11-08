@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Livewire\AlbumEditor;
+use App\Livewire\Cleanup;
 use App\Models\Album;
 use App\Support\CleanupChecks;
 use App\Support\Compilations;
@@ -76,6 +77,25 @@ class CompilationsTest extends TestCase
             $this->assertTrue($a['tags']['compilation']);
             $this->assertArrayNotHasKey('artist', $a['tags']);
         }
+    }
+
+    public function test_album_mixed_shows_what_changes_to_what(): void
+    {
+        foreach ([1 => 'Gold', 2 => 'Gold', 3 => 'Gold', 4 => 'Gold (Remaster)'] as $n => $album) {
+            $this->file("library/artists/A/ABBA/Gold (1992)/0$n - T$n.mp3", ['artist' => 'ABBA', 'albumartist' => $n === 4 ? '' : 'ABBA', 'album' => $album, 'year' => '1992', 'track' => (string) $n, 'comment' => 'LIB']);
+        }
+        app(Scanner::class)->scan('library');
+
+        $f = app(CleanupChecks::class)->findings('album_mixed')[0];
+        $this->assertSame([
+            ['field' => 'Album', 'from' => 'Gold', 'count' => 3, 'to' => null],
+            ['field' => 'Album', 'from' => 'Gold (Remaster)', 'count' => 1, 'to' => 'Gold'],
+            ['field' => 'Album-Interpret', 'from' => 'ABBA', 'count' => 3, 'to' => null],
+            ['field' => 'Album-Interpret', 'from' => '', 'count' => 1, 'to' => 'ABBA'],
+        ], $f['changes']);
+
+        Livewire::test(Cleanup::class)->set('check', 'album_mixed')
+            ->assertSee('→ neu')->assertSee('Gold (Remaster)')->assertSee('✓ bleibt')->assertSee('∅ (leer)');
     }
 
     public function test_compilation_in_artist_folder_is_only_reported(): void

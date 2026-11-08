@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\RefreshCleanup;
 use App\Livewire\Cleanup;
+use App\Models\Operation;
 use App\Models\Track;
 use App\Support\CleanupChecks;
 use App\Support\Scanner;
@@ -12,6 +13,7 @@ use App\Support\TagTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
@@ -53,6 +55,30 @@ class CleanupRefreshTest extends TestCase
         } while (Queue::pushed(RefreshCleanup::class)->isNotEmpty());
         $this->assertTrue(app()->make(CleanupChecks::class)->isFresh());
         $this->assertFalse(RefreshCleanup::running());
+    }
+
+    public function test_preview_of_thousands_of_findings_keeps_page_state_small(): void
+    {
+        $now = now();
+        $rows = [];
+        foreach (range(1, 3000) as $i) {
+            $rows[] = ['location' => 'library', 'path' => "/m/a$i/t$i.Mp3", 'dir' => "/m/a$i", 'filename' => "t$i.Mp3", 'ext' => 'mp3', 'duration' => 100,
+                'artists' => '[]', 'albumartists' => '[]', 'genres' => '[]', 'created_at' => $now, 'updated_at' => $now];
+            if (count($rows) === 500) {
+                DB::table('tracks')->insert($rows);
+                $rows = [];
+            }
+        }
+        app(CleanupChecks::class)->refreshAll();
+
+        $page = Livewire::test(Cleanup::class)->set('check', 'extension')->call('previewFix', true)
+            ->assertSee('3000 Funde, 3000 Schritte')->assertSee('… und 2700 weitere');
+        $size = strlen(json_encode($page->snapshot));
+        $this->assertLessThan(200 * 1024, $size, 'Seitenzustand '.round($size / 1024).' KB');
+
+        Queue::fake();
+        $page->call('confirm');
+        $this->assertCount(3000, Operation::latest('id')->first()->payload['actions'], 'alle Aktionen aus dem Zwischenspeicher');
     }
 
     public function test_without_any_state_the_page_computes_nothing(): void

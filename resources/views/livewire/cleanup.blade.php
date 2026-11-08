@@ -164,6 +164,24 @@
                                             <div class="font-sans text-amber-300">{{ \Illuminate\Support\Str::afterLast($f['detail'], "\n") }}</div>
                                         @endif
                                     </div>
+                                @elseif (! empty($f['changes']))
+                                    {{-- was wird worauf geändert: je bisherigem Wert eine Zeile --}}
+                                    <table class="mt-1 text-xs">
+                                        <thead class="text-left text-zinc-500">
+                                            <tr><th class="pr-4 font-normal">Feld</th><th class="pr-4 font-normal">bisher</th><th class="pr-4 text-right font-normal">Titel</th><th class="font-normal">→ neu</th></tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (array_slice($f['changes'], 0, 12) as $c)
+                                                <tr>
+                                                    <td class="pr-4 text-zinc-500">{{ $c['field'] }}</td>
+                                                    <td class="max-w-80 truncate pr-4 {{ $c['to'] === null ? 'text-zinc-300' : 'text-red-300/80' }}" title="{{ $c['from'] }}">{{ $c['from'] === '' ? '∅ (leer)' : $c['from'] }}</td>
+                                                    <td class="pr-4 text-right tabular-nums text-zinc-500">{{ $c['count'] }}</td>
+                                                    <td class="max-w-80 truncate {{ $c['to'] === null ? 'text-zinc-600' : 'text-emerald-200' }}" title="{{ $c['to'] }}">{{ $c['to'] === null ? '✓ bleibt' : ($c['to'] === '' ? '∅ (leer)' : $c['to']) }}</td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                    @if (count($f['changes']) > 12)<div class="text-xs text-zinc-500">… und {{ count($f['changes']) - 12 }} weitere Werte</div>@endif
                                 @else
                                     <div class="text-xs whitespace-pre-line text-zinc-400">{{ $f['detail'] }}</div>
                                 @endif
@@ -249,21 +267,21 @@
 
     @if ($preview)
         @php
-            $shown = array_slice($preview['actions'], 0, 300);
-            $hasMoves = collect($preview['actions'])->contains(fn ($a) => in_array($a['type'], ['move', 'apply']) && ! empty($a['target']));
+            $shown = $preview['shown'];
+            $hasMoves = $preview['hasMoves'];
         @endphp
         <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data="{ downOutside: false }" x-on:keydown.escape.window="$wire.set('preview', null)"
              x-on:mousedown.self="downOutside = true" x-on:click.self="if (downOutside) $wire.set('preview', null); downOutside = false"
              x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
-                    <h2 class="text-lg font-semibold">Vorschau: {{ $defs[$check][2] }} · {{ $preview['count'] }} Funde, {{ count($preview['actions']) }} Schritte</h2>
+                    <h2 class="text-lg font-semibold">Vorschau: {{ $defs[$check][2] }} · {{ $preview['count'] }} Funde, {{ $preview['total'] }} Schritte</h2>
                     <button wire:click="$set('preview', null)" class="ml-auto text-zinc-400 hover:text-white">✕</button>
                 </div>
                 <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3 font-mono text-xs">
-                    @if ($preview['notes'] ?? [])
+                    @if ($preview['notesCount'] ?? 0)
                         <div class="mb-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 font-sans text-sm text-amber-200">
-                            {{ count($preview['notes']) }} Ziel(e) sind belegt bzw. doppelt. Unten steht pro Datei, was passiert.
+                            {{ $preview['notesCount'] }} Ziel(e) sind belegt bzw. doppelt. Unten steht pro Datei, was passiert.
                         </div>
                     @endif
                     @foreach ($shown as $ai => $a)
@@ -279,7 +297,7 @@
                             @endif
                         </div>
                     @endforeach
-                    @if (count($preview['actions']) > 300)<p class="py-2 text-zinc-500">… und {{ count($preview['actions']) - 300 }} weitere.</p>@endif
+                    @if ($preview['total'] > count($shown))<p class="py-2 text-zinc-500">… und {{ $preview['total'] - count($shown) }} weitere.</p>@endif
                 </div>
                 <div class="flex items-center gap-4 border-t border-zinc-800 px-6 py-4">
                     @if ($hasMoves)
