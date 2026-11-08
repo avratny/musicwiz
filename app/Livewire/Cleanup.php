@@ -15,6 +15,7 @@ use App\Support\OperationRunner;
 use App\Support\Quality;
 use App\Support\Scanner;
 use App\Support\Settings;
+use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Title;
@@ -207,7 +208,9 @@ class Cleanup extends Component
             $this->preview = null;
         }
         $defs = CleanupChecks::definitions();
-        // nie alle Prüfungen im Seitenaufruf rechnen: veraltet → letzten Stand zeigen, im Hintergrund neu berechnen
+        // nie alle Prüfungen im Seitenaufruf rechnen: veraltet → letzten Stand zeigen, im Hintergrund neu berechnen –
+        // die gerade offene Prüfung zuerst
+        Cache::put(CleanupChecks::FOCUS, $this->check, now()->addMinutes(30));
         $fresh = $checks->isFresh();
         if (! $fresh) {
             RefreshCleanup::request();
@@ -229,7 +232,9 @@ class Cleanup extends Component
             'defs' => $defs,
             'counts' => $checks->displayCounts(),
             // veraltet: Liste/Anzahlen vom letzten Stand, Beheben gesperrt bis zur Neuberechnung
-            'stale' => ! $fresh || $staleList,
+            // gesperrt wird nur, solange die offene Prüfung selbst veraltet ist – die Zahlen links dürfen nachziehen
+            'stale' => $staleList,
+            'countsStale' => ! $fresh,
             'pending' => $pending,
             'progress' => $fresh ? null : CleanupChecks::progress(),
             'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),

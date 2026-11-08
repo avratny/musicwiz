@@ -1,5 +1,5 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
-<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false) || $stale) wire:poll.2s @endif>
+<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false) || $stale || $countsStale) wire:poll.2s @endif>
     <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
     @foreach ($autoHeld as $heldCheck => $h)
         <div class="mx-6 mt-3 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
@@ -61,15 +61,17 @@
                     <button wire:click="previewFix(true)" class="btn-primary" @disabled($active->isNotEmpty() || $stale) title="{{ $stale ? 'Funde werden gerade aktualisiert' : ($active->isNotEmpty() ? 'Es läuft noch eine Aktion' : '') }}">Alle beheben …</button>
                 @endif
             </div>
-            @if ($stale)
+            @if ($stale || $countsStale)
                 <div class="shrink-0 px-6 pt-3">
-                    <div class="rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
+                    <div class="rounded-lg border px-4 py-2 text-sm {{ $stale ? 'border-blue-500/30 bg-blue-500/10 text-blue-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400' }}">
                         <div class="flex items-center gap-2">
-                        <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
-                        @if ($pending)
+                        <span class="size-2 animate-pulse rounded-full {{ $stale ? 'bg-blue-400' : 'bg-zinc-500' }}"></span>
+                        @if (! $stale)
+                            Diese Prüfung ist aktuell – beheben geht. Die Zahlen der übrigen Prüfungen werden im Hintergrund nachgezogen.
+                        @elseif ($pending)
                             Funde werden im Hintergrund berechnet{{ $scanRunning ? ' – startet, sobald der laufende Scan fertig ist' : '' }}. Die Seite aktualisiert sich von selbst.
                         @else
-                            Funde werden im Hintergrund aktualisiert{{ $scanRunning ? ' (nach dem laufenden Scan)' : '' }} – angezeigt wird der letzte Stand. Beheben geht wieder, sobald alles frisch ist.
+                            Diese Prüfung wird gerade neu berechnet{{ $scanRunning ? ' (nach dem laufenden Scan)' : '' }} – angezeigt wird der letzte Stand. Beheben geht gleich wieder.
                         @endif
                         </div>
                         @if ($progress)

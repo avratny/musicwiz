@@ -20,15 +20,23 @@ class ImportMusicBrainzAliases implements ShouldQueue
 
     public int $timeout = 0;
 
-    public function __construct()
+    /** Künstler je Job – danach neu einreihen, damit Aktionen und Aufräumen (Warteschlange default) dazwischen drankommen */
+    private const CHUNK = 15;
+
+    /** @param  int  $afterId  Fortsetzung: Künstler mit größerer ID */
+    public function __construct(public int $afterId = 0)
     {
         $this->onQueue('research');
     }
 
     public function handle(ArtistDirectory $directory, Lookup $lookup): void
     {
-        $artists = Artist::whereNotNull('mbid')->orderBy('name')->get();
-        $status = ['running' => true, 'done' => 0, 'total' => $artists->count(), 'added' => 0, 'errors' => 0];
+        $query = Artist::whereNotNull('mbid')->orderBy('id');
+        $artists = (clone $query)->where('id', '>', $this->afterId)->limit(self::CHUNK)->get();
+        $status = $this->afterId === 0
+            ? ['running' => true, 'done' => 0, 'total' => (clone $query)->count(), 'added' => 0, 'errors' => 0]
+            : (array) Cache::get(self::STATUS_KEY, []) + ['done' => 0, 'added' => 0, 'errors' => 0];
+        $status['running'] = true;
         Cache::forever(self::STATUS_KEY, $status);
         foreach ($artists as $artist) {
             try {
@@ -39,6 +47,11 @@ class ImportMusicBrainzAliases implements ShouldQueue
             }
             $status['done']++;
             Cache::forever(self::STATUS_KEY, $status);
+        }
+        if ($artists->count() === self::CHUNK) {
+            self::dispatch($artists->last()->id); // nächstes Häppchen
+
+            return;
         }
         Cache::forever(self::STATUS_KEY, ['running' => false, 'finished_at' => now()->toIso8601String()] + $status);
     }

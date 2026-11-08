@@ -34,24 +34,27 @@ class RefreshCleanup implements ShouldQueue
         return Cache::has(self::RUNNING);
     }
 
+    /** Sekunden je Häppchen – dazwischen erledigt der Worker wartende Aktionen (z. B. das nächste „Übernehmen“) */
+    public const SLICE_SECONDS = 10;
+
     public function handle(): void
     {
-        try {
-            // Hat sich der Datenstand während des Rechnens geändert (weitere Aktion), gleich noch einmal
-            for ($round = 0; $round < 3; $round++) {
-                $checks = app()->make(CleanupChecks::class); // neue Instanz: frische Version und Daten
-                if ($checks->isFresh()) {
-                    break;
-                }
-                $checks->refreshAll();
-            }
-        } finally {
+        $checks = app()->make(CleanupChecks::class); // neue Instanz: frische Version und Daten
+        $result = $checks->isFresh() ? 'done' : $checks->refreshAll(self::SLICE_SECONDS);
+        if ($result === 'done') {
             Cache::forget(self::RUNNING);
+            Cache::forget(CleanupChecks::PROGRESS);
+
+            return;
         }
+        // Zeit um bzw. Datenstand geändert: weiter im nächsten Häppchen (hinter bereits wartenden Aktionen)
+        Cache::put(self::RUNNING, true, 1800);
+        self::dispatch();
     }
 
     public function failed(\Throwable $e): void
     {
         Cache::forget(self::RUNNING);
+        Cache::forget(CleanupChecks::PROGRESS);
     }
 }

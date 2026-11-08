@@ -22,6 +22,39 @@ class CleanupRefreshTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_open_check_is_refreshed_first_and_unlocked_early(): void
+    {
+        Track::create(['location' => 'library', 'path' => '/m/a.Mp3', 'dir' => '/m', 'filename' => 'a.Mp3', 'ext' => 'mp3', 'duration' => 100]);
+        app(CleanupChecks::class)->refreshAll();
+        Queue::fake();
+        Carbon::setTestNow(now()->addMinute());
+        Track::query()->update(['rating' => 3]);
+
+        // Seite mit „Uneinheitliche Endungen“ offen → diese Prüfung kommt zuerst dran
+        Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('Diese Prüfung wird gerade neu berechnet');
+        $this->assertSame('partial', app()->make(CleanupChecks::class)->refreshAll(0)); // ein Häppchen = eine Prüfung
+        Livewire::test(Cleanup::class)->set('check', 'extension')
+            ->assertSee('Diese Prüfung ist aktuell – beheben geht')
+            ->assertSee('a.Mp3');
+        [, $staleOther] = app()->make(CleanupChecks::class)->displayFindings('broken');
+        $this->assertTrue($staleOther, 'andere Prüfungen kommen danach');
+
+        // Datenstand ändert sich unterwegs → neu ansetzen
+        Carbon::setTestNow(now()->addMinute());
+        $checks = app()->make(CleanupChecks::class);
+        $checks->version();
+        Track::query()->update(['rating' => 4]);
+        $this->assertSame('changed', $checks->refreshAll());
+
+        // Job: in Häppchen, bis alles frisch ist
+        do {
+            Queue::fake();
+            (new RefreshCleanup)->handle();
+        } while (Queue::pushed(RefreshCleanup::class)->isNotEmpty());
+        $this->assertTrue(app()->make(CleanupChecks::class)->isFresh());
+        $this->assertFalse(RefreshCleanup::running());
+    }
+
     public function test_without_any_state_the_page_computes_nothing(): void
     {
         Queue::fake(); // Worker ist beschäftigt (z. B. großer Scan)
@@ -66,7 +99,7 @@ class CleanupRefreshTest extends TestCase
         $this->assertFalse(app(CleanupChecks::class)->isFresh());
 
         $page = Livewire::test(Cleanup::class)->set('check', 'extension')
-            ->assertSee('Funde werden im Hintergrund aktualisiert')
+            ->assertSee('Diese Prüfung wird gerade neu berechnet')
             ->assertSee('SOS') // letzter Stand bleibt sichtbar
             ->assertSee('disabled', false);
         $page->set('check', 'misplaced'); // weitere Aufrufe: kein zweiter Job
@@ -75,7 +108,7 @@ class CleanupRefreshTest extends TestCase
 
         (new RefreshCleanup)->handle();
         $this->assertTrue(app(CleanupChecks::class)->isFresh());
-        Livewire::test(Cleanup::class)->set('check', 'extension')->assertDontSee('Funde werden im Hintergrund aktualisiert');
+        Livewire::test(Cleanup::class)->set('check', 'extension')->assertDontSee('wird gerade neu berechnet')->assertDontSee('übrigen Prüfungen');
         File::deleteDirectory($base);
     }
 }

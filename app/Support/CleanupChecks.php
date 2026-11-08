@@ -132,16 +132,48 @@ class CleanupChecks
     /** Fortschritt der Neuberechnung im Hintergrund: done, total, current (Name der Prüfung), started_at */
     public const PROGRESS = 'cleanup.progress';
 
-    /** Alle Prüfungen berechnen (läuft im Hintergrund nach Scan bzw. Aktion, siehe RefreshCleanup). */
-    public function refreshAll(): void
+    /** Gerade geöffnete Prüfung (wird beim Neuberechnen zuerst gerechnet) */
+    public const FOCUS = 'cleanup.focus';
+
+    /**
+     * Alle Prüfungen berechnen (im Hintergrund nach Scan bzw. Aktion, siehe RefreshCleanup). Die gerade geöffnete
+     * Prüfung zuerst – sie ist dann sofort wieder bearbeitbar. Ändert sich der Datenstand unterwegs (nächste Aktion),
+     * bricht der Lauf ab und der Aufrufer fängt mit einer frischen Instanz neu an.
+     *
+     * @param  float  $budget  höchstens so viele Sekunden, dann Pause (der Worker erledigt Aktionen dazwischen)
+     * @return string done | partial (Zeit um, später weiter) | changed (Datenstand geändert, neu ansetzen)
+     */
+    public function refreshAll(float $budget = INF): string
     {
-        Cache::put(self::PROGRESS, ['done' => 0, 'total' => count(self::definitions()), 'current' => null, 'started_at' => now()->toIso8601String()], now()->addHours(2));
-        try {
-            $this->counts();
-            Cache::forever(self::LAST_VERSION, $this->version());
-        } finally {
-            Cache::forget(self::PROGRESS);
+        $until = microtime(true) + $budget;
+        $keys = array_keys(self::definitions());
+        $focus = Cache::get(self::FOCUS);
+        if (in_array($focus, $keys, true)) {
+            $keys = [$focus, ...array_diff($keys, [$focus])];
         }
+        $started = Cache::get(self::PROGRESS)['started_at'] ?? now()->toIso8601String();
+        Cache::put(self::PROGRESS, ['done' => 0, 'total' => count($keys), 'current' => null, 'started_at' => $started], now()->addHours(2));
+        $computed = 0;
+        foreach ($keys as $key) {
+            if (Cache::has($this->findingsKey($key, $this->version()))) {
+                continue; // schon berechnet (früheres Häppchen)
+            }
+            if (self::currentVersion($this->settings) !== $this->version()) {
+                return 'changed'; // inzwischen geändert: mit neuem Stand (und der offenen Prüfung) von vorn
+            }
+            if ($computed > 0 && microtime(true) > $until) {
+                return 'partial'; // mindestens eine Prüfung je Häppchen, sonst ginge es nie voran
+            }
+            $computed++;
+            $done = count(array_filter($keys, fn ($k) => Cache::has($this->findingsKey($k, $this->version()))));
+            Cache::put(self::PROGRESS, ['done' => $done, 'total' => count($keys), 'current' => self::definitions()[$key][0], 'started_at' => $started], now()->addHours(2));
+            $this->findings($key);
+        }
+        $this->counts();
+        Cache::forever(self::LAST_VERSION, $this->version());
+        Cache::forget(self::PROGRESS);
+
+        return 'done';
     }
 
     public static function progress(): ?array
@@ -189,12 +221,7 @@ class CleanupChecks
     {
         return Cache::remember('cleanup.counts.'.$this->version(), now()->addDays(self::TTL_DAYS), function () {
             $out = [];
-            $defs = self::definitions();
-            $i = 0;
-            foreach (array_keys($defs) as $key) {
-                if (Cache::has(self::PROGRESS)) {
-                    Cache::put(self::PROGRESS, ['done' => $i++, 'current' => $defs[$key][0]] + Cache::get(self::PROGRESS, []), now()->addHours(2));
-                }
+            foreach (array_keys(self::definitions()) as $key) {
                 // ausgeblendete Funde nicht mitzählen (auch wenn die Liste der Ausnahmen gerade aufgeklappt ist)
                 $out[$key] = count(array_filter($this->findings($key), fn ($f) => ! ($f['dismissed'] ?? false)));
             }
@@ -208,8 +235,14 @@ class CleanupChecks
     public function version(): string
     {
         // pro Instanz gemerkt: eine Instanz lebt nur für einen Render bzw. einen Automatik-Schritt
-        return $this->version ??= md5(implode('|', [filemtime(__FILE__), Track::count(), Track::max('id'), DuplicateException::count(), DuplicateException::max('id'), CleanupException::count(), CleanupException::max('id'), Track::max('updated_at'), HistoryEntry::max('id'), Album::max('updated_at'), Leftover::count(), Leftover::max('updated_at'), IntegrityResult::count(), IntegrityResult::max('updated_at'),
-            ArtistAlias::max('updated_at'), Artist::max('updated_at'), Artist::count(), GenreMapping::max('updated_at'), json_encode($this->settings->all())]));
+        return $this->version ??= self::currentVersion($this->settings);
+    }
+
+    /** Aktueller Datenstand (ohne Merken) – z. B. um zu sehen, ob sich während eines Laufs etwas geändert hat. */
+    public static function currentVersion(Settings $settings): string
+    {
+        return md5(implode('|', [filemtime(__FILE__), Track::count(), Track::max('id'), DuplicateException::count(), DuplicateException::max('id'), CleanupException::count(), CleanupException::max('id'), Track::max('updated_at'), HistoryEntry::max('id'), Album::max('updated_at'), Leftover::count(), Leftover::max('updated_at'), IntegrityResult::count(), IntegrityResult::max('updated_at'),
+            ArtistAlias::max('updated_at'), Artist::max('updated_at'), Artist::count(), GenreMapping::max('updated_at'), json_encode($settings->all())]));
     }
 
     public function findings(string $key): array
