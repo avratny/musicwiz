@@ -17,6 +17,9 @@ class Scanner
 {
     public const STATUS_KEY = 'musicwiz.scan';
 
+    /** Zähler: Index geändert (Titel gespeichert/entfernt, Alben gebildet) – für sekundengenaue Versionsvergleiche */
+    public const INDEX_BUMP = 'musicwiz.index-bump';
+
     /** Abbruch angefordert (wird zwischen zwei Ordnern bzw. Lesepaketen geprüft) */
     public const CANCEL_KEY = 'musicwiz.scan.cancel';
 
@@ -220,6 +223,7 @@ class Scanner
         }
         foreach (array_chunk($gone, 500) as $chunk) {
             Track::whereIn('path', $chunk)->delete();
+            Cache::increment(self::INDEX_BUMP);
         }
 
         // Reste nur im Bestand merken (Aufräumen gilt nur dort); alte Inbox-Einträge fallen dabei weg
@@ -291,6 +295,7 @@ class Scanner
         }
         foreach (array_chunk($missing, 500) as $chunk) {
             Track::whereIn('path', $chunk)->delete();
+            Cache::increment(self::INDEX_BUMP);
         }
         foreach (array_chunk($existing, self::BATCH) as $chunk) {
             $byLocation = [];
@@ -317,6 +322,7 @@ class Scanner
     /** Pfade im Index nach Umbenennen eines Ordners anpassen (nur Schreibweise o. Ä.). */
     public function renameDirInIndex(string $old, string $new): void
     {
+        Cache::increment(self::INDEX_BUMP);
         $swap = fn (?string $p) => $p !== null && ($p === $old || str_starts_with($p, $old.'/')) ? $new.substr($p, strlen($old)) : $p;
         DB::transaction(function () use ($old, $swap) {
             foreach (Track::where('path', 'like', $old.'/%')->get() as $t) {
@@ -541,6 +547,7 @@ class Scanner
         if ($rows) {
             $columns = array_diff(array_keys($rows[0]), ['path', 'created_at']);
             Track::upsert($rows, ['path'], $columns);
+            Cache::increment(self::INDEX_BUMP);
         }
     }
 
@@ -611,6 +618,7 @@ class Scanner
         // Datenbank so lange, dass andere Prozesse mit "database is locked" aufgaben
         foreach (array_chunk($sets, self::ALBUM_CHUNK) as $chunk) {
             $prepared = array_map(fn ($set) => [$set, $this->albumAttributes($set['dirs'][0], $set['tracks'], $set['dirs'], $set['disc_map'] ?? [])], $chunk);
+            Cache::increment(self::INDEX_BUMP);
             DB::transaction(function () use ($prepared) {
                 foreach ($prepared as [$set, $attributes]) {
                     $album = Album::updateOrCreate(['dir' => $set['dirs'][0]], $attributes);

@@ -46,6 +46,8 @@ return [
     'inbox_watch_seconds' => 60,
     // Qobuz-Shop für „Bei Qobuz suchen“ (Land-Sprache wie in der Qobuz-Adresse)
     'qobuz_store' => env('QOBUZ_STORE', 'de-de'),
+    // Umgedrehte Namen richtig herum: off | articles („Crystals, The“ → „The Crystals“) | persons (auch „Berry, Chuck“ → „Chuck Berry“)
+    'invert_names' => 'articles',
 
     'tagtool' => env('MUSIC_TAGTOOL', base_path('tools/tagtool.py')),
     // YouTube-Download (yt-dlp, braucht ffmpeg)

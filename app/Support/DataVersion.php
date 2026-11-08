@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use App\Models\HistoryEntry;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
@@ -45,6 +46,12 @@ class DataVersion
 
             return hash_final($hash);
         });
+    }
+
+    /** Gemerkte Zusammenarbeiten (ändern, wie Namen getrennt werden) */
+    public static function splits(): string
+    {
+        return md5(ArtistSplit::count().'|'.ArtistSplit::max('updated_at').'|'.Cache::get(self::DIRECTORY_BUMP, 0));
     }
 
     /** Künstlerverzeichnis (Namen, Aliase, gleichnamige Personen). */

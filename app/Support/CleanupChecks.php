@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\GenreMapping;
@@ -14,6 +15,7 @@ use App\Models\Leftover;
 use App\Models\Track;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Aufräum-Prüfungen auf den Scan-Daten in SQLite – nur für den Bestand; die Inbox wird beim Einordnen bereinigt.
@@ -52,6 +54,7 @@ class CleanupChecks
             'encoding' => ['Kaputte Zeichen in Tags', 'Falsch gelesene Umlaute („KÃ¶nig“), unsichtbare Zeichen, Unicode-Form – sicher behebbar; falsche Codepage und verlorene Zeichen im Zeichen-Assistenten.', 'Sichere Korrekturen schreiben'],
             'ambiguous' => ['Gleichnamige Künstler ohne Zuordnung', 'Der Name gibt es mehrfach (z. B. „Adam [DE]“ / „Adam [GB]“) – diese Lieder sind noch keiner Person zugeordnet.', null],
             'combined_manual' => ['Kombi mit &, und, and, Komma', 'Wird nie automatisch getrennt – im Künstlerverzeichnis entscheiden.', null],
+            'inverted' => ['Umgedrehte Namen', 'Sortierschreibweise wie „Crystals, The“ → „The Crystals“ (je nach Einstellung auch „Berry, Chuck“ → „Chuck Berry“) – Anzeigetext und ARTISTS.', 'Richtig herum schreiben'],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
             'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
@@ -77,7 +80,7 @@ class CleanupChecks
     /** Schritte: Reihenfolge, in der aufgeräumt werden sollte. */
     public const STEPS = [
         1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'integrity', 'duplicates', 'extension']],
-        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
+        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'inverted', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
         3 => ['Genres', 'Genre-Liste anwenden', ['genre_unlisted', 'genre_mixed', 'genre_missing', 'electronic_sub']],
         4 => ['Ablage', 'Erst jetzt an den Regelort verschieben', ['misplaced']],
         5 => ['Abschluss', 'Reste, Vollständigkeit, Cover, Künstlerbilder, ReplayGain, Songtexte', ['leftovers', 'incomplete', 'cover', 'cover_embed', 'artist_image', 'replaygain', 'lyrics']],
@@ -153,6 +156,7 @@ class CleanupChecks
         }
         $started = Cache::get(self::PROGRESS)['started_at'] ?? now()->toIso8601String();
         Cache::put(self::PROGRESS, ['done' => 0, 'total' => count($keys), 'current' => null, 'started_at' => $started], now()->addHours(2));
+        $incremental = $this->changedSinceLast();
         $computed = 0;
         foreach ($keys as $key) {
             if (Cache::has($this->findingsKey($key, $this->version()))) {
@@ -167,9 +171,13 @@ class CleanupChecks
             $computed++;
             $done = count(array_filter($keys, fn ($k) => Cache::has($this->findingsKey($k, $this->version()))));
             Cache::put(self::PROGRESS, ['done' => $done, 'total' => count($keys), 'current' => self::definitions()[$key][0], 'started_at' => $started], now()->addHours(2));
-            $this->findings($key);
+            $merged = $incremental && in_array($key, self::ALBUM_LOCAL, true) ? $this->incrementalFindings($key, ...$incremental) : null;
+            $merged !== null
+                ? Cache::put($this->findingsKey($key, $this->version()), $merged, now()->addDays(self::TTL_DAYS))
+                : $this->findings($key);
         }
         $this->counts();
+        Cache::put(self::META.$this->version(), ['full' => self::versionParts($this->settings)[0], 'albums' => self::albumState()['albums']], now()->addDays(self::TTL_DAYS));
         Cache::forever(self::LAST_VERSION, $this->version());
         Cache::forget(self::PROGRESS);
 
@@ -238,11 +246,69 @@ class CleanupChecks
         return $this->version ??= self::currentVersion($this->settings);
     }
 
-    /** Aktueller Datenstand (ohne Merken) – z. B. um zu sehen, ob sich während eines Laufs etwas geändert hat. */
+    /**
+     * Aktueller Datenstand (ohne Merken) – z. B. um zu sehen, ob sich während eines Laufs etwas geändert hat. Setzt sich
+     * zusammen aus: was alle Prüfungen betrifft (Einstellungen, Verzeichnis, Ausnahmen), was nur die lib-weiten Prüfungen
+     * betrifft (Reste, Audiodaten, Duplikat-Ausnahmen, Verlauf) und dem Inhalt der Alben – nur aus Feldern, die Prüfungen
+     * verwenden (eine Bewertung ändert den Stand nicht).
+     */
     public static function currentVersion(Settings $settings): string
     {
-        return md5(implode('|', [filemtime(__FILE__), Track::count(), Track::max('id'), DuplicateException::count(), DuplicateException::max('id'), CleanupException::count(), CleanupException::max('id'), Track::max('updated_at'), HistoryEntry::max('id'), Album::max('updated_at'), Leftover::count(), Leftover::max('updated_at'), IntegrityResult::count(), IntegrityResult::max('updated_at'),
-            ArtistAlias::max('updated_at'), Artist::max('updated_at'), Artist::count(), GenreMapping::max('updated_at'), json_encode($settings->all())]));
+        [$full, $global] = self::versionParts($settings);
+
+        return md5($full.'|'.$global.'|'.self::albumState()['content']);
+    }
+
+    /** Zähler für Änderungen, die nicht in der Datenbank stehen (z. B. „Songtext nicht gefunden“) – alles neu rechnen */
+    public const BUMP = 'cleanup.bump';
+
+    /** @return array{0: string, 1: string} [betrifft alle Prüfungen, betrifft nur lib-weite Prüfungen] */
+    private static function versionParts(Settings $settings): array
+    {
+        $full = md5(implode('|', [filemtime(__FILE__), CleanupException::count(), CleanupException::max('id'), ArtistAlias::count(), ArtistAlias::max('updated_at'),
+            Artist::count(), Artist::max('updated_at'), GenreMapping::count(), GenreMapping::max('updated_at'), ArtistSplit::count(), ArtistSplit::max('updated_at'),
+            Cache::get(self::BUMP, 0), json_encode($settings->all())]));
+        $global = md5(implode('|', [DuplicateException::count(), DuplicateException::max('id'), Leftover::count(), Leftover::max('updated_at'),
+            IntegrityResult::count(), IntegrityResult::max('updated_at'), HistoryEntry::max('id')]));
+
+        return [$full, $global];
+    }
+
+    /** Felder der Titel, die Prüfungen verwenden (ohne Bewertung, Änderungszeit und Größe) */
+    private const TRACK_FIELDS = ['id', 'album_id', 'path', 'ext', 'format', 'duration', 'bitrate', 'title', 'artist', 'artists', 'album', 'albumartist', 'albumartists',
+        'track', 'tracktotal', 'disc', 'disctotal', 'year', 'genres', 'comment', 'compilation', 'cover_embedded', 'cover_size', 'writable', 'error', 'replaygain', 'has_lyrics'];
+
+    private const ALBUM_FIELDS = ['id', 'dir', 'dirs', 'category', 'title', 'albumartist', 'folder_artist', 'is_compilation', 'cover_file', 'cover_embedded', 'cover_size', 'track_count'];
+
+    /**
+     * Fingerabdruck je Album (Titel- und Album-Felder, die Prüfungen verwenden). Wird nur neu gebildet, wenn sich Titel
+     * oder Alben überhaupt geändert haben.
+     *
+     * @return array{albums: array<int, string>, content: string}
+     */
+    public static function albumState(): array
+    {
+        // Vorab-Abdruck: Zeitstempel sind nur sekundengenau – Verlauf und Scan-Zähler fangen Änderungen in derselben Sekunde
+        $cheap = md5(implode('|', [Track::where('location', 'library')->count(), Track::max('id'), Track::max('updated_at'), Album::count(), Album::max('updated_at'),
+            HistoryEntry::max('id'), Cache::get(Scanner::INDEX_BUMP, 0)]));
+        static $memo = [];
+        if (! isset($memo[$cheap])) {
+            $memo = [$cheap => Cache::remember('cleanup.album-state:'.$cheap, now()->addDay(), function () {
+                $ctx = [];
+                foreach (DB::table('tracks')->where('location', 'library')->orderBy('id')->select(self::TRACK_FIELDS)->cursor() as $r) {
+                    hash_update($ctx[(int) ($r->album_id ?? 0)] ??= hash_init('xxh128'), implode("\x1f", (array) $r)."\x1e");
+                }
+                foreach (DB::table('albums')->where('location', 'library')->orderBy('id')->select(self::ALBUM_FIELDS)->cursor() as $r) {
+                    hash_update($ctx[(int) $r->id] ??= hash_init('xxh128'), 'A'.implode("\x1f", (array) $r));
+                }
+                $albums = array_map(fn ($c) => hash_final($c), $ctx);
+                ksort($albums);
+
+                return ['albums' => $albums, 'content' => md5(json_encode($albums))];
+            })];
+        }
+
+        return $memo[$cheap];
     }
 
     public function findings(string $key): array
@@ -258,15 +324,91 @@ class CleanupChecks
 
     // ---------------------------------------------------------------- Daten
 
+    /** Nur diese Alben prüfen (schrittweises Neuberechnen nach Änderungen an einzelnen Alben); null = alle */
+    private ?array $onlyAlbums = null;
+
     private function tracks(): Collection
     {
+        if ($this->onlyAlbums !== null) {
+            return $this->tracks ??= collect(array_chunk($this->onlyAlbums, 500))
+                ->flatMap(fn ($ids) => Track::where('location', 'library')->whereIn('album_id', $ids)->get())->values();
+        }
+
         return $this->tracks ??= Track::where('location', 'library')->get();
     }
 
     private function albums(): Collection
     {
+        if ($this->onlyAlbums !== null) {
+            return $this->albums ??= Album::where('location', 'library')->whereIn('id', $this->onlyAlbums)->get()->keyBy('id');
+        }
+
         return $this->albums ??= Album::where('location', 'library')->get()->keyBy('id');
     }
+
+    /**
+     * Prüfungen, deren Funde nur vom eigenen Album abhängen (Fund-ID „a<Album-ID>“): nach Änderungen an einzelnen Alben
+     * werden nur diese Alben neu geprüft, die Funde aller anderen übernommen. Die übrigen Prüfungen vergleichen über die
+     * ganze Lib (Duplikate, Namen, Genres, Reste, Bilder, Audiodaten) und rechnen immer ganz.
+     */
+    public const ALBUM_LOCAL = ['encoding', 'misplaced', 'inverted', 'spelling', 'combined', 'ambiguous', 'album_mixed', 'sampler_flags', 'compilation_in_artists',
+        'comment', 'missing_tags', 'cover', 'cover_embed', 'incomplete', 'replaygain', 'lyrics', 'genre_mixed', 'electronic_sub'];
+
+    /** Höchstens so viele geänderte Alben schrittweise – darüber lohnt das ganze Neurechnen eher */
+    private const INCREMENTAL_MAX = 300;
+
+    /**
+     * Welche Alben haben sich seit dem letzten fertigen Stand geändert? null = schrittweise geht nicht (Einstellungen,
+     * Verzeichnis o. Ä. geändert, kein früherer Stand oder zu viele Änderungen).
+     *
+     * @return array{0: string, 1: list<int>}|null [letzte Version, geänderte Album-IDs]
+     */
+    private function changedSinceLast(): ?array
+    {
+        $last = Cache::get(self::LAST_VERSION);
+        $meta = $last ? Cache::get(self::META.$last) : null;
+        if (! $meta || $meta['full'] !== self::versionParts($this->settings)[0]) {
+            return null;
+        }
+        $now = self::albumState()['albums'];
+        $before = (array) $meta['albums'];
+        $changed = [];
+        foreach ($now + $before as $id => $_) {
+            if (($now[$id] ?? null) !== ($before[$id] ?? null)) {
+                $changed[] = (int) $id;
+            }
+        }
+
+        return count($changed) <= self::INCREMENTAL_MAX ? [$last, $changed] : null;
+    }
+
+    /** Funde einer Album-Prüfung schrittweise: alte Funde übernehmen, geänderte Alben neu prüfen. */
+    private function incrementalFindings(string $key, string $last, array $changed): ?array
+    {
+        $base = Cache::get($this->findingsKey($key, $last));
+        if ($base === null) {
+            return null;
+        }
+        $changedSet = array_flip($changed);
+        $kept = array_values(array_filter($base, fn ($f) => ! isset($changedSet[(int) substr((string) $f['id'], 1)])));
+        $fresh = [];
+        if ($changed) {
+            $part = clone $this;
+            $part->onlyAlbums = $changed;
+            $part->tracks = $part->albums = null;
+            $method = 'check'.str_replace('_', '', ucwords($key, '_'));
+            $fresh = $part->{$method}();
+        }
+        // Reihenfolge wie bisher: geänderte Alben an ihren alten Platz, neue ans Ende
+        $order = array_flip(array_column($base, 'id'));
+        $merged = array_merge($kept, $fresh);
+        usort($merged, fn ($a, $b) => ($order[$a['id']] ?? PHP_INT_MAX) <=> ($order[$b['id']] ?? PHP_INT_MAX));
+
+        return $merged;
+    }
+
+    /** Zu einer fertigen Version: Teil „alle Prüfungen“ und Album-Fingerabdrücke (für das schrittweise Neuberechnen) */
+    private const META = 'cleanup.meta.';
 
     /**
      * Tracks je Album. Tracks ohne Album (Scan läuft noch oder brach vor „Alben bilden“ ab) fehlen hier: sie sind kein
@@ -577,7 +719,7 @@ class CleanupChecks
         arsort($names);
         $out = [];
         foreach ($names as $n => $count) {
-            $out[] = ['id' => 'n'.md5($n), 'title' => $n, 'detail' => $count.' Datei(en) – als ein Künstler übernehmen oder Schreibweise mit „;“/„feat.“ korrigieren', 'link' => route('artists', ['tab' => 'unknown', 'q' => $n]), 'actions' => []];
+            $out[] = ['id' => 'n'.md5($n), 'title' => $n, 'detail' => $count.' Datei(en) – als ein Künstler übernehmen oder Schreibweise mit „;“/„feat.“ korrigieren', 'link' => route('artists', ['tab' => 'unknown', 'q' => $n]), 'actions' => [], 'new_artist' => $n];
         }
 
         return $out;
@@ -673,6 +815,63 @@ class CleanupChecks
         return $out;
     }
 
+    /**
+     * Umgedrehte Namen („Crystals, The“) richtig herum – Umfang laut Einstellung „invert_names“ (off | articles | persons).
+     * Ersetzt den Namen im Anzeigetext (Interpret, Album-Interpret) und in ARTISTS/ALBUMARTISTS.
+     */
+    private function checkInverted(): array
+    {
+        $mode = (string) ($this->settings->get('invert_names') ?: 'articles');
+        if ($mode === 'off') {
+            return [];
+        }
+        $persons = $mode === 'persons';
+        $fix = function (string $name) use ($persons) {
+            return ArtistNames::uninvert($name, $persons);
+        };
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $counts = [];
+            $actions = $this->applyActions($tracks, function (Track $t) use ($fix, &$counts) {
+                $tags = [];
+                foreach (['artist' => 'artists', 'albumartist' => 'albumartists'] as $field => $listField) {
+                    $text = (string) $t->{$field};
+                    $new = $text;
+                    foreach (ArtistNames::split($text) as $name) {
+                        if (($right = $fix($name)) !== null) {
+                            $new = str_replace($name, $right, $new);
+                            $counts[$name][$right] = ($counts[$name][$right] ?? 0) + 1;
+                        }
+                    }
+                    if ($new !== $text) {
+                        $tags[$field] = $new;
+                    }
+                    $list = array_values((array) ($t->{$listField} ?? []));
+                    $newList = array_map(fn ($n) => $fix((string) $n) ?? $n, $list);
+                    if ($newList !== $list) {
+                        $tags[$listField] = $newList;
+                    }
+                }
+
+                return $tags;
+            });
+            if ($actions) {
+                $album = $this->albums()[$albumId] ?? null;
+                $changes = [];
+                foreach ($counts as $from => $targets) {
+                    foreach ($targets as $to => $n) {
+                        $changes[] = ['field' => 'Interpret', 'from' => $from, 'count' => $n, 'to' => $to];
+                    }
+                }
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album),
+                    'detail' => implode(' · ', array_map(fn ($c) => '„'.$c['from'].'“ → „'.$c['to'].'“', $changes)),
+                    'changes' => $changes, 'link' => $this->link($album), 'actions' => $actions];
+            }
+        }
+
+        return $out;
+    }
+
     /** Sampler (Flag bzw. „Various Artists“-Schreibweise) im Künstler-Ordner: nur melden, entschieden wird im Editor. */
     private function checkCompilationInArtists(): array
     {
@@ -742,7 +941,9 @@ class CleanupChecks
             $lines = array_map(fn ($k, $n) => $k.' fehlt ('.$n.')', array_keys($missing), $missing);
             // „Unknown Artist“ & Co. sind ein fehlendes Tag (kein Sampler, kein Künstler) – nicht automatisch umschreiben
             foreach (['artist' => 'Interpret', 'albumartist' => 'Album-Interpret'] as $field => $label) {
-                foreach ($tracks->map(fn ($t) => trim((string) $t->{$field}))->filter(fn ($v) => Compilations::isPlaceholder($v))->countBy() as $value => $n) {
+                // beim Titel-Interpreten ist auch „Sampler“/„Various Artists“ ein fehlender Name (beim Album-Interpreten richtig)
+                $bad = $field === 'artist' ? fn ($v) => $v !== '' && $this->directory->isNoArtist($v) : fn ($v) => Compilations::isPlaceholder($v);
+                foreach ($tracks->map(fn ($t) => trim((string) $t->{$field}))->filter($bad)->countBy() as $value => $n) {
                     $lines[] = $label.' „'.$value.'“ – prüfen ('.$n.')';
                 }
             }
@@ -850,8 +1051,17 @@ class CleanupChecks
                 continue; // z. B. dasselbe Lied auf Single und Best-of: gewollt, jedes Album bleibt vollständig
             }
             $keep = $plan['keep'];
+            // „sicher“: nur lose Kopien aus „Kein Album“ wandern in den Papierkorb, die Album-Fassung bleibt unverändert,
+            // und alle Fassungen sind gleich lang (höchstens 1 s Unterschied) – dafür gibt es einen eigenen Filter
+            $trashed = collect($plan['actions'])->where('type', 'trash')->pluck('path')->all();
+            $members = collect($plan['roles'])->pluck('track');
+            $durations = $members->map(fn ($t) => (float) $t->duration);
+            $looseSameLength = $trashed && $this->inAlbum($keep) && ! collect($plan['actions'])->contains('type', 'apply') && ! $plan['note']
+                && $members->whereIn('path', $trashed)->every(fn ($t) => ! $this->inAlbum($t))
+                && $durations->max() - $durations->min() <= 1.0;
             $out[] = [
                 'id' => 'd'.md5($ids),
+                'loose_same_length' => $looseSameLength,
                 'title' => $keep->artist.' – '.$keep->title,
                 'detail' => collect($plan['roles'])->map(fn ($r) => $r['icon'].' '.$this->rel($r['track']->path).' ('.$r['track']->ext.') – '.$r['text'])->implode("\n")
                     .($plan['note'] ? "\n".$plan['note'] : ''),

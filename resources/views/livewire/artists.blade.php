@@ -39,6 +39,19 @@
                         @endif
                     </div>
                 @endif
+                @if ($splits->isNotEmpty())
+                    <div class="mx-3 mt-2 text-xs" x-data="{ open: false }">
+                        <button x-on:click="open = ! open" class="text-zinc-400 hover:text-zinc-200"><span x-text="open ? '▾' : '▸'">▸</span> Getrennte Kombinationen ({{ $splits->count() }})</button>
+                        <div x-show="open" x-cloak class="mt-1 max-h-48 space-y-0.5 overflow-y-auto">
+                            @foreach ($splits as $sp)
+                                <div class="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-zinc-800/60" wire:key="sp{{ $sp->id }}">
+                                    <span class="min-w-0 flex-1 truncate text-zinc-300" title="{{ $sp->name }} → {{ implode(' · ', $sp->parts) }}">{{ $sp->name }} <span class="text-zinc-500">→ {{ implode(' · ', $sp->parts) }}</span></span>
+                                    <button wire:click="deleteSplit({{ $sp->id }})" data-confirm-label="Nicht mehr trennen" wire:confirm="„{{ $sp->name }}“ nicht mehr trennen? Bereits geschriebene ARTISTS-Tags bleiben; das Aufräumen meldet den Namen wieder unter „Kombi mit &“." class="text-zinc-500 hover:text-red-400" title="Nicht mehr trennen">✕</button>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+                @endif
                 <div class="min-h-0 flex-1 overflow-y-auto p-2">
                     @forelse ($artists as $a)
                         <button wire:click="select({{ $a->id }})" wire:key="ar{{ $a->id }}"

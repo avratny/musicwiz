@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Livewire\Cleanup;
+use App\Models\Operation;
 use App\Support\CleanupChecks;
 use App\Support\OperationRunner;
 use App\Support\Scanner;
@@ -10,6 +11,7 @@ use App\Support\Settings;
 use App\Support\TagTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Queue;
 use Livewire\Livewire;
 use Tests\TestCase;
 
@@ -91,6 +93,31 @@ class DuplicatesAlbumTest extends TestCase
         $this->assertFileExists($looseA);
         $this->assertFileExists($looseB);
         $this->assertLessThan(filesize($looseB), filesize($albumB), 'ursprüngliche 128er-Fassung wieder im Album');
+    }
+
+    public function test_filter_only_loose_copies_with_same_length(): void
+    {
+        $this->track('A/ABBA/Gold/01 - Waterloo.mp3', 128, ['artist' => 'ABBA', 'title' => 'Waterloo', 'album' => 'Gold', 'track' => '1']);
+        $looseA = $this->track('A/ABBA/Kein Album/Waterloo.mp3', 128, ['artist' => 'ABBA', 'title' => 'Waterloo']);
+        $this->track('A/ABBA/Gold/02 - SOS.mp3', 128, ['artist' => 'ABBA', 'title' => 'SOS', 'album' => 'Gold', 'track' => '2']);
+        $this->track('A/ABBA/Kein Album/SOS.mp3', 320, ['artist' => 'ABBA', 'title' => 'SOS']); // Upgrade → nicht „sicher“
+        $this->track('A/ABBA/Kein Album/Chiquitita.mp3', 128, ['artist' => 'ABBA', 'title' => 'Chiquitita']);
+        $this->track('A/ABBA/Kein Album/Chiquitita (2).mp3', 128, ['artist' => 'ABBA', 'title' => 'Chiquitita']); // nur lose
+        app(Scanner::class)->scan('library');
+
+        $f = $this->findings();
+        $this->assertTrue($f['ABBA – Waterloo']['loose_same_length']);
+        $this->assertFalse($f['ABBA – SOS']['loose_same_length']);
+        $this->assertFalse($f['ABBA – Chiquitita']['loose_same_length']);
+
+        Queue::fake();
+        $page = Livewire::test(Cleanup::class)->set('check', 'duplicates')
+            ->assertSee('gleiche Länge · 1')->assertSee('Chiquitita')
+            ->set('looseOnly', true)
+            ->assertSee('Waterloo')->assertDontSee('Chiquitita')
+            ->call('previewFix', true)->assertSee('1 Funde, 1 Schritte');
+        $page->call('confirm');
+        $this->assertSame([['type' => 'trash', 'path' => $looseA]], Operation::latest('id')->first()->payload['actions']);
     }
 
     public function test_mark_as_different_survives_changes_and_can_be_undone(): void

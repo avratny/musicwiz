@@ -4,9 +4,13 @@ namespace App\Livewire;
 
 use App\Jobs\IntegrityJob;
 use App\Jobs\RefreshCleanup;
+use App\Models\Artist;
+use App\Models\ArtistSplit;
 use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\Operation;
+use App\Support\ArtistDirectory;
+use App\Support\ArtistNames;
 use App\Support\AutoCleanup;
 use App\Support\CleanupChecks;
 use App\Support\FileOps;
@@ -46,6 +50,26 @@ class Cleanup extends Component
 
     public bool $showDismissed = false;
 
+    /** Duplikate: nur „Kopie aus Kein Album, gleiche Länge“ zeigen (und beheben) */
+    #[Url]
+    public bool $looseOnly = false;
+
+    /** Funde nach dem gewählten Filter (gilt für Anzeige, „Alle markieren“ und „Alle beheben“). */
+    private function filtered(array $findings): array
+    {
+        if ($this->check === 'duplicates' && $this->looseOnly) {
+            $findings = array_values(array_filter($findings, fn ($f) => $f['loose_same_length'] ?? false));
+        }
+
+        return $findings;
+    }
+
+    public function updatedLooseOnly(): void
+    {
+        $this->selected = [];
+        $this->preview = null;
+    }
+
     public function updatedCheck(): void
     {
         $this->selected = [];
@@ -55,7 +79,7 @@ class Cleanup extends Component
 
     public function selectAll(CleanupChecks $checks): void
     {
-        $this->selected = array_column(array_filter($checks->findings($this->check), fn ($f) => $this->actionsFor($f)), 'id');
+        $this->selected = array_column(array_filter($this->filtered($checks->findings($this->check)), fn ($f) => $this->actionsFor($f)), 'id');
     }
 
     /** Gerade per Zeile gestartete Funde: finding-id => operation-id */
@@ -79,7 +103,7 @@ class Cleanup extends Component
 
     public function previewFix(CleanupChecks $checks, bool $all = false): void
     {
-        $findings = $checks->findings($this->check);
+        $findings = $this->filtered($checks->findings($this->check));
         $ids = array_column($findings, 'id');
         $this->selected = array_values(array_intersect($this->selected, $ids));
         if (! $all) {
@@ -204,6 +228,73 @@ class Cleanup extends Component
     #[On('activity-changed')]
     public function refreshList(): void {}
 
+    /** „Trennen …“: Kombi als Zusammenarbeit merken – ['name' => …, 'parts' => [...], 'error' => ?string] */
+    public ?array $split = null;
+
+    /** Nach dem Trennen: Teile, die noch nicht im Künstlerverzeichnis stehen (Knopf „erfassen …“) */
+    public array $splitNewArtists = [];
+
+    public function openSplit(string $name): void
+    {
+        $this->split = ['name' => $name, 'parts' => ArtistNames::suggestSplit($name) ?: [$name, ''], 'error' => null];
+    }
+
+    public function addSplitPart(): void
+    {
+        $this->split['parts'][] = '';
+    }
+
+    public function removeSplitPart(int $i): void
+    {
+        unset($this->split['parts'][$i]);
+        $this->split['parts'] = array_values($this->split['parts']);
+    }
+
+    public function saveSplit(): void
+    {
+        if (! $this->split) {
+            return;
+        }
+        $name = $this->split['name'];
+        $parts = array_values(array_unique(array_filter(array_map('trim', $this->split['parts']), fn ($p) => $p !== '' && mb_strtolower($p) !== mb_strtolower($name))));
+        if (count($parts) < 2) {
+            $this->split['error'] = 'Mindestens zwei Künstler angeben.';
+
+            return;
+        }
+        if (Artist::where('name', $name)->exists()) {
+            $this->split['error'] = '„'.$name.'“ steht als ein Künstler im Verzeichnis – dort zuerst löschen, wenn es doch eine Zusammenarbeit ist.';
+
+            return;
+        }
+        ArtistSplit::remember($name, $parts);
+        RefreshCleanup::request();
+        $this->split = null;
+        // nichts automatisch anlegen – neue Künstler gleich zum Erfassen anbieten
+        $this->splitNewArtists = array_values(array_filter($parts, fn ($p) => app(ArtistDirectory::class)->check($p)['status'] === 'new'));
+        $this->done = '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt. In die Dateien schreibt das „Kombi-Interpreten ohne ARTISTS“ (Schritt 2).';
+    }
+
+    /** Künstler im Dialog erfasst (z. B. „Simon & Garfunkel“ als ein Künstler): Funde neu berechnen lassen. */
+    #[On('artist-directory-changed')]
+    public function directoryChanged(): void
+    {
+        RefreshCleanup::request();
+        $this->splitNewArtists = array_values(array_filter($this->splitNewArtists, fn ($p) => app(ArtistDirectory::class)->check($p)['status'] === 'new'));
+    }
+
+    /** Status der Teile im Trennen-Dialog: im Verzeichnis oder neu */
+    private function splitPartStatus(): array
+    {
+        $out = [];
+        foreach ($this->split['parts'] ?? [] as $i => $p) {
+            $p = trim((string) $p);
+            $out[$i] = $p === '' ? null : (in_array(app(ArtistDirectory::class)->check($p)['status'], ['ok', 'variant'], true) ? 'known' : 'new');
+        }
+
+        return $out;
+    }
+
     public function render(CleanupChecks $checks, Settings $settings)
     {
         // laufende Aktionen (auch von woanders gestartet, z. B. Automatiken) beobachten – außer Downloads (eigene
@@ -235,7 +326,8 @@ class Cleanup extends Component
         $checks->withDismissed = in_array($this->check, ['duplicates', 'electronic_sub'], true) && $this->showDismissed;
         [$all, $staleList, $pending] = $checks->withDismissed && $fresh ? [$checks->findings($this->check), false, false] : $checks->displayFindings($this->check);
         $dismissed = array_values(array_filter($all, fn ($f) => $f['dismissed'] ?? false));
-        $findings = array_values(array_filter($all, fn ($f) => ! ($f['dismissed'] ?? false)));
+        $findings = $this->filtered(array_values(array_filter($all, fn ($f) => ! ($f['dismissed'] ?? false))));
+        $looseCount = $this->check === 'duplicates' ? count(array_filter($all, fn ($f) => ($f['loose_same_length'] ?? false) && ! ($f['dismissed'] ?? false))) : 0;
         // vorgeschlagene Fassung vorauswählen – nur für sichtbare Funde (der Seitenzustand bleibt klein); für alle
         // übrigen gilt beim Beheben der Vorschlag (actionsFor)
         foreach (array_slice($findings, 0, $this->limit) as $f) {
@@ -253,6 +345,8 @@ class Cleanup extends Component
             'stale' => $staleList,
             'countsStale' => ! $fresh,
             'pending' => $pending,
+            'splitStatus' => $this->split ? $this->splitPartStatus() : [],
+            'looseCount' => $looseCount,
             'progress' => $fresh ? null : CleanupChecks::progress(),
             'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),
             'openBefore' => $checks->openBefore($this->check),

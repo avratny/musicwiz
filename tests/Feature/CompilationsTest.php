@@ -109,6 +109,8 @@ class CompilationsTest extends TestCase
         $this->file('library/artists/Y/Yanou/Sunrise (2006)/01 - King of My Castle.mp3', ['artist' => 'Yanou feat. Liz', 'albumartist' => 'Yanou', 'album' => 'Sunrise', 'year' => '2006', 'track' => '1', 'comment' => 'LIB']);
         // Platzhalter: nur prüfen
         $this->file('library/artists/U/Unknown Artist/X/01 - T.mp3', ['artist' => 'Someone', 'albumartist' => 'Unknown Artist', 'album' => 'X', 'track' => '1', 'comment' => 'LIB']);
+        // „Sampler“ als Interpret eines Titels: fehlender Name
+        $this->file('library/artists/F/Foo/Y/01 - T.mp3', ['artist' => 'Sampler', 'albumartist' => 'Foo', 'album' => 'Y', 'track' => '1', 'comment' => 'LIB']);
         app(Scanner::class)->scan('library');
         $checks = app(CleanupChecks::class);
 
@@ -125,6 +127,7 @@ class CompilationsTest extends TestCase
         $this->assertNotContains('Various – Party', $titles('misplaced'));
 
         $this->assertStringContainsString('Album-Interpret „Unknown Artist“ – prüfen (1)', collect($checks->findings('missing_tags'))->firstWhere('title', 'Unknown Artist – X')['detail']);
+        $this->assertStringContainsString('Interpret „Sampler“ – prüfen (1)', collect($checks->findings('missing_tags'))->firstWhere('title', 'Foo – Y')['detail']);
     }
 
     public function test_inbox_preselects_sampler_category(): void

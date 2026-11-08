@@ -30,7 +30,7 @@ class CleanupRefreshTest extends TestCase
         app(CleanupChecks::class)->refreshAll();
         Queue::fake();
         Carbon::setTestNow(now()->addMinute());
-        Track::query()->update(['rating' => 3]);
+        Track::query()->update(['title' => 'Neu']);
 
         // Seite mit „Uneinheitliche Endungen“ offen → diese Prüfung kommt zuerst dran
         Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('Diese Prüfung wird gerade neu berechnet');
@@ -45,7 +45,7 @@ class CleanupRefreshTest extends TestCase
         Carbon::setTestNow(now()->addMinute());
         $checks = app()->make(CleanupChecks::class);
         $checks->version();
-        Track::query()->update(['rating' => 4]);
+        Track::query()->update(['title' => 'Neuer']);
         $this->assertSame('changed', $checks->refreshAll());
 
         // Job: in Häppchen, bis alles frisch ist
@@ -118,10 +118,15 @@ class CleanupRefreshTest extends TestCase
             ->assertDontSee('Funde werden im Hintergrund aktualisiert')->assertSee('SOS');
         $this->assertTrue(app(CleanupChecks::class)->isFresh());
 
+        // eine Bewertung ändert nichts an den Funden: bleibt frisch
+        Carbon::setTestNow(now()->addMinute());
+        Track::query()->update(['rating' => 4]);
+        $this->assertTrue(app(CleanupChecks::class)->isFresh(), 'Bewertung zählt nicht als neuer Stand');
+
         // Datenstand ändert sich, Hintergrund-Job läuft noch nicht
         Queue::fake();
         Carbon::setTestNow(now()->addMinute());
-        Track::query()->update(['rating' => 4]);
+        Track::query()->update(['title' => 'Neu']);
         $this->assertFalse(app(CleanupChecks::class)->isFresh());
 
         $page = Livewire::test(Cleanup::class)->set('check', 'extension')

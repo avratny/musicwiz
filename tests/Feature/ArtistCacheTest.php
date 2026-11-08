@@ -42,13 +42,14 @@ class ArtistCacheTest extends TestCase
 
     public function test_placeholders_are_never_proposed_as_artists(): void
     {
-        foreach (['Unknown Artist', 'unknown artist', '-Interpret-', 'Unbekannter Interpret', 'ABBA'] as $i => $artist) {
+        foreach (['Unknown Artist', 'unknown artist', '-Interpret-', 'Unbekannter Interpret', 'ABBA', 'Sampler', 'Various Artists', 'V.A.'] as $i => $artist) {
             Track::create(['location' => 'library', 'path' => "/m/$i.mp3", 'dir' => '/m', 'filename' => "$i.mp3", 'ext' => 'mp3',
                 'artist' => $artist, 'albumartist' => $i === 4 ? 'Unknown Artist' : null, 'title' => "T$i", 'album' => 'A', 'artists' => [], 'albumartists' => [], 'genres' => []]);
         }
         $directory = app(ArtistDirectory::class);
         $this->assertSame(['ABBA' => 1], $directory->namesInCollection());
         $this->assertSame('placeholder', $directory->check('Unknown Artist')['status']);
+        $this->assertSame('placeholder', $directory->check('Sampler')['status'], 'Sampler-Schreibweise als Titel-Interpret: kein Künstler');
         $this->assertSame('new', $directory->check('ABBA')['status']);
         $this->assertSame([], $directory->candidateGroups(), 'auch keine Schreibweisen-Gruppe „Unknown Artist / unknown artist“');
         $this->assertSame([], $directory->keepSeparate(['Unknown Artist']));

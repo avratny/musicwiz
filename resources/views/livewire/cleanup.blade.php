@@ -35,6 +35,12 @@
                     <div class="font-medium">{{ $defs[$check][0] }}</div>
                     <div class="text-xs text-zinc-500">{{ $defs[$check][1] }} {{ $total }} Fund(e).</div>
                 </div>
+                @if ($check === 'duplicates')
+                    <button wire:click="$toggle('looseOnly')" class="rounded-lg border px-3 py-1 text-sm transition {{ $looseOnly ? 'border-emerald-500/60 bg-emerald-500/15 text-emerald-200' : 'border-zinc-700 text-zinc-400 hover:text-zinc-200' }}"
+                            title="Nur Funde, bei denen ausschließlich Kopien aus „{{ app(\App\Support\Settings::class)->get('no_album') }}“ in den Papierkorb wandern, die Album-Fassung bleibt und alle gleich lang sind (± 1 s)">
+                        {{ $looseOnly ? '✓ ' : '' }}Nur Kopie aus „{{ app(\App\Support\Settings::class)->get('no_album') }}“, gleiche Länge · {{ $looseCount }}
+                    </button>
+                @endif
                 @if ($check === 'integrity')
                     <div class="text-right text-xs text-zinc-500">
                         @if ($integrity['running'] ?? false)
@@ -124,6 +130,17 @@
                     </div>
                 </div>
             @endif
+            @if ($splitNewArtists)
+                <div class="shrink-0 px-6 pt-3">
+                    <div class="flex flex-wrap items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200">
+                        <span>Noch nicht im Künstlerverzeichnis:</span>
+                        @foreach ($splitNewArtists as $n)
+                            <button wire:click="$dispatch('open-new-artist', { name: @js($n) })" class="btn-ghost btn-sm" wire:key="sna{{ md5($n) }}">„{{ $n }}“ erfassen …</button>
+                        @endforeach
+                        <button wire:click="$set('splitNewArtists', [])" class="ml-auto opacity-70 hover:opacity-100" title="Später – sie stehen auch unter „Neue Künstler erfassen“">✕</button>
+                    </div>
+                </div>
+            @endif
             <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
                 <div class="space-y-1.5">
                     @forelse ($findings as $f)
@@ -187,6 +204,12 @@
                                 @endif
                             </div>
                             <div class="flex shrink-0 items-center gap-2">
+                                @if (! empty($f['new_artist']))
+                                    <button wire:click="$dispatch('open-new-artist', { name: @js($f['new_artist']) })" class="btn-primary btn-sm"
+                                            title="„{{ $f['new_artist'] }}“ ist ein Künstler (z. B. Duo/Band) – im Künstlerverzeichnis erfassen, mit MusicBrainz, Bild und Genre">Ist ein Künstler – erfassen …</button>
+                                    <button wire:click="openSplit(@js($f['new_artist']))" class="btn-ghost btn-sm"
+                                            title="Zusammenarbeit mehrerer Künstler – künftig überall in die einzelnen Künstler trennen (ARTISTS)">Trennen …</button>
+                                @endif
                                 @if ($f['link'])
                                     <a href="{{ $f['link'] }}" wire:navigate class="btn-ghost btn-sm">{{ $fixable ? 'Ansehen' : 'Im Editor' }}</a>
                                 @endif
@@ -312,6 +335,37 @@
                     @endif
                     <button wire:click="$set('preview', null)" class="btn-ghost ml-auto">Abbrechen</button>
                     <button wire:click="confirm" class="btn-accent">Bestätigen &amp; ausführen</button>
+                </div>
+            </div>
+        </div>
+    @endif
+    <livewire:new-artist-modal wire:key="cleanup-new-artist" />
+    @if ($split)
+        <div class="fixed inset-0 z-50 grid place-items-center bg-black/70 p-6 backdrop-blur-sm" x-data="{ downOutside: false }" x-on:keydown.escape.window="$wire.set('split', null)"
+             x-on:mousedown.self="downOutside = true" x-on:click.self="if (downOutside) $wire.set('split', null); downOutside = false"
+             x-on:mouseup="if ($event.target !== $el) downOutside = false">
+            <div class="w-full max-w-lg overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
+                <div class="flex items-center border-b border-zinc-800 px-6 py-4">
+                    <h2 class="text-lg font-semibold">„{{ $split['name'] }}“ trennen</h2>
+                    <button wire:click="$set('split', null)" class="ml-auto text-zinc-400 hover:text-white">✕</button>
+                </div>
+                <div class="space-y-2 px-6 py-4 text-sm">
+                    <p class="text-zinc-400">Eine Zusammenarbeit dieser Künstler – MusicWiz trennt den Namen künftig überall so (Lib, Inbox, neue Dateien). Der Anzeigetext bleibt, die einzelnen Künstler kommen nach <span class="font-mono">ARTISTS</span>; der Ordner richtet sich nach dem ersten.</p>
+                    @foreach ($split['parts'] as $i => $part)
+                        <div class="flex items-center gap-2" wire:key="sp{{ $i }}">
+                            <span class="w-5 text-right text-xs text-zinc-500">{{ $i + 1 }}.</span>
+                            <input wire:model.live.debounce.400ms="split.parts.{{ $i }}" class="input-sm flex-1">
+                            @if (($splitStatus[$i] ?? null) === 'known')<span class="badge-green" title="Steht schon im Künstlerverzeichnis">im Verzeichnis</span>
+                            @elseif (($splitStatus[$i] ?? null) === 'new')<span class="badge-violet" title="Noch nicht im Künstlerverzeichnis – nach dem Trennen erfassen">neu</span>@endif
+                            @if (count($split['parts']) > 2)<button wire:click="removeSplitPart({{ $i }})" class="text-zinc-500 hover:text-red-400" title="Entfernen">✕</button>@endif
+                        </div>
+                    @endforeach
+                    <button wire:click="addSplitPart" class="text-xs text-blue-400 hover:underline">+ weiterer Künstler</button>
+                    @if ($split['error'])<p class="text-red-300">{{ $split['error'] }}</p>@endif
+                </div>
+                <div class="flex justify-end gap-2 border-t border-zinc-800 bg-zinc-950/40 px-6 py-3">
+                    <button wire:click="$set('split', null)" class="btn-ghost btn-sm">Abbrechen</button>
+                    <button wire:click="saveSplit" class="btn-primary btn-sm">Trennen</button>
                 </div>
             </div>
         </div>

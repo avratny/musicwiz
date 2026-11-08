@@ -28,7 +28,7 @@ class RunOperation implements ShouldQueue
             $runner->run($op);
             if ($op->type !== 'download') {
                 ArtistGroupAnalyzer::warm(); // z. B. nach „Schreibweisen vereinheitlichen“ – nicht beim nächsten Klick
-                RefreshCleanup::request(); // Aufräumen: Funde gleich im Hintergrund neu berechnen
+                // Aufräumen wird nicht mehr auf Vorrat neu berechnet: erst, wenn die Seite offen ist (sie fordert es an)
             }
         }
     }

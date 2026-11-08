@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use App\Support\ArtistDirectory;
+use App\Support\ArtistNames;
 use App\Support\DataVersion;
 use App\Support\Lookup;
 use Illuminate\Support\ServiceProvider;
@@ -33,8 +35,9 @@ class AppServiceProvider extends ServiceProvider
         $changed = function () {
             DataVersion::bumpDirectory();
             ArtistDirectory::invalidate();
+            ArtistNames::flushProtected(); // geschützte Namen und gemerkte Trennungen neu laden
         };
-        foreach ([Artist::class, ArtistAlias::class] as $model) {
+        foreach ([Artist::class, ArtistAlias::class, ArtistSplit::class] as $model) {
             $model::saved($changed);
             $model::deleted($changed);
         }

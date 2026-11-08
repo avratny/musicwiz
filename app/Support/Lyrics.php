@@ -34,6 +34,7 @@ class Lyrics
     public static function markMissing(string $path): void
     {
         Cache::put(self::missingKey($path), true, now()->addDays(30));
+        Cache::increment(CleanupChecks::BUMP); // Aufräumen „Songtext fehlt“ neu rechnen
     }
 
     public static function knownMissing(string $path): bool

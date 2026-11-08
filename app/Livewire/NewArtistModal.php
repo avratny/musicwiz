@@ -32,8 +32,9 @@ class NewArtistModal extends Component
         $this->wizSingle = true;
     }
 
+    /** @param  int|null  $album  Hörproben aus diesem Album; ohne (z. B. aus dem Aufräumen) aus der ganzen Lib */
     #[On('open-new-artist')]
-    public function openFor(string $name, int $album): void
+    public function openFor(string $name, ?int $album = null): void
     {
         $this->albumId = $album;
         $this->wizReset($name);
@@ -55,6 +56,9 @@ class NewArtistModal extends Component
     /** Lieder dieses Albums, in denen der Name vorkommt (als Interpret oder Album-Interpret) */
     protected function wizSampleTracks(): array
     {
+        if ($this->albumId === null) {
+            return app(ArtistGroupAnalyzer::class)->profiles()[(string) $this->wizName]['tracks'] ?? [];
+        }
         $key = ArtistNames::compareKey((string) $this->wizName);
         $out = [];
         foreach (Track::where('album_id', $this->albumId)->orderBy('disc')->orderByRaw('CAST(track AS INTEGER)')->get() as $t) {

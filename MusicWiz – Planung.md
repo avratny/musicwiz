@@ -195,6 +195,7 @@ Der Bereich Aufräumen prüft den ganzen Bestand und zeigt je Prüfung, wie viel
 | Prüfung | Behebung |
 | --- | --- |
 | Datei liegt nicht dort, wo die Regeln sie hinlegen würden | an den richtigen Ort verschieben |
+| Umgedrehte Namen („Crystals, The“; einstellbar: aus / nur Artikel / auch Personen) | richtig herum schreiben („The Crystals“) |
 | Uneinheitliche Interpreten-Schreibweisen | richtige Schreibweise wählen, als Alias speichern |
 | Kombi-Interpreten ohne `ARTISTS` | `ARTISTS` erzeugen, Ordner nach erstem Künstler |
 | Album mit uneinheitlichem Album-Interpret oder Album-Namen | Werte fürs ganze Album vereinheitlichen |

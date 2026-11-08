@@ -5,6 +5,7 @@ namespace App\Support;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use App\Models\CleanupException;
 use App\Models\DiscSet;
 use App\Models\DuplicateException;
@@ -67,6 +68,8 @@ class SettingsBackup
                 'aliases' => $a->aliases->map(fn ($al) => $al->source ? ['alias' => $al->alias, 'source' => $al->source] : $al->alias)->all(),
                 'rejected_aliases' => $a->rejectedAliases->pluck('alias')->all(),
             ])->all(),
+            // gemerkte Zusammenarbeiten („Yanou & Liz“ → Yanou, Liz) gehören zum Künstlerverzeichnis
+            'artist_splits' => ArtistSplit::orderBy('name')->get(['name', 'parts'])->toArray(),
             'disc_sets' => DiscSet::all()->pluck('members')->all(),
             'duplicate_exceptions' => DuplicateException::all(['song_key', 'members', 'label'])->toArray(),
             'cleanup_exceptions' => CleanupException::all(['check', 'item_key', 'label'])->toArray(),
@@ -237,6 +240,12 @@ class SettingsBackup
                         RejectedAlias::remember($artist->id, (string) $rejected);
                     }
                 }
+                ArtistSplit::query()->delete();
+                foreach ($data['artist_splits'] ?? [] as $sp) {
+                    if (! empty($sp['name']) && count((array) ($sp['parts'] ?? [])) > 1) {
+                        ArtistSplit::remember((string) $sp['name'], (array) $sp['parts']);
+                    }
+                }
             }
             if (in_array('disc_sets', $sections, true)) {
                 DiscSet::query()->delete();
@@ -306,6 +315,7 @@ class SettingsBackup
             if (in_array('artists', $sections, true)) {
                 ArtistAlias::query()->delete();
                 Artist::query()->delete();
+                ArtistSplit::query()->delete();
             }
             if (in_array('disc_sets', $sections, true)) {
                 DiscSet::query()->delete();

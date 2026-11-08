@@ -9,6 +9,7 @@ use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use App\Models\RejectedAlias;
 use App\Models\Track;
 use App\Support\ArtistDirectory;
@@ -337,6 +338,12 @@ class Artists extends Component
             || (strlen($key) >= 4 && abs(strlen($a->compare_key) - strlen($key)) <= 3 && levenshtein($key, (string) $a->compare_key) <= (strlen($key) > 10 ? 3 : 2))
             || (strlen($key) >= 4 && (str_contains((string) $a->compare_key, $key) || str_contains($key, (string) $a->compare_key))))
             ->sortBy(fn (Artist $a) => levenshtein($key, (string) $a->compare_key))->take(20)->values();
+    }
+
+    /** Gemerkte Trennung („Yanou & Liz“ → Yanou, Liz) aufheben. */
+    public function deleteSplit(int $id): void
+    {
+        ArtistSplit::whereKey($id)->delete();
     }
 
     public function deleteArtist(): void
@@ -806,6 +813,7 @@ class Artists extends Component
             $data['artists'] = $query->withCount('aliases')->orderByRaw('name COLLATE NOCASE')->limit($this->artistLimit)->get();
             $data['artist'] = $this->selected ? Artist::with(['aliases', 'rejectedAliases'])->find($this->selected) : null;
             $data['mergeCandidates'] = $data['artist'] && $this->mergeOpen ? $this->mergeCandidates($data['artist']) : collect();
+            $data['splits'] = ArtistSplit::orderBy('name')->get();
             $data['genreSuggestion'] = $data['artist'] ? $genres->suggestForArtist($data['artist']) : null;
             $data['artistTracks'] = $data['artist'] ? $this->sampleTracks($data['artist']) : [];
             // ohne Lieder im Bestand: Hinweis, ob welche noch in der Inbox liegen (zählen erst nach dem Einordnen)

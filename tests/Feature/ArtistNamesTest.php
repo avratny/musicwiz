@@ -18,6 +18,12 @@ class ArtistNamesTest extends TestCase
         $this->assertSame(['Yanou', 'Liz'], ArtistNames::split('Yanou ft. Liz'));
         $this->assertSame(['Yanou', 'Liz'], ArtistNames::split('Yanou (featuring Liz)'));
         $this->assertFalse(ArtistNames::looksCombined('Apollo vs. Crystal Lake'), 'vs. wird automatisch getrennt, keine Rückfrage');
+        // umgedrehte Namen (Sortierschreibweise) sind kein zweiter Künstler
+        foreach (['Crystals, The', 'Pretenders, The', 'Shangri-Las, The', 'Berry, Chuck'] as $inverted) {
+            $this->assertFalse(ArtistNames::looksCombined($inverted), $inverted);
+        }
+        $this->assertTrue(ArtistNames::looksCombined('Earth, Wind & Fire'), 'mehr als ein Komma bzw. & bleibt eine Kombi');
+        $this->assertTrue(ArtistNames::looksCombined('Crosby, Stills, Nash'));
         $this->assertSame(['2Pac', 'Dr. Dre', 'Roger Troutman'], ArtistNames::split('2Pac; Dr. Dre; Roger Troutman'));
         $this->assertSame(['Simon & Garfunkel'], ArtistNames::split('Simon & Garfunkel'));
         $this->assertSame(['Earth, Wind & Fire'], ArtistNames::split('Earth, Wind & Fire'));

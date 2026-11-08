@@ -77,8 +77,9 @@ class ArtistDirectory
     {
         $this->load();
         $name = trim($name);
-        // „Unknown Artist“ & Co. sind ein fehlendes Tag – nie als neuer Künstler vorschlagen
-        if (Compilations::isPlaceholder($name)) {
+        // „Unknown Artist“ & Co. sind ein fehlendes Tag, „Sampler“/„Various Artists“/„V.A.“ kein Künstler –
+        // nie als neuer Künstler vorschlagen (auch nicht als Interpret eines Titels)
+        if ($this->isNoArtist($name)) {
             return ['status' => 'placeholder', 'canonical' => null];
         }
         if ($this->personsFor($name)) {
@@ -209,12 +210,18 @@ class ArtistDirectory
     {
         $skip = mb_strtolower((string) $this->settings->get('compilation_artist'));
 
-        return $this->names ??= Cache::remember('artist-names:v5:'.DataVersion::artistContent().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
+        return $this->names ??= Cache::remember('artist-names:v6:'.DataVersion::artistContent().':'.DataVersion::splits().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
     }
 
     private ?array $names = null;
 
     /** @return array<string, int> */
+    /** Platzhalter („Unknown Artist“) bzw. Sampler-Schreibweise („Sampler“, „Various Artists“, „V.A.“) – kein Künstler. */
+    public function isNoArtist(string $name): bool
+    {
+        return Compilations::isPlaceholder($name) || (new Compilations($this->settings))->isVariousArtists($name);
+    }
+
     /** Namen aus dem Album-Interpreten – ohne Sampler-Schreibweisen („V.A.“, „Diverse“ …), die sind kein Künstler. */
     public static function albumArtistNames(object $track): array
     {
@@ -234,7 +241,7 @@ class ArtistDirectory
             $g->albumartists = json_decode((string) $g->albumartists, true) ?: [];
             $names = array_merge($g->artists ?: ArtistNames::split($g->artist), $this->albumArtistNames($g));
             foreach (array_unique($names) as $n) {
-                if ($n !== '' && mb_strtolower($n) !== $skip && ! Compilations::isPlaceholder($n)) {
+                if ($n !== '' && mb_strtolower($n) !== $skip && ! $this->isNoArtist($n)) {
                     $counts[$n] = ($counts[$n] ?? 0) + (int) $g->n;
                 }
             }
@@ -262,7 +269,7 @@ class ArtistDirectory
      */
     private function rawGroups(): array
     {
-        return Cache::remember('artist-raw-groups:v2:'.DataVersion::artistContent(), now()->addDays(30), function () {
+        return Cache::remember('artist-raw-groups:v3:'.DataVersion::artistContent().':'.DataVersion::splits(), now()->addDays(30), function () {
             $counts = $this->namesInCollection();
             $groups = [];
             foreach ($counts as $name => $n) {

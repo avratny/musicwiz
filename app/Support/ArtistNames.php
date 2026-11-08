@@ -4,11 +4,13 @@ namespace App\Support;
 
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 use Illuminate\Support\Facades\Schema;
 
 /**
  * Regeln für Interpreten: automatisch getrennt wird bei ";", feat./ft./featuring und vs./versus,
- * nie bei "&", ",", "und", "and". Namen aus dem Künstlerverzeichnis werden nie zerlegt (z. B. eine Band mit "vs" im Namen).
+ * nie bei "&", ",", "und", "and" – außer die Kombi ist als Zusammenarbeit gemerkt (ArtistSplit, „Trennen“ im Aufräumen).
+ * Namen aus dem Künstlerverzeichnis werden nie zerlegt (z. B. eine Band mit "vs" im Namen).
  */
 class ArtistNames
 {
@@ -36,16 +38,42 @@ class ArtistNames
             }, $text);
         }
         $out = [];
+        $splits = self::splitRules();
         foreach (preg_split('/\s*;\s*/u', $text) as $part) {
             foreach (preg_split(self::SEPARATOR, $part) as $name) {
                 $name = trim(strtr($name, $keep), " \t)]");
-                if ($name !== '' && ! in_array($name, $out, true)) {
-                    $out[] = $name;
+                // gemerkte Zusammenarbeit („Yanou & Liz“ → Yanou, Liz)
+                foreach ($splits[ArtistSplit::keyOf($name)] ?? [$name] as $one) {
+                    if ($one !== '' && ! in_array($one, $out, true)) {
+                        $out[] = $one;
+                    }
                 }
             }
         }
 
         return $out;
+    }
+
+    /** @var array<string, list<string>>|null Kleinschreibung der Kombi => Teile */
+    private static ?array $splits = null;
+
+    /** @return array<string, list<string>> */
+    private static function splitRules(): array
+    {
+        if (self::$splits === null) {
+            self::$splits = [];
+            try {
+                if (Schema::hasTable('artist_splits')) {
+                    foreach (ArtistSplit::all(['name_key', 'parts']) as $s) {
+                        self::$splits[$s->name_key] = array_values(array_filter(array_map('trim', (array) $s->parts)));
+                    }
+                }
+            } catch (\Throwable) {
+                self::$splits = [];
+            }
+        }
+
+        return self::$splits;
     }
 
     /** Namen aus dem Künstlerverzeichnis, die einen Trenner enthalten – längste zuerst. */
@@ -71,6 +99,13 @@ class ArtistNames
     public static function flushProtected(): void
     {
         self::$protected = null;
+        self::$splits = null;
+    }
+
+    /** Vorschlag zum Trennen einer Kombi: an &, und, and, x und Komma. */
+    public static function suggestSplit(string $name): array
+    {
+        return array_values(array_filter(array_map('trim', preg_split('/\s+(?:&|und|and|x)\s+|,\s*/iu', $name) ?: [])));
     }
 
     /**
@@ -96,9 +131,34 @@ class ArtistNames
             && ! preg_match(self::SEPARATOR, ' '.$name) && mb_strlen(trim($parts[1])) > 0 && substr_count(trim($parts[1]), ' ') <= 1;
     }
 
+    /** Artikel, die in der Sortierschreibweise hinten stehen („Crystals, The“, „Toten Hosen, Die“) */
+    public const ARTICLES = ['the', 'die', 'der', 'das', 'les', 'le', 'la', 'los', 'las', 'il', 'el', 'de', 'het', 'a', 'an'];
+
+    /**
+     * Umgedrehten Namen richtig herum: „Crystals, The“ → „The Crystals“; mit $persons auch „Berry, Chuck“ → „Chuck Berry“.
+     * null = kein umgedrehter Name bzw. im gewählten Umfang nicht umstellen.
+     */
+    public static function uninvert(string $name, bool $persons = false): ?string
+    {
+        $name = trim($name);
+        if (! self::isInverted($name)) {
+            return null;
+        }
+        [$rest, $front] = array_map('trim', explode(', ', $name, 2));
+        if (! $persons && ! in_array(mb_strtolower($front), self::ARTICLES, true)) {
+            return null;
+        }
+
+        return $front.' '.$rest;
+    }
+
     /** Kombi, die nicht automatisch getrennt wird, aber zur Entscheidung vorgeschlagen werden kann. */
     public static function looksCombined(string $name): bool
     {
+        if (self::isInverted($name)) {
+            return false; // "Crystals, The" / "Berry, Chuck": umgedrehter Name, kein zweiter Künstler
+        }
+
         return (bool) preg_match('/\s(&|und|and|x)\s|,\s/iu', $name);
     }
 

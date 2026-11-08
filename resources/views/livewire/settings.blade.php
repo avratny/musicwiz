@@ -37,6 +37,13 @@
                 </div>
                 <div><label class="label">Scan-Drosselung (ms pro Datei)</label><input type="number" wire:model="s.scan_throttle_ms" class="input"></div>
                 <div><label class="label">„Sehr kleines Cover“ unter (px)</label><input type="number" wire:model="s.small_cover_px" class="input"></div>
+                <div><label class="label">Umgedrehte Namen (Aufräumen)</label>
+                    <select wire:model="s.invert_names" class="input">
+                        <option value="off">Aus – Sortierschreibweise „Crystals, The“ bleibt</option>
+                        <option value="articles">Nur Artikel – „Crystals, The“ → „The Crystals“</option>
+                        <option value="persons">Artikel und Personen – auch „Berry, Chuck“ → „Chuck Berry“</option>
+                    </select>
+                </div>
                 <div><label class="label">Qobuz-Shop (FLAC-Kandidaten)</label>
                     <select wire:model="s.qobuz_store" class="input">
                         @foreach (['de-de' => 'Deutschland', 'at-de' => 'Österreich', 'ch-de' => 'Schweiz (Deutsch)', 'fr-fr' => 'Frankreich', 'gb-en' => 'Großbritannien', 'us-en' => 'USA'] as $v => $label)<option value="{{ $v }}">{{ $label }}</option>@endforeach
