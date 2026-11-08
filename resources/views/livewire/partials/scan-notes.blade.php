@@ -11,9 +11,23 @@
         </div>
     @endif
     @if (! empty($scan['unreadable']) && ($scan['location'] ?? null) === $location)
-        <div class="{{ $box }} rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-            {{ count($scan['unreadable']) }} Ordner nicht lesbar – darunter bleibt der Index unverändert:
-            <span class="text-amber-300/80">{{ implode(', ', array_slice($scan['unreadable'], 0, 5)) }}{{ count($scan['unreadable']) > 5 ? ' …' : '' }}</span>
+        @php
+            $count = $scan['unreadable_count'] ?? count($scan['unreadable']);
+            $reasons = $scan['unreadable_reasons'] ?? [];
+            $summary = collect($scan['unreadable_summary'] ?? [])->sortDesc()->map(fn ($n, $r) => $n.'× '.$r)->implode(', ');
+        @endphp
+        <div class="{{ $box }} rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200" x-data="{ open: false }">
+            {{ $count }} Ordner nicht lesbar{{ $summary ? ' ('.$summary.')' : '' }} – darunter bleibt der Index unverändert.
+            <button x-on:click="open = ! open" class="ml-1 text-amber-300 underline decoration-dotted" x-text="open ? 'weniger' : 'Ordner zeigen'">Ordner zeigen</button>
+            @if (str_contains($summary, 'keine Berechtigung'))
+                <div class="mt-1 text-xs text-amber-300/80">Keine Berechtigung: Der Benutzer, unter dem MusicWiz läuft (PUID/PGID), darf diese Ordner nicht lesen – auf dem NAS die Rechte der Freigabe auf Unterordner anwenden bzw. Besitzer anpassen.</div>
+            @endif
+            <ul x-show="open" x-cloak class="mt-2 space-y-0.5 text-xs text-amber-300/80">
+                @foreach ($scan['unreadable'] as $dir)
+                    <li><span class="text-amber-100">{{ $dir }}</span>{{ isset($reasons[$dir]) ? ' – '.$reasons[$dir] : '' }}</li>
+                @endforeach
+                @if ($count > count($scan['unreadable']))<li>… und {{ $count - count($scan['unreadable']) }} weitere</li>@endif
+            </ul>
         </div>
     @endif
     @if (! empty($scan['cancelled']) && ($scan['location'] ?? null) === $location)

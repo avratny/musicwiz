@@ -129,7 +129,7 @@ class LookupPrefetchTest extends TestCase
         @mkdir($base.'/inbox/X', 0775, true);
         file_put_contents($base.'/inbox/X/1.mp3', str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 4));
         app(Settings::class)->set(['base' => $base, 'inbox' => $base.'/inbox', 'scan_throttle_ms' => 0]);
-        app(TagTool::class)->write([['path' => $base.'/inbox/X/1.mp3', 'tags' => ['artist' => 'Unbekannt', 'title' => 'Lied']]]);
+        app(TagTool::class)->write([['path' => $base.'/inbox/X/1.mp3', 'tags' => ['artist' => 'Neue Band', 'title' => 'Lied']]]);
 
         (new ScanJob('inbox'))->handle(app(Scanner::class), app(AutoCleanup::class));
 

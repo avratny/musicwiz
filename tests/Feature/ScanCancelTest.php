@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\ScanJob;
 use App\Livewire\Inbox;
+use App\Livewire\Library;
 use App\Models\Track;
 use App\Support\AutoCleanup;
 use App\Support\Scanner;
@@ -79,6 +80,36 @@ class ScanCancelTest extends TestCase
         $this->assertSame(10, $next['read']);
         $this->assertSame(1, $next['removed'], 'vollständiger Scan entfernt die fehlende Datei');
         $this->assertNull(app(Scanner::class)->status()['cancelled']);
+    }
+
+    public function test_unreadable_folder_reports_reason(): void
+    {
+        $locked = $this->base.'/library/artists/G/Gesperrt';
+        File::ensureDirectoryExists($locked.'/Album');
+        chmod($locked, 0000);
+        clearstatcache();
+        if (@scandir($locked) !== false) {
+            chmod($locked, 0755);
+            $this->markTestSkipped('Dateisystem bzw. Benutzer setzt Rechte nicht durch (z. B. root).');
+        }
+        try {
+            $this->assertSame(0, app(Scanner::class)->scan('library')['cancelled'] ?? 0);
+            $status = app(Scanner::class)->status();
+            $this->assertSame(1, $status['unreadable_count']);
+            $this->assertStringStartsWith('keine Berechtigung (gehört ', $status['unreadable_reasons'][$locked]);
+            $this->assertStringContainsString('Rechte 000', $status['unreadable_reasons'][$locked]);
+            $this->assertSame(['keine Berechtigung' => 1], $status['unreadable_summary']);
+            Livewire::test(Library::class)->assertSee('1 Ordner nicht lesbar (1× keine Berechtigung)')->assertSee('Rechte 000');
+        } finally {
+            chmod($locked, 0755);
+        }
+    }
+
+    public function test_reason_texts(): void
+    {
+        $this->assertSame('nicht (mehr) vorhanden', Scanner::unreadableReason('/gibt/es/nicht', 'scandir(/gibt/es/nicht): Failed to open directory: No such file or directory'));
+        $this->assertSame('Lesefehler (Share bzw. Netzwerk)', Scanner::unreadableReason('/x', 'scandir(/x): Failed to open directory: Input/output error'));
+        $this->assertSame('unbekannter Fehler', Scanner::unreadableReason('/x', null));
     }
 
     public function test_cancel_while_walking_changes_nothing(): void

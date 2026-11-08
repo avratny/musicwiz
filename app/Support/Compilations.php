@@ -27,7 +27,9 @@ class Compilations
     /** Nicht-lateinische Schreibweisen, ohne Normalisierung verglichen. */
     private const NON_LATIN = ['ヴァリアス・アーティスト', 'オムニバス', 'Разные исполнители', 'Сборник'];
 
-    private const PLACEHOLDERS = ['unknownartist', 'unknown', 'unbekannterinterpret', 'unbekannt'];
+    /** Platzhalter für ein fehlendes Interpreten-Tag (normalisiert); „-Interpret-“ legte MediaMonkey an */
+    private const PLACEHOLDERS = ['unknownartist', 'unknown', 'unbekannterinterpret', 'unbekannterkunstler', 'unbekannterkuenstler',
+        'unbekannt', 'interpret', 'artist', 'noartist', 'keininterpret'];
 
     public function __construct(private Settings $settings) {}
 
@@ -57,10 +59,10 @@ class Compilations
         return in_array(self::normalize($raw), self::VARIANTS, true);
     }
 
-    /** „Unknown Artist“, „[unknown]“, „Unbekannter Interpret“: fehlendes Tag, nur prüfen. */
-    public static function isPlaceholder(?string $albumArtist): bool
+    /** „Unknown Artist“, „[unknown]“, „Unbekannter Interpret“, „-Interpret-“: fehlendes Tag, kein Künstler – nur prüfen. */
+    public static function isPlaceholder(?string $name): bool
     {
-        $raw = mb_strtolower(trim((string) $albumArtist));
+        $raw = mb_strtolower(trim((string) $name));
 
         return $raw === '[unknown]' || ($raw !== '' && in_array(self::normalize($raw), self::PLACEHOLDERS, true));
     }

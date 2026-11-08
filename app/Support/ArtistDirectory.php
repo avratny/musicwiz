@@ -75,6 +75,10 @@ class ArtistDirectory
     {
         $this->load();
         $name = trim($name);
+        // „Unknown Artist“ & Co. sind ein fehlendes Tag – nie als neuer Künstler vorschlagen
+        if (Compilations::isPlaceholder($name)) {
+            return ['status' => 'placeholder', 'canonical' => null];
+        }
         if ($this->personsFor($name)) {
             return ['status' => 'ambiguous', 'canonical' => null];
         }
@@ -203,7 +207,7 @@ class ArtistDirectory
     {
         $skip = mb_strtolower((string) $this->settings->get('compilation_artist'));
 
-        return $this->names ??= Cache::remember('artist-names:v4:'.DataVersion::artistContent().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
+        return $this->names ??= Cache::remember('artist-names:v5:'.DataVersion::artistContent().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
     }
 
     private ?array $names = null;
@@ -228,7 +232,7 @@ class ArtistDirectory
             $g->albumartists = json_decode((string) $g->albumartists, true) ?: [];
             $names = array_merge($g->artists ?: ArtistNames::split($g->artist), $this->albumArtistNames($g));
             foreach (array_unique($names) as $n) {
-                if ($n !== '' && mb_strtolower($n) !== $skip) {
+                if ($n !== '' && mb_strtolower($n) !== $skip && ! Compilations::isPlaceholder($n)) {
                     $counts[$n] = ($counts[$n] ?? 0) + (int) $g->n;
                 }
             }
@@ -256,7 +260,7 @@ class ArtistDirectory
      */
     private function rawGroups(): array
     {
-        return Cache::remember('artist-raw-groups:v1:'.DataVersion::artistContent(), now()->addDays(30), function () {
+        return Cache::remember('artist-raw-groups:v2:'.DataVersion::artistContent(), now()->addDays(30), function () {
             $counts = $this->namesInCollection();
             $groups = [];
             foreach ($counts as $name => $n) {
@@ -368,7 +372,7 @@ class ArtistDirectory
         $added = [];
         foreach ($names as $n) {
             $n = trim($n);
-            if ($n !== '' && ! in_array($this->check($n)['status'], ['ok', 'variant', 'ambiguous'], true)) {
+            if ($n !== '' && ! in_array($this->check($n)['status'], ['ok', 'variant', 'ambiguous', 'placeholder'], true)) {
                 Artist::firstOrCreate(['name' => $n]);
                 $added[] = $n;
             }

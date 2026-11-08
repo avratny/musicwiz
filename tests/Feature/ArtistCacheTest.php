@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Livewire\Artists;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\Track;
@@ -11,6 +12,7 @@ use App\Support\DataVersion;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 /** Namensliste und Profile nur neu berechnen, wenn sich Namen/Titel ändern – nicht nach Bewertungen o. Ä. */
@@ -36,6 +38,21 @@ class ArtistCacheTest extends TestCase
         app(ArtistDirectory::class)->flush();
         $left = (new ArtistDirectory(app(Settings::class)))->candidateGroups();
         $this->assertSame(["Mark 'Oh | Mark Oh"], $sets($left));
+    }
+
+    public function test_placeholders_are_never_proposed_as_artists(): void
+    {
+        foreach (['Unknown Artist', 'unknown artist', '-Interpret-', 'Unbekannter Interpret', 'ABBA'] as $i => $artist) {
+            Track::create(['location' => 'library', 'path' => "/m/$i.mp3", 'dir' => '/m', 'filename' => "$i.mp3", 'ext' => 'mp3',
+                'artist' => $artist, 'albumartist' => $i === 4 ? 'Unknown Artist' : null, 'title' => "T$i", 'album' => 'A', 'artists' => [], 'albumartists' => [], 'genres' => []]);
+        }
+        $directory = app(ArtistDirectory::class);
+        $this->assertSame(['ABBA' => 1], $directory->namesInCollection());
+        $this->assertSame('placeholder', $directory->check('Unknown Artist')['status']);
+        $this->assertSame('new', $directory->check('ABBA')['status']);
+        $this->assertSame([], $directory->candidateGroups(), 'auch keine Schreibweisen-Gruppe „Unknown Artist / unknown artist“');
+        $this->assertSame([], $directory->keepSeparate(['Unknown Artist']));
+        Livewire::test(Artists::class, ['tab' => 'unknown'])->assertSet('wizName', 'ABBA')->assertDontSee('Unknown Artist');
     }
 
     public function test_content_version_ignores_ratings_but_not_names(): void

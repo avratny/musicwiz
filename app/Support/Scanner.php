@@ -54,6 +54,9 @@ class Scanner
     /** Dateien pro Lesepaket (werden auf mehrere Tag-Tool-Prozesse verteilt, siehe scan_workers) */
     private const BATCH = 80;
 
+    /** Alben je Schreib-Transaktion beim Bilden der Alben (kurze Sperren, andere Prozesse kommen dazwischen) */
+    private const ALBUM_CHUNK = 50;
+
     /** Ordner pro Abfrage beim Neubilden der Alben (SQLite bricht bei zu langen OR-Ketten ab) */
     private const SCOPE_CHUNK = 100;
 
@@ -62,6 +65,37 @@ class Scanner
 
     /** @var list<string> Ordner, die beim letzten Durchlauf nicht lesbar waren */
     private array $unreadable = [];
+
+    /** @var array<string, string> Ordner => Grund, warum er nicht lesbar war */
+    private array $unreadableReasons = [];
+
+    /**
+     * Verständlicher Grund für einen Ordner, den scandir() nicht öffnen konnte. Bei fehlender Berechtigung mit Besitzer
+     * und Rechten des Ordners und dem Benutzer, unter dem MusicWiz läuft – dann sieht man den Unterschied sofort.
+     */
+    public static function unreadableReason(string $dir, ?string $error): string
+    {
+        $raw = trim((string) preg_replace('/^.*:\s*/', '', (string) $error));
+        $map = [
+            'Permission denied' => 'keine Berechtigung',
+            'Operation not permitted' => 'keine Berechtigung',
+            'No such file or directory' => 'nicht (mehr) vorhanden',
+            'Not a directory' => 'kein Ordner',
+            'File name too long' => 'Pfad zu lang',
+            'Input/output error' => 'Lesefehler (Share bzw. Netzwerk)',
+            'Stale file handle' => 'Verbindung zum Share veraltet – neu einhängen',
+            'Invalid argument' => 'ungültige Zeichen im Namen?',
+            'Too many open files' => 'zu viele offene Dateien',
+        ];
+        $reason = $map[$raw] ?? ($raw !== '' ? $raw : 'unbekannter Fehler');
+        if ($reason === 'keine Berechtigung' && ($st = @stat($dir)) !== false) {
+            $owner = $st['uid'].':'.$st['gid'].', Rechte '.substr(sprintf('%o', $st['mode']), -3);
+            $me = function_exists('posix_geteuid') ? ' – MusicWiz läuft als '.posix_geteuid().':'.posix_getegid() : '';
+            $reason .= ' (gehört '.$owner.$me.')';
+        }
+
+        return $reason;
+    }
 
     /** @var array<string, list<string>> Cover-Dateien je Ordner aus dem Durchlauf (spart ein zweites scandir pro Album) */
     private array $coverNames = [];
@@ -116,7 +150,8 @@ class Scanner
     public function scan(string $location, bool $allowMassRemoval = false): array
     {
         $this->status(['running' => true, 'location' => $location, 'phase' => 'Ordner lesen', 'done' => 0, 'total' => 0, 'started_at' => now()->toIso8601String(),
-            'error' => null, 'held' => null, 'unreadable' => null, 'auto_skipped' => null, 'cancelled' => null]);
+            'error' => null, 'held' => null, 'unreadable' => null, 'unreadable_count' => null, 'unreadable_reasons' => null, 'unreadable_summary' => null,
+            'auto_skipped' => null, 'cancelled' => null]);
 
         // Fehlt eine Wurzel, unter der schon Dateien erfasst sind (Share weg, Mount fehlt), nichts anfassen
         foreach ($this->configuredRoots() as $root) {
@@ -129,6 +164,7 @@ class Scanner
         $files = [];
         $leftovers = [];
         $this->unreadable = [];
+        $this->unreadableReasons = [];
         $this->coverNames = [];
         $this->dirPause = $this->throttle() / 2;
         try {
@@ -196,7 +232,11 @@ class Scanner
         self::clearCancel(); // kam der Abbruch erst ganz am Ende, ist der Scan trotzdem vollständig
         $result = ['files' => count($files), 'read' => $total, 'removed' => count($gone), 'held' => $held['count'] ?? 0, 'unreadable' => count($this->unreadable)];
         $this->status(['running' => false, 'phase' => 'fertig', 'finished_at' => now()->toIso8601String(), 'result' => $result,
-            'held' => $held, 'unreadable' => $this->unreadable ? array_slice($this->unreadable, 0, 20) : null]);
+            'held' => $held, 'unreadable' => $this->unreadable ? array_slice($this->unreadable, 0, 20) : null,
+            'unreadable_count' => count($this->unreadable),
+            'unreadable_reasons' => $this->unreadable ? array_slice($this->unreadableReasons, 0, 20, true) : null,
+            // Gründe zusammengefasst über alle Ordner (z. B. „keine Berechtigung“ × 18)
+            'unreadable_summary' => $this->unreadable ? array_count_values(array_map(fn ($r) => preg_replace('/\s*\(.*$/', '', $r), $this->unreadableReasons)) : null]);
 
         return $result;
     }
@@ -319,9 +359,11 @@ class Scanner
     {
         $audioExt = config('musicwiz.audio_extensions');
         $junk = config('musicwiz.junk_files');
+        error_clear_last();
         $entries = @scandir($dir);
         if ($entries === false) {
             $this->unreadable[] = $dir;
+            $this->unreadableReasons[$dir] = self::unreadableReason($dir, error_get_last()['message'] ?? null);
 
             return ['content' => true, 'audio' => true]; // nicht lesbar: lieber nichts melden
         }
@@ -565,12 +607,21 @@ class Scanner
         }
         unset($tracks);
         $sets = $this->discSets($groups);
-        DB::transaction(function () use ($sets) {
-            foreach ($sets as $set) {
-                $album = $this->saveAlbum($set['dirs'][0], $set['tracks'], $set['dirs'], $set['disc_map'] ?? []);
-                Track::whereIn('id', array_map(fn ($t) => $t->id, $set['tracks']))->update(['album_id' => $album->id]);
-            }
-        });
+        // in kleinen Paketen schreiben: eine Transaktion über alle Alben (samt Cover-Suche übers Netzwerk) sperrte die
+        // Datenbank so lange, dass andere Prozesse mit "database is locked" aufgaben
+        foreach (array_chunk($sets, self::ALBUM_CHUNK) as $chunk) {
+            $prepared = array_map(fn ($set) => [$set, $this->albumAttributes($set['dirs'][0], $set['tracks'], $set['dirs'], $set['disc_map'] ?? [])], $chunk);
+            DB::transaction(function () use ($prepared) {
+                foreach ($prepared as [$set, $attributes]) {
+                    $album = Album::updateOrCreate(['dir' => $set['dirs'][0]], $attributes);
+                    // nur Titel anfassen, deren Zuordnung sich ändert (sonst schrieb jeder Scan alle Titel neu)
+                    $ids = array_map(fn ($t) => $t->id, array_filter($set['tracks'], fn ($t) => (int) $t->album_id !== $album->id));
+                    foreach (array_chunk($ids, 500) as $part) {
+                        Track::whereIn('id', $part)->update(['album_id' => $album->id]);
+                    }
+                }
+            });
+        }
 
         // Alben ohne Tracks entfernen
         if ($scope !== null) {
@@ -723,7 +774,8 @@ class Scanner
         return $out;
     }
 
-    private function saveAlbum(string $dir, array $tracks, array $dirs = [], array $discMap = []): Album
+    /** Werte eines Albums (inkl. Cover-Suche auf dem Share) – ohne zu schreiben, damit das außerhalb der Sperre läuft. */
+    private function albumAttributes(string $dir, array $tracks, array $dirs = [], array $discMap = []): array
     {
         $mode = function (array $values) {
             $values = array_filter($values, fn ($v) => $v !== null && $v !== '');
@@ -773,7 +825,7 @@ class Scanner
             $letter = app(PathBuilder::class)->letter($folderArtist);
         }
 
-        return Album::updateOrCreate(['dir' => $dir], [
+        return [
             'location' => $location,
             'category' => $category,
             'title' => count($dirs) > 1
@@ -792,7 +844,7 @@ class Scanner
             'cover_file' => $coverFile,
             'cover_embedded' => (bool) $embedded,
             'cover_size' => $coverSize,
-        ]);
+        ];
     }
 
     /** Alle Cover-Dateien (cover.*, folder.*, front.*) im Ordner. */

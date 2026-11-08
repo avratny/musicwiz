@@ -2,11 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Models\Album;
 use App\Models\Track;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
@@ -62,6 +64,28 @@ class ScanSpeedTest extends TestCase
         $this->assertSame('mp3', $first->format);
         $this->assertEqualsWithDelta(128000, $first->bitrate, 8000);
         $this->assertSame(0, Track::whereNull('duration')->count());
+    }
+
+    public function test_rescan_without_changes_writes_nothing(): void
+    {
+        foreach (range(1, 3) as $album) {
+            foreach (range(1, 4) as $n) {
+                $path = $this->base."/library/artists/A/ABBA/Album $album/0$n - T.mp3";
+                File::ensureDirectoryExists(dirname($path));
+                file_put_contents($path, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 30));
+                app(TagTool::class)->write([['path' => $path, 'tags' => ['artist' => 'ABBA', 'album' => "Album $album", 'track' => (string) $n, 'title' => "T$n"]]]);
+            }
+        }
+        app(Scanner::class)->scan('library');
+        $before = Track::orderBy('id')->get(['id', 'album_id', 'updated_at'])->map(fn ($t) => $t->id.'/'.$t->album_id.'/'.$t->updated_at)->all();
+        $albums = Album::orderBy('id')->get(['id', 'updated_at'])->map(fn ($a) => $a->id.'/'.$a->updated_at)->all();
+        $this->assertSame(0, Track::whereNull('album_id')->count());
+
+        Carbon::setTestNow(now()->addMinutes(5));
+        app(Scanner::class)->scan('library');
+
+        $this->assertSame($before, Track::orderBy('id')->get(['id', 'album_id', 'updated_at'])->map(fn ($t) => $t->id.'/'.$t->album_id.'/'.$t->updated_at)->all(), 'Titel unverändert');
+        $this->assertSame($albums, Album::orderBy('id')->get(['id', 'updated_at'])->map(fn ($a) => $a->id.'/'.$a->updated_at)->all(), 'Alben unverändert');
     }
 
     private function jpeg(int $w, int $h): string

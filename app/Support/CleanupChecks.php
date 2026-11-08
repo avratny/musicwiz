@@ -679,9 +679,11 @@ class CleanupChecks
                 }
             }
             $lines = array_map(fn ($k, $n) => $k.' fehlt ('.$n.')', array_keys($missing), $missing);
-            // „Unknown Artist“ & Co. sind ein fehlendes Tag, kein Sampler – nicht automatisch umschreiben
-            foreach ($tracks->map(fn ($t) => trim((string) $t->albumartist))->filter(fn ($v) => Compilations::isPlaceholder($v))->countBy() as $value => $n) {
-                $lines[] = 'Album-Interpret „'.$value.'“ – prüfen ('.$n.')';
+            // „Unknown Artist“ & Co. sind ein fehlendes Tag (kein Sampler, kein Künstler) – nicht automatisch umschreiben
+            foreach (['artist' => 'Interpret', 'albumartist' => 'Album-Interpret'] as $field => $label) {
+                foreach ($tracks->map(fn ($t) => trim((string) $t->{$field}))->filter(fn ($v) => Compilations::isPlaceholder($v))->countBy() as $value => $n) {
+                    $lines[] = $label.' „'.$value.'“ – prüfen ('.$n.')';
+                }
             }
             if ($lines) {
                 $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', $lines), 'link' => $this->link($album), 'actions' => []];
