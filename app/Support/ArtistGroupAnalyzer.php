@@ -17,6 +17,8 @@ class ArtistGroupAnalyzer
 
     public function __construct(private Settings $settings) {}
 
+    private ?string $content = null;
+
     /**
      * Profil je Name: Lieder, Alben, Mitwirkende, Genres.
      *
@@ -28,13 +30,17 @@ class ArtistGroupAnalyzer
             return $this->profiles;
         }
 
-        return $this->profiles = Cache::remember('artist-profiles:v5:'.DataVersion::tracks(), now()->addHour(), function () {
+        return $this->profiles = Cache::remember('artist-profiles:v6:'.DataVersion::artistContent(), now()->addDays(30), function () {
             $va = mb_strtolower((string) $this->settings->get('compilation_artist'));
             $out = [];
             // nur der Bestand – die Inbox wird erst nach dem Einordnen relevant
+            // ohne Modell-Objekte (deutlich schneller bei großen Sammlungen); JSON-Felder selbst lesen
             $query = Track::where('location', 'library')->select(['id', 'album_id', 'duration', 'artist', 'artists', 'albumartist', 'albumartists', 'title', 'album', 'genres', 'compilation'])
-                ->orderBy('album')->orderByRaw('CAST(track AS INTEGER)');
+                ->orderBy('album')->orderByRaw('CAST(track AS INTEGER)')->toBase();
             foreach ($query->cursor() as $t) {
+                $t->artists = json_decode((string) $t->artists, true) ?: [];
+                $t->albumartists = json_decode((string) $t->albumartists, true) ?: [];
+                $t->genres = json_decode((string) $t->genres, true) ?: [];
                 $trackArtists = $t->artists ?: ArtistNames::split($t->artist);
                 $names = array_unique(array_merge($trackArtists, ArtistDirectory::albumArtistNames($t)));
                 foreach ($names as $n) {
@@ -69,6 +75,20 @@ class ArtistGroupAnalyzer
 
             return $out;
         });
+    }
+
+    /**
+     * Namensliste und Profile vorberechnen (nach Scan bzw. Aktion im Hintergrund), damit „Neue Künstler erfassen“ beim
+     * ersten Klick nicht warten muss. Kostet nur etwas, wenn sich Namen oder Titel geändert haben.
+     */
+    public static function warm(): void
+    {
+        try {
+            app(ArtistDirectory::class)->namesInCollection();
+            (new self(app(Settings::class)))->profiles();
+        } catch (\Throwable $e) {
+            report($e);
+        }
     }
 
     /** Bezugsname: Verzeichnis-Eintrag, sonst häufigste Schreibweise der größten Familie (gleicher Vergleichsschlüssel). */
@@ -111,11 +131,20 @@ class ArtistGroupAnalyzer
      */
     public function analyze(array $group): array
     {
+        $research = $this->research($group);
+        // gleiche Gruppe, gleicher Inhalt, gleiche Recherche → gleiches Ergebnis: nicht bei jedem Klick neu rechnen
+        $this->content ??= DataVersion::artistContent(); // einmal je Instanz (= je Seitenaufbau), nicht je Gruppe
+        $key = 'group-analysis:v1:'.$this->content.':'.md5(serialize([$group['names'], $group['known'] ?? null, $research]));
+
+        return Cache::remember($key, now()->addDays(30), fn () => $this->computeAnalysis($group, $research));
+    }
+
+    private function computeAnalysis(array $group, ?array $research): array
+    {
         $profiles = $this->profiles();
         $names = $group['names'];
         arsort($names);
         $main = self::mainName($group);
-        $research = $this->research($group);
         $mainP = $profiles[$main] ?? [];
 
         $variants = [];

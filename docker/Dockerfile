@@ -29,6 +29,10 @@ RUN groupadd -o -g ${PGID} app && useradd -o -u ${PUID} -g ${PGID} -m app \
     && setcap -r /usr/local/bin/frankenphp || true \
     && chown -R app:app /data /config /app /usr/local/bin/yt-dlp
 
+# Speichergrenze je PHP-Prozess (Aufräumen über die ganze Lib braucht bei ~15.000 Titeln gut 200 MB); per .env änderbar
+ENV PHP_MEMORY_LIMIT=512M
+RUN echo 'memory_limit = ${PHP_MEMORY_LIMIT}' > "$PHP_INI_DIR/conf.d/musicwiz.ini"
+
 ENV SERVER_NAME=":8080"
 WORKDIR /app
 USER app

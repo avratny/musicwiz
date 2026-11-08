@@ -6,6 +6,9 @@ x-env: &env
   PGID: ${PGID:-1000}
   TZ: ${TZ:-Europe/Vienna}
   APP_URL: ${APP_URL:-http://localhost:8000}
+  # Speichergrenze je PHP-Prozess (bei viel RAM z. B. 2G) und gleichzeitige Leseprozesse beim Scan
+  PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
+  MUSIC_SCAN_WORKERS: ${MUSIC_SCAN_WORKERS:-4}
   # Startwerte – gepflegt wird alles in der App unter Einstellungen
   MUSIC_BASE: /music
   MUSIC_INBOX: /inbox

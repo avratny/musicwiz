@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Livewire\Cleanup;
 use App\Livewire\FlacCandidatesPage;
 use App\Models\Album;
 use App\Models\PurchaseMark;
@@ -69,6 +70,21 @@ class FlacCandidatesTest extends TestCase
             ->set('samplers', true)->assertSee('Bravo Hits 39')
             ->set('minRating', 5)->assertSee('Gold')->assertDontSee('Arrival');
         $this->get(route('flac-candidates'))->assertOk()->assertSee('Komplett ↗', false)->assertSee('Interpret ↗', false);
+    }
+
+    public function test_incomplete_albums_tab_any_format(): void
+    {
+        // Sunrise (FLAC) mit Lücke: Titel 1 und 3 von 3
+        $this->file('library/artists/Y/Yanou/Sunrise (2006)/03 - Sunrise.flac', ['artist' => 'Yanou', 'albumartist' => 'Yanou', 'album' => 'Sunrise', 'year' => '2006', 'track' => '3', 'comment' => 'LIB'], 'flac');
+        app(Scanner::class)->scan('library');
+
+        Livewire::test(FlacCandidatesPage::class)
+            ->assertDontSee('Sunrise') // FLAC: kein MP3-Kandidat
+            ->set('show', 'incomplete')
+            ->assertSee('Sunrise')->assertSee('unvollständig: 2 von 3 – es fehlen 2')
+            ->assertSee('https://www.qobuz.com/de-de/search/albums/Yanou%20Sunrise', false)
+            ->assertDontSee('Arrival');
+        Livewire::test(Cleanup::class)->set('check', 'incomplete')->assertSee('Komplett nachkaufen');
     }
 
     public function test_watch_and_hide_survive_moving(): void

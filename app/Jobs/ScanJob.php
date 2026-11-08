@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\ArtistGroupAnalyzer;
 use App\Support\AutoCleanup;
 use App\Support\Scanner;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -23,12 +24,16 @@ class ScanJob implements ShouldQueue
     {
         $result = $scanner->scan($this->location, $this->allowMassRemoval);
         // neue, noch unbekannte Künstler im Hintergrund nachschlagen (der Assistent ist dann sofort gefüllt)
+        if ($this->location === 'library') {
+            ArtistGroupAnalyzer::warm(); // „Neue Künstler erfassen“: sonst zahlt das der erste Klick
+        }
         if (in_array($this->location, ['inbox', 'library'], true)) {
             PrefetchUnknownArtists::start();
         }
         if ($this->location !== 'library') {
             return;
         }
+        RefreshCleanup::request(); // Aufräumen-Funde im Hintergrund vorberechnen (Seite zeigt solange den letzten Stand)
         // Freigegebene Aufräum-Automatiken nach dem Bestand-Scan ausführen – aber nicht auf einem unvollständigen Index
         // (nicht lesbare Ordner, zurückgehaltenes Entfernen): sonst planen sie mit Dateien, die es nicht mehr gibt
         if ($result['held'] || $result['unreadable']) {

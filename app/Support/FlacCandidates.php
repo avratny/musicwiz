@@ -40,7 +40,25 @@ class FlacCandidates
      */
     public function all(): Collection
     {
-        $ids = self::albumIds();
+        return $this->items(self::albumIds());
+    }
+
+    /**
+     * Unvollständige Lib-Alben (Prüfung „Album unvollständig“), egal in welchem Format – zum Nachkaufen als ganzes Album.
+     *
+     * @return Collection<int, array> wie all(), zusätzlich 'missing' (z. B. „11 von 14 – es fehlen 3, 7, 12“)
+     */
+    public function incomplete(): Collection
+    {
+        $missing = collect(app(CleanupChecks::class)->findings('incomplete'))
+            ->mapWithKeys(fn ($f) => [(int) substr($f['id'], 1) => $f['detail']]);
+
+        return $this->items($missing->keys())->map(fn ($c) => ['missing' => $missing[$c['album']->id] ?? null] + $c);
+    }
+
+    /** @param  Collection<int, int>  $ids */
+    private function items(Collection $ids): Collection
+    {
         $albums = Album::whereIn('id', $ids)->get();
         $ratings = Ratings::albumAverages($ids, 'library');
         $bitrates = DB::table('tracks')->whereIn('album_id', $ids)->groupBy('album_id')
@@ -52,7 +70,7 @@ class FlacCandidates
 
             return ['album' => $a, 'key' => $key, 'rating' => $ratings[$a->id] ?? null,
                 'bitrate' => isset($bitrates[$a->id]) ? (int) round($bitrates[$a->id] / 1000) : null,
-                'tracks' => (int) $a->track_count, 'state' => $marks[$key] ?? null];
+                'tracks' => (int) $a->track_count, 'state' => $marks[$key] ?? null, 'missing' => null];
         })->values();
     }
 

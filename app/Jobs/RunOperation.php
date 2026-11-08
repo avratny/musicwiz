@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Operation;
+use App\Support\ArtistGroupAnalyzer;
 use App\Support\OperationRunner;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -25,6 +26,10 @@ class RunOperation implements ShouldQueue
         // eingeplante Aktion vorzeitig geholt (z. B. synchrone Warteschlange): liegen lassen, der verzögerte Job kommt noch
         if ($op && $op->status === 'pending' && ! $op->isPlanned()) {
             $runner->run($op);
+            if ($op->type !== 'download') {
+                ArtistGroupAnalyzer::warm(); // z. B. nach „Schreibweisen vereinheitlichen“ – nicht beim nächsten Klick
+                RefreshCleanup::request(); // Aufräumen: Funde gleich im Hintergrund neu berechnen
+            }
         }
     }
 

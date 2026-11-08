@@ -28,11 +28,23 @@ class ArtistDirectory
         ArtistNames::flushProtected();
     }
 
+    /** Zähler für Änderungen am Verzeichnis (Künstler/Schreibweise gespeichert oder gelöscht), siehe AppServiceProvider */
+    private static int $generation = 0;
+
+    private int $loadedGeneration = -1;
+
+    /** Verzeichnis hat sich geändert: der nächste Zugriff lädt neu (nicht mitten in einem laufenden Vorgang). */
+    public static function invalidate(): void
+    {
+        self::$generation++;
+    }
+
     private function load(): void
     {
-        if ($this->exact !== null) {
+        if ($this->exact !== null && $this->loadedGeneration === self::$generation) {
             return;
         }
+        $this->loadedGeneration = self::$generation;
         $this->exact = [];
         $this->byKey = [];
         $this->ambiguous = [];
@@ -191,7 +203,7 @@ class ArtistDirectory
     {
         $skip = mb_strtolower((string) $this->settings->get('compilation_artist'));
 
-        return $this->names ??= Cache::remember('artist-names:v3:'.DataVersion::tracks().':'.md5($skip), now()->addHour(), fn () => $this->countNames($skip));
+        return $this->names ??= Cache::remember('artist-names:v4:'.DataVersion::artistContent().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
     }
 
     private ?array $names = null;
@@ -207,11 +219,17 @@ class ArtistDirectory
     {
         $counts = [];
         // nur der Bestand: Inbox-Musik zählt erst, wenn sie eingeordnet ist
-        foreach (Track::where('location', 'library')->select(['artist', 'artists', 'albumartist', 'albumartists'])->cursor() as $t) {
-            $names = array_merge($t->artists ?: ArtistNames::split($t->artist), $this->albumArtistNames($t));
+        // gleiche Namensfelder zusammenfassen: aus 15.000 Titeln werden ein paar tausend Kombinationen
+        $groups = Track::where('location', 'library')->toBase()
+            ->selectRaw('artist, artists, albumartist, albumartists, count(*) as n')
+            ->groupBy('artist', 'artists', 'albumartist', 'albumartists')->get();
+        foreach ($groups as $g) {
+            $g->artists = json_decode((string) $g->artists, true) ?: [];
+            $g->albumartists = json_decode((string) $g->albumartists, true) ?: [];
+            $names = array_merge($g->artists ?: ArtistNames::split($g->artist), $this->albumArtistNames($g));
             foreach (array_unique($names) as $n) {
                 if ($n !== '' && mb_strtolower($n) !== $skip) {
-                    $counts[$n] = ($counts[$n] ?? 0) + 1;
+                    $counts[$n] = ($counts[$n] ?? 0) + (int) $g->n;
                 }
             }
         }
@@ -227,52 +245,64 @@ class ArtistDirectory
     public function candidateGroups(): array
     {
         // teuer (Ähnlichkeitssuche über alle Namen) – neu nur, wenn sich Bestand oder Verzeichnis ändern
-        return Cache::remember('artist-groups:v2:'.DataVersion::tracks().':'.DataVersion::directory(), now()->addHour(), fn () => $this->buildCandidateGroups());
+        return Cache::remember('artist-groups:v3:'.DataVersion::artistContent().':'.DataVersion::directory(), now()->addDays(30), fn () => $this->buildCandidateGroups());
+    }
+
+    /**
+     * Namen mit gleichem Vergleichsschlüssel bzw. Tippfehler-Abstand zusammengefasst (nur Gruppen ab zwei Namen).
+     * Der teure Teil – hängt nur am Inhalt der Lib, nicht am Verzeichnis: übernommene Vorschläge rechnen ihn nicht neu.
+     *
+     * @return array<string, array<string, int>> Schlüssel => [Name => Anzahl]
+     */
+    private function rawGroups(): array
+    {
+        return Cache::remember('artist-raw-groups:v1:'.DataVersion::artistContent(), now()->addDays(30), function () {
+            $counts = $this->namesInCollection();
+            $groups = [];
+            foreach ($counts as $name => $n) {
+                $groups[ArtistNames::compareKey($name)][$name] = $n;
+            }
+
+            // Ähnlichkeitssuche gegen Tippfehler (nur innerhalb gleicher Anfangsbuchstaben)
+            $keys = array_keys(array_filter($groups, fn ($k) => strlen($k) >= 7, ARRAY_FILTER_USE_KEY));
+            $buckets = [];
+            foreach ($keys as $k) {
+                $buckets[substr($k, 0, 1)][] = $k;
+            }
+            $merged = [];
+            foreach ($buckets as $list) {
+                $c = count($list);
+                for ($i = 0; $i < $c; $i++) {
+                    for ($j = $i + 1; $j < $c; $j++) {
+                        $a = $list[$i];
+                        $b = $list[$j];
+                        if (abs(strlen($a) - strlen($b)) > 1 || isset($merged[$b]) || isset($merged[$a])) {
+                            continue;
+                        }
+                        $max = strlen($a) > 10 ? 2 : 1;
+                        if (levenshtein($a, $b) <= $max && ! preg_match('/\d/', $a.$b)) {
+                            $groups[$a] += $groups[$b];
+                            unset($groups[$b]);
+                            $merged[$b] = true;
+                        }
+                    }
+                }
+            }
+
+            return array_filter($groups, fn ($names) => count($names) >= 2);
+        });
     }
 
     /** @return list<array{names: array<string,int>, suggestion:string, known:?string}> */
     private function buildCandidateGroups(): array
     {
         $this->load();
-        $counts = $this->namesInCollection();
-        $groups = [];
-        foreach ($counts as $name => $n) {
-            $groups[ArtistNames::compareKey($name)][$name] = $n;
-        }
-
-        // Ähnlichkeitssuche gegen Tippfehler (nur innerhalb gleicher Anfangsbuchstaben)
-        $keys = array_keys(array_filter($groups, fn ($k) => strlen($k) >= 7, ARRAY_FILTER_USE_KEY));
-        $buckets = [];
-        foreach ($keys as $k) {
-            $buckets[substr($k, 0, 1)][] = $k;
-        }
-        $merged = [];
-        foreach ($buckets as $list) {
-            $c = count($list);
-            for ($i = 0; $i < $c; $i++) {
-                for ($j = $i + 1; $j < $c; $j++) {
-                    $a = $list[$i];
-                    $b = $list[$j];
-                    if (abs(strlen($a) - strlen($b)) > 1 || isset($merged[$b]) || isset($merged[$a])) {
-                        continue;
-                    }
-                    $max = strlen($a) > 10 ? 2 : 1;
-                    if (levenshtein($a, $b) <= $max && ! preg_match('/\d/', $a.$b)) {
-                        $groups[$a] += $groups[$b];
-                        unset($groups[$b]);
-                        $merged[$b] = true;
-                    }
-                }
-            }
-        }
-
+        // eine Abfrage statt einer pro Name
+        $withBase = Artist::whereNotNull('base_name')->pluck('name')->flip()->all();
         $out = [];
-        foreach ($groups as $key => $names) {
-            if (count($names) < 2) {
-                continue;
-            }
+        foreach ($this->rawGroups() as $key => $names) {
             // gleichnamige Personen ("Adam [DE]" / "Adam [GB]") sind gewollt verschieden
-            $persons = array_filter(array_keys($names), fn ($n) => Artist::where('name', $n)->whereNotNull('base_name')->exists());
+            $persons = array_filter(array_keys($names), fn ($n) => isset($withBase[$n]));
             if (count($persons) === count($names)) {
                 continue;
             }

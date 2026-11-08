@@ -1,5 +1,5 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
-<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false)) wire:poll.2s @endif>
+<div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false) || $stale) wire:poll.2s @endif>
     <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
     @foreach ($autoHeld as $heldCheck => $h)
         <div class="mx-6 mt-3 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
@@ -49,15 +49,26 @@
                     </div>
                     <button wire:click="startIntegrity" class="btn-ghost btn-sm" @disabled($integrity['running'] ?? false) title="Jede Lib-Datei einmal komplett dekodieren – beim ersten Mal dauert das Stunden, danach nur noch Neues und Geändertes">Audiodaten prüfen</button>
                 @endif
+                @if ($check === 'incomplete' && $total)
+                    <a href="{{ route('flac-candidates', ['show' => 'incomplete']) }}" wire:navigate class="btn-ghost btn-sm" title="Unvollständige Alben mit Suchlinks zu Qobuz">Komplett nachkaufen …</a>
+                @endif
                 @if ($check === 'encoding')
                     <a href="{{ route('text-repair') }}" wire:navigate class="btn-ghost btn-sm" title="Codepage, verlorene Zeichen und alles andere einzeln entscheiden – auch in der Inbox">Zeichen-Assistent …</a>
                 @endif
                 @if ($fixable && $total)
-                    <button wire:click="selectAll" class="btn-ghost btn-sm">Alle markieren</button>
-                    <button wire:click="previewFix(false)" class="btn-ghost" @disabled(! $selected || $active->isNotEmpty())>Markierte beheben ({{ count($selected) }}) …</button>
-                    <button wire:click="previewFix(true)" class="btn-primary" @disabled($active->isNotEmpty()) title="{{ $active->isNotEmpty() ? 'Es läuft noch eine Aktion' : '' }}">Alle beheben …</button>
+                    <button wire:click="selectAll" class="btn-ghost btn-sm" @disabled($stale)>Alle markieren</button>
+                    <button wire:click="previewFix(false)" class="btn-ghost" @disabled(! $selected || $active->isNotEmpty() || $stale)>Markierte beheben ({{ count($selected) }}) …</button>
+                    <button wire:click="previewFix(true)" class="btn-primary" @disabled($active->isNotEmpty() || $stale) title="{{ $stale ? 'Funde werden gerade aktualisiert' : ($active->isNotEmpty() ? 'Es läuft noch eine Aktion' : '') }}">Alle beheben …</button>
                 @endif
             </div>
+            @if ($stale)
+                <div class="shrink-0 px-6 pt-3">
+                    <div class="flex items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200">
+                        <span class="size-2 animate-pulse rounded-full bg-blue-400"></span>
+                        Funde werden im Hintergrund aktualisiert – angezeigt wird der letzte Stand. Beheben geht wieder, sobald alles frisch ist.
+                    </div>
+                </div>
+            @endif
             @if ($openBefore && $step === 4 && $total)
                 <div class="shrink-0 px-6 pt-3">
                     <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
@@ -152,7 +163,7 @@
                                     @else
                                         <button wire:click="applyOne(@js($f['id']))" wire:loading.attr="disabled" wire:target="applyOne(@js($f['id']))"
                                                 wire:confirm="„{{ $f['title'] }}“ übernehmen? {{ count($f['actions']) }} Schritt(e) – rückgängig machbar im Verlauf."
-                                                class="btn-primary btn-sm">Übernehmen</button>
+                                                @disabled($stale) class="btn-primary btn-sm">Übernehmen</button>
                                     @endif
                                 @endif
                             </div>

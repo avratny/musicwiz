@@ -17,7 +17,7 @@ class FlacCandidatesPage extends Component
     #[Url]
     public string $q = '';
 
-    /** alle | watch (Merkliste) | hidden (ausgeblendet) */
+    /** alle | watch (Merkliste) | hidden (ausgeblendet) | incomplete (unvollständige Alben, jedes Format) */
     #[Url]
     public string $show = 'alle';
 
@@ -69,17 +69,27 @@ class FlacCandidatesPage extends Component
     public function render(FlacCandidates $candidates)
     {
         $all = $candidates->all();
-        $counts = ['alle' => $all->where('state', '!=', 'hidden')->count(), 'watch' => $all->where('state', 'watch')->count(), 'hidden' => $all->where('state', 'hidden')->count()];
+        $incomplete = $candidates->incomplete();
+        // in den MP3-Listen auch zeigen, wenn ein Album zusätzlich unvollständig ist
+        $missing = $incomplete->mapWithKeys(fn ($c) => [$c['album']->id => $c['missing']]);
+        $all = $all->map(fn ($c) => ['missing' => $missing[$c['album']->id] ?? null] + $c);
+        $counts = ['alle' => $all->where('state', '!=', 'hidden')->count(), 'watch' => $all->where('state', 'watch')->count(),
+            'hidden' => $all->where('state', 'hidden')->count(), 'incomplete' => $incomplete->where('state', '!=', 'hidden')->count()];
+        if ($this->show === 'incomplete') {
+            $all = $incomplete;
+        }
         $genres = $all->map(fn ($c) => $c['album']->genres[0] ?? null)->filter()->unique()->sort()->values();
+        // Unvollständig: Sampler gehören dazu (sonst fehlen z. B. halbe Bravo-Hits-CDs)
+        $withSamplers = $this->samplers || $this->show === 'incomplete';
 
         $q = mb_strtolower(trim($this->q));
         $list = $all
             ->filter(fn ($c) => match ($this->show) {
                 'watch' => $c['state'] === 'watch',
                 'hidden' => $c['state'] === 'hidden',
-                default => $c['state'] !== 'hidden',
+                default => $c['state'] !== 'hidden', // auch „incomplete“: Ausgeblendetes will man nicht kaufen
             })
-            ->filter(fn ($c) => $this->samplers || ! $c['album']->is_compilation)
+            ->filter(fn ($c) => $withSamplers || ! $c['album']->is_compilation)
             ->filter(fn ($c) => ! $this->minRating || ($c['rating'] ?? 0) >= $this->minRating)
             ->filter(fn ($c) => $this->genre === '' || ($c['album']->genres[0] ?? null) === $this->genre)
             ->filter(fn ($c) => $q === '' || str_contains(mb_strtolower($c['album']->folder_artist.' '.$c['album']->albumartist.' '.$c['album']->title), $q));

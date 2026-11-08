@@ -102,7 +102,7 @@ class CleanupChecks
     public function openBefore(string $check): array
     {
         $step = self::stepOf($check);
-        $counts = $this->counts();
+        $counts = $this->displayCounts();
         $out = [];
         foreach (self::STEPS as $n => [, , $checks]) {
             if ($n >= $step) {
@@ -118,10 +118,62 @@ class CleanupChecks
         return $out;
     }
 
+    /** Version des letzten vollständig berechneten Stands (alle Prüfungen), für die Anzeige während des Neuberechnens. */
+    public const LAST_VERSION = 'cleanup.last-version';
+
+    private const TTL_DAYS = 7;
+
+    /** Sind alle Prüfungen für den aktuellen Datenstand berechnet? */
+    public function isFresh(): bool
+    {
+        return Cache::has('cleanup.counts.'.$this->version());
+    }
+
+    /** Alle Prüfungen berechnen (läuft im Hintergrund nach Scan bzw. Aktion, siehe RefreshCleanup). */
+    public function refreshAll(): void
+    {
+        $this->counts();
+        Cache::forever(self::LAST_VERSION, $this->version());
+    }
+
+    /** Anzahlen für die Seitenleiste: aktuell, sonst der letzte fertige Stand (nie alles im Seitenaufruf neu rechnen). */
+    public function displayCounts(): array
+    {
+        if ($this->isFresh()) {
+            return $this->counts();
+        }
+        $last = Cache::get(self::LAST_VERSION);
+
+        return ($last ? Cache::get('cleanup.counts.'.$last) : null) ?? [];
+    }
+
+    /**
+     * Funde zur Anzeige: aktuell, sonst der letzte fertige Stand derselben Prüfung; gibt es keinen, wird nur diese eine
+     * Prüfung jetzt berechnet.
+     *
+     * @return array{0: array, 1: bool} [Funde, veraltet]
+     */
+    public function displayFindings(string $key): array
+    {
+        $current = Cache::get($this->findingsKey($key, $this->version()));
+        if ($current !== null) {
+            return [$current, false];
+        }
+        $last = Cache::get(self::LAST_VERSION);
+        $stale = $last ? Cache::get($this->findingsKey($key, $last)) : null;
+
+        return $stale !== null ? [$stale, true] : [$this->findings($key), false];
+    }
+
+    private function findingsKey(string $key, string $version): string
+    {
+        return 'cleanup.findings.'.$key.'.'.(int) $this->withDismissed.'.'.$version;
+    }
+
     /** @return array<string, int> */
     public function counts(): array
     {
-        return Cache::remember('cleanup.counts.'.$this->version(), now()->addHour(), function () {
+        return Cache::remember('cleanup.counts.'.$this->version(), now()->addDays(self::TTL_DAYS), function () {
             $out = [];
             foreach (array_keys(self::definitions()) as $key) {
                 // ausgeblendete Funde nicht mitzählen (auch wenn die Liste der Ausnahmen gerade aufgeklappt ist)
@@ -149,7 +201,7 @@ class CleanupChecks
         }
 
         // Funde gehen über den ganzen Bestand (und teils aufs Share): nur bei geändertem Datenstand neu berechnen
-        return Cache::remember('cleanup.findings.'.$key.'.'.(int) $this->withDismissed.'.'.$this->version(), now()->addHour(), fn () => $this->{$method}());
+        return Cache::remember($this->findingsKey($key, $this->version()), now()->addDays(self::TTL_DAYS), fn () => $this->{$method}());
     }
 
     // ---------------------------------------------------------------- Daten

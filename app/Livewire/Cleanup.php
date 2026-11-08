@@ -3,6 +3,7 @@
 namespace App\Livewire;
 
 use App\Jobs\IntegrityJob;
+use App\Jobs\RefreshCleanup;
 use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\Operation;
@@ -205,8 +206,14 @@ class Cleanup extends Component
             $this->preview = null;
         }
         $defs = CleanupChecks::definitions();
+        // nie alle Prüfungen im Seitenaufruf rechnen: veraltet → letzten Stand zeigen, im Hintergrund neu berechnen
+        $fresh = $checks->isFresh();
+        if (! $fresh) {
+            RefreshCleanup::request();
+            $fresh = $checks->isFresh(); // synchrone Warteschlange (Tests): schon fertig
+        }
         $checks->withDismissed = in_array($this->check, ['duplicates', 'electronic_sub'], true) && $this->showDismissed;
-        $all = $checks->findings($this->check);
+        [$all, $staleList] = $checks->withDismissed ? [$checks->findings($this->check), false] : $checks->displayFindings($this->check);
         $dismissed = array_values(array_filter($all, fn ($f) => $f['dismissed'] ?? false));
         $findings = array_values(array_filter($all, fn ($f) => ! ($f['dismissed'] ?? false)));
         foreach ($findings as $f) {
@@ -219,7 +226,9 @@ class Cleanup extends Component
 
         return view('livewire.cleanup', [
             'defs' => $defs,
-            'counts' => $checks->counts(),
+            'counts' => $checks->displayCounts(),
+            // veraltet: Liste/Anzahlen vom letzten Stand, Beheben gesperrt bis zur Neuberechnung
+            'stale' => ! $fresh || $staleList,
             'openBefore' => $checks->openBefore($this->check),
             'step' => CleanupChecks::stepOf($this->check),
             'active' => $active,
