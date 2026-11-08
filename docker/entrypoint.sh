@@ -10,7 +10,10 @@ if [ "$(id -u)" = "0" ]; then
     PGID="${PGID:-1000}"
     mkdir -p storage/app storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
     chown -R "$PUID:$PGID" storage bootstrap/cache /data /config /usr/local/bin/yt-dlp
-    exec setpriv --reuid="$PUID" --regid="$PGID" --clear-groups "$0" "$@"
+    # PGID auch als Zusatzgruppe: Netzwerk-Shares (NFS mit sec=sys, SMB) prüfen die Gruppenliste – mit leerer Liste
+    # wurden Ordner, die nur der Gruppe gehören (z. B. 3001:0, Rechte 770), als „keine Berechtigung“ abgewiesen.
+    # Weitere Gruppen bei Bedarf über PGROUPS (z. B. "100,1001").
+    exec setpriv --reuid="$PUID" --regid="$PGID" --groups="$PGID${PGROUPS:+,$PGROUPS}" "$0" "$@"
 fi
 
 mkdir -p storage/app/cache storage/framework/sessions storage/framework/views storage/logs

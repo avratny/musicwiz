@@ -4,6 +4,8 @@
 x-env: &env
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
+  # optional: weitere Gruppen mit Zugriff aufs Share, z. B. "100,1001"
+  PGROUPS: ${PGROUPS:-}
   TZ: ${TZ:-Europe/Vienna}
   APP_URL: ${APP_URL:-http://localhost:8000}
   # Speichergrenze je PHP-Prozess (bei viel RAM z. B. 2G) und gleichzeitige Leseprozesse beim Scan
