@@ -5,6 +5,9 @@
 <div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching) wire:poll.2s @endif>
     <x-page-header title="Änderungen schreiben" subtitle="Vorgemerkt in Aufräumen, Album-Editor und Künstlerverzeichnis – steht schon in MusicWiz, aber noch nicht in den Dateien. Beim Schreiben je Datei einmal Tags, dann an den Ort, den die fertigen Tags ergeben.">
         @if ($trackTotal)
+            <button wire:click="export" class="btn-ghost" title="Alles Vorgemerkte strukturiert als JSON (Felder bisher → neu, Verschieben, Cover, geplante Aktionen) – zum Prüfen vor dem Schreiben">
+                <span wire:loading.remove wire:target="export">Als JSON exportieren</span><span wire:loading wire:target="export">exportiert …</span>
+            </button>
             <button wire:click="discard" data-confirm-label="Alles verwerfen" data-confirm-danger
                     wire:confirm="Alle {{ $trackTotal }} vorgemerkten Änderungen verwerfen? Die Dateien sind nicht betroffen – MusicWiz zeigt danach wieder ihren Stand."
                     class="btn-ghost" @disabled($active->isNotEmpty())>Alle verwerfen</button>

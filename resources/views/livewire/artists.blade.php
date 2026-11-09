@@ -410,6 +410,8 @@
         </div>
     @elseif ($tab === 'quick')
         @include('livewire.partials.quick-artists')
+        {{-- einzeln erfassen als Dialog: Auswahl in der Liste bleibt erhalten --}}
+        <livewire:new-artist-modal />
     @else
         @include('livewire.partials.new-artist-wizard')
     @endif

@@ -253,6 +253,61 @@ class PendingChanges
     }
 
     /**
+     * Alles Vorgemerkte strukturiert (zum Prüfen, z. B. als JSON-Export): je Album und Titel die Felder bisher → neu,
+     * Verschieben alt → neu, Cover und Herkunft – dazu die Aktionen, wie „Schreiben“ sie jetzt ausführen würde.
+     * Pfade relativ zum Musikordner.
+     */
+    public function export(): array
+    {
+        $base = rtrim(app(Settings::class)->base(), '/').'/';
+        $rel = fn (?string $p) => $p !== null && str_starts_with($p, $base) ? substr($p, strlen($base)) : $p;
+        $plan = $this->actions();
+        $targets = collect($plan['actions'])->filter(fn ($a) => ! empty($a['target']))->mapWithKeys(fn ($a) => [$a['path'] => $a['target']]);
+        $albums = [];
+        foreach (PendingChange::with('track.albumRecord')->orderBy('id')->get() as $pc) {
+            $t = $pc->track;
+            if (! $t) {
+                continue;
+            }
+            $id = (int) $t->album_id;
+            $albums[$id] ??= ['album_id' => $id ?: null, 'album' => $t->albumRecord?->title, 'albumartist' => $t->albumRecord?->albumartist,
+                'category' => $t->albumRecord?->category, 'dir' => $rel($t->albumRecord?->dir), 'tracks' => []];
+            $after = $t->tags();
+            $target = $targets[$t->path] ?? null;
+            $albums[$id]['tracks'][] = array_filter([
+                'track_id' => $t->id,
+                'path' => $rel($t->path),
+                'changes' => collect((array) $pc->tags_before)->map(fn ($from, $k) => ['from' => $from, 'to' => $after[$k] ?? null])->all() ?: null,
+                'move' => $target ? ['from' => $rel($t->path), 'to' => $rel($target)] : null,
+                'cover' => $pc->cover ? 'neues Cover' : ($pc->remove_cover ? 'entfernen' : ($pc->embed_cover && ! $t->cover_embedded ? 'fehlendes einbetten' : null)),
+                'relocate' => $pc->relocate ?: null,
+                'labels' => (array) $pc->labels,
+                'staged_at' => $pc->updated_at?->toIso8601String(),
+            ], fn ($v) => $v !== null && $v !== []);
+        }
+        $actions = array_map(function ($a) use ($rel) {
+            foreach (['path', 'target', 'from_dir', 'to_dir', 'dir'] as $k) {
+                if (isset($a[$k])) {
+                    $a[$k] = $rel($a[$k]);
+                }
+            }
+            if (isset($a['cover'])) {
+                $a['cover'] = basename($a['cover']);
+            }
+
+            return $a;
+        }, $plan['actions']);
+
+        return [
+            'exported_at' => now()->toIso8601String(),
+            'base' => $base,
+            'totals' => ['tracks' => $plan['tracks'], 'albums' => count($albums), 'actions' => count($actions)],
+            'albums' => array_values($albums),
+            'planned_actions' => $actions,
+        ];
+    }
+
+    /**
      * Aktionen zum Schreiben: je Titel einmal Tags schreiben (Zwilling statt Datei) und an den Ort, den die fertigen
      * Tags ergeben; je Album Cover & Extras mit, wenn alle Titel in denselben Ordner wandern.
      *

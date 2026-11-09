@@ -45,6 +45,14 @@ class PendingPage extends Component
         $this->done = $n.' vorgemerkte Änderung(en) verworfen – die Dateien waren davon nicht betroffen.';
     }
 
+    /** Alles Vorgemerkte als JSON herunterladen (zum Prüfen, bevor geschrieben wird). */
+    public function export(PendingChanges $pending)
+    {
+        $json = json_encode($pending->export(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return response()->streamDownload(fn () => print ($json), 'musicwiz-aenderungen-'.now()->format('Y-m-d-His').'.json', ['Content-Type' => 'application/json']);
+    }
+
     public function loadMore(): void
     {
         $this->limit += 50;

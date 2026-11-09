@@ -4,10 +4,12 @@ namespace Tests\Feature;
 
 use App\Jobs\PrefetchArtistLookup;
 use App\Livewire\Artists;
+use App\Livewire\NewArtistModal;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\PendingChange;
 use App\Models\Track;
+use App\Support\ArtistNames;
 use App\Support\Lookup;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -102,10 +104,15 @@ class ArtistQuickMatchTest extends TestCase
             ->assertDontSee('Madonna');
         $this->assertSame(2, $page->viewData('quickCounts')['sure']);
         $this->assertSame(1, $page->viewData('quickCounts')['unsure']);
-        $page->set('quickKind', 'unsure')->assertSee('2 gleichnamige Künstler');
+        $page->set('quickKind', 'unsure')->assertSee('2 gleichnamige Künstler')
+            ->assertSee('einzeln erfassen …')->assertSeeLivewire(NewArtistModal::class); // Dialog statt Tabwechsel
+        Livewire::test(NewArtistModal::class)->dispatch('open-new-artist', name: 'Madonna')->assertSet('open', true)->assertSet('wizName', 'Madonna');
 
         $page->set('quickKind', 'sure')->assertSee('https://cdn.test/yanou-m.jpg')->assertDontSee('https://cdn.test/fan-m.jpg');
+        $this->assertFalse($page->get('quickTake')[md5('Yanou')], 'nichts vorab angehakt');
         $page->call('quickPickImage', md5('Yanou'), 'https://cdn.test/yanou-xl.jpg')
+            ->assertSet('quickTake.'.md5('Yanou'), true) // Bild wählen hakt an
+            ->set('quickTake.'.md5('Ac/Dc'), true)        // ohne Bild von Hand
             ->call('quickSave')->assertSee('2 Künstler übernommen')->assertSee('1 Bild(er) werden im Hintergrund geladen');
 
         $yanou = Artist::where('name', 'Yanou')->sole();
@@ -121,5 +128,27 @@ class ArtistQuickMatchTest extends TestCase
 
         // danach nicht mehr offen
         $this->assertSame(0, Livewire::test(Artists::class, ['tab' => 'quick'])->viewData('quickCounts')['sure'] ?? 0);
+    }
+
+    public function test_combined_name_can_be_split_right_in_the_list(): void
+    {
+        // umgedreht ist nur, wo eine Seite ein einzelnes Wort ist – sonst zwei Personen
+        foreach (['Berry, Chuck', 'Beatles, The', 'Lee Hooker, John', 'Brown, James Arthur'] as $inverted) {
+            $this->assertTrue(ArtistNames::isInverted($inverted), $inverted);
+        }
+        $this->assertFalse(ArtistNames::isInverted('Gerhard Polt, Gisela Schneeberger'));
+        $this->assertTrue(ArtistNames::looksCombined('Gerhard Polt, Gisela Schneeberger'));
+
+        $this->mp3('P/Polt/Kein Album/Der Musterbürger.mp3', ['artist' => 'Gerhard Polt, Gisela Schneeberger', 'albumartist' => '', 'album' => '', 'title' => 'Der Musterbürger']);
+        app(Scanner::class)->scan('library');
+
+        Livewire::test(Artists::class, ['tab' => 'quick'])->set('quickKind', 'pending')
+            ->assertSee('Trennen: Gerhard Polt · Gisela Schneeberger')
+            ->call('quickSplit', 'Gerhard Polt, Gisela Schneeberger')
+            ->assertSee('getrennt')
+            ->assertSee('Gerhard Polt')->assertDontSee('Trennen: Gerhard Polt');
+
+        $this->assertSame(['Gerhard Polt', 'Gisela Schneeberger'], Track::sole()->artists, 'ARTISTS im Zwilling vorgemerkt');
+        $this->assertSame(1, PendingChange::count());
     }
 }

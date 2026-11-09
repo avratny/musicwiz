@@ -29,6 +29,7 @@ use App\Support\Settings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Title;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -91,12 +92,22 @@ class Artists extends Component
             .($images ? ' '.$images.' Bild(er) werden im Hintergrund geladen.' : '').PendingChanges::note($result['staged']));
     }
 
-    /** Schnell erfassen: Namen im Assistenten öffnen (Bild, Genre, Schreibweisen von Hand). */
-    public function quickOpen(string $name): void
+    /** Schnell erfassen: Kombi in die vorgeschlagenen Teile trennen („Gerhard Polt, Gisela Schneeberger“). */
+    public function quickSplit(string $name, ArtistQuickMatch $quick): void
     {
-        $this->tab = 'unknown';
-        $this->wizSkipped = array_values(array_diff($this->wizSkipped, [$name]));
-        $this->wizOpen($name);
+        $parts = ArtistNames::suggestSplit($name);
+        if (count($parts) < 2 || Artist::where('name', $name)->exists()) {
+            return;
+        }
+        $staged = $quick->split($name, $parts);
+        session()->flash('status', '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt – die einzelnen Namen werden nachgeschlagen und erscheinen hier.'.PendingChanges::note($staged));
+    }
+
+    /** Im Dialog erfasst: Liste neu aufbauen (der Name ist nicht mehr offen). */
+    #[On('artist-directory-changed')]
+    public function directoryChangedInModal(): void
+    {
+        app(ArtistDirectory::class)->flush();
     }
 
     public function updatedQuickKind(): void
@@ -914,9 +925,9 @@ class Artists extends Component
             $data['quickTotal'] = count($rows);
             $data['quickRows'] = array_slice($rows, 0, $this->quickLimit);
             $data['quickImages'] = in_array($this->quickKind, ['sure', 'name'], true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];
-            // Vorbelegung nur für Angezeigtes: eindeutige angehakt, MusicBrainz-Schreibweise (nur Groß/klein, Satzzeichen, Akzente) an
+            // nichts vorab angehakt (ein Bild wählen hakt an); MusicBrainz-Schreibweise (nur Groß/klein, Satzzeichen, Akzente) an
             foreach ($data['quickRows'] as $r) {
-                $this->quickTake[$r['key']] ??= $r['kind'] === 'sure';
+                $this->quickTake[$r['key']] ??= false;
                 if ($r['hit'] && $r['hit']['name'] !== $r['name']) {
                     $this->quickMb[$r['key']] ??= true;
                 }

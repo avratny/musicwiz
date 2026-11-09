@@ -6,6 +6,7 @@ use App\Jobs\PrefetchArtistLookup;
 use App\Jobs\StoreArtistImage;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
+use App\Models\ArtistSplit;
 
 /**
  * „Schnell erfassen“: noch nicht erfasste Namen mit ihrem MusicBrainz-Treffer aus dem Vorladen – eindeutige Fälle lassen
@@ -58,7 +59,10 @@ class ArtistQuickMatch
             } elseif ($kind !== 'pending' && ArtistNames::looksCombined($name)) {
                 [$kind, $reason] = ['unsure', 'sieht nach mehreren Künstlern aus – im Assistenten trennen oder bestätigen'];
             }
-            $rows[] = ['name' => $name, 'key' => md5($name), 'count' => (int) $o['n'], 'kind' => $kind, 'reason' => $reason, 'hit' => $hit];
+            // Kombi („Gerhard Polt, Gisela Schneeberger“): Trennen gleich in der Liste anbieten
+            $split = in_array($kind, ['unsure', 'pending'], true) && ArtistNames::looksCombined($name) ? ArtistNames::suggestSplit($name) : [];
+            $rows[] = ['name' => $name, 'key' => md5($name), 'count' => (int) $o['n'], 'kind' => $kind, 'reason' => $reason, 'hit' => $hit,
+                'split' => count($split) >= 2 ? $split : []];
         }
 
         return $rows;
@@ -108,6 +112,28 @@ class ArtistQuickMatch
         }
 
         return ['unsure', $hits ? 'kein passender Name bei MusicBrainz' : 'bei MusicBrainz nicht gefunden', null];
+    }
+
+    /**
+     * Kombi trennen (gemerkte Zusammenarbeit, wie im Aufräumen): Tags der Titel werden vorgemerkt, die einzelnen Namen
+     * gleich vorgeladen – sie stehen danach selbst in der Liste.
+     *
+     * @param  list<string>  $parts
+     * @return int vorgemerkte Titel
+     */
+    public function split(string $name, array $parts): int
+    {
+        ArtistSplit::remember($name, $parts);
+        $this->directory->flush();
+        $staged = app(PendingChanges::class)->stageForNames([$name], 'Trennen');
+        $profiles = app(ArtistGroupAnalyzer::class)->profiles();
+        foreach ($parts as $part) {
+            if ($this->directory->check($part)['status'] === 'new' && ! PrefetchArtistLookup::isFresh($part) && config('queue.default') !== 'sync') {
+                PrefetchArtistLookup::dispatch($part, array_slice(array_values($profiles[$part]['titles'] ?? $profiles[$name]['titles'] ?? []), 0, 3));
+            }
+        }
+
+        return $staged;
     }
 
     /**

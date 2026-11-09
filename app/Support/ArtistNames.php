@@ -133,13 +133,18 @@ class ArtistNames
             || preg_match('/\s(pres\.?|prés\.?|pts\.?|presents?|introducing|intro\.|meets|with|aka|a\.k\.a\.|\+|\/)\s/iu', $name);
     }
 
-    /** "Nachname, Vorname" bzw. "Name, The": genau ein Komma, ohne weitere Kombi-Zeichen. */
+    /**
+     * "Nachname, Vorname" bzw. "Name, The": genau ein Komma, ohne weitere Kombi-Zeichen, und eine Seite ist ein einzelnes
+     * Wort ("Berry, Chuck", "Lee Hooker, John") – mehrere Wörter auf beiden Seiten sind zwei Personen
+     * ("Gerhard Polt, Gisela Schneeberger").
+     */
     public static function isInverted(string $name): bool
     {
         $parts = explode(', ', $name);
 
         return count($parts) === 2 && ! str_contains($parts[1], ',') && ! preg_match('/\s(&|und|and|x)\s/iu', $name)
-            && ! preg_match(self::SEPARATOR, ' '.$name) && mb_strlen(trim($parts[1])) > 0 && substr_count(trim($parts[1]), ' ') <= 1;
+            && ! preg_match(self::SEPARATOR, ' '.$name) && mb_strlen(trim($parts[1])) > 0 && substr_count(trim($parts[1]), ' ') <= 1
+            && (! str_contains(trim($parts[0]), ' ') || ! str_contains(trim($parts[1]), ' '));
     }
 
     /** Artikel, die in der Sortierschreibweise hinten stehen („Crystals, The“, „Toten Hosen, Die“) */

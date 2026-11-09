@@ -23,7 +23,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <p class="mb-3 max-w-4xl text-sm text-zinc-400">
             @switch($quickKind)
-                @case('sure') Genau ein MusicBrainz-Künstler hat eure Lieder und heißt so – vorab angehakt. Angelegt wird mit MusicBrainz-ID, Standard-Genre (Bestand, sonst MusicBrainz) und den Schreibweisen von MusicBrainz. Bild per Klick wählen (Fanart.tv zur MusicBrainz-ID, dann Deezer mit gleichem Namen) – ohne Auswahl kein Bild. @break
+                @case('sure') Genau ein MusicBrainz-Künstler hat eure Lieder und heißt so. Bild anklicken hakt die Zeile an – ohne Bild von Hand anhaken. Angelegt wird mit MusicBrainz-ID, Standard-Genre (Bestand, sonst MusicBrainz) und den Schreibweisen von MusicBrainz. Bilder: Fanart.tv zur MusicBrainz-ID, dann Deezer mit gleichem Namen. @break
                 @case('name') Gleicher Name bei MusicBrainz, aber eure Lieder wurden dort nicht gefunden – bitte nur anhaken, wenn du dir sicher bist. @break
                 @case('unsure') Braucht eine Entscheidung (mehrere Treffer, ähnliche Namen, Kombi) – einzeln im Assistenten. @break
                 @default Noch ohne MusicBrainz-Ergebnis – das Vorladen läuft nach jedem Scan von selbst (etwa eine Abfrage pro Sekunde).
@@ -84,8 +84,12 @@
                                     </div>
                                 </td>
                             @endif
-                            <td class="py-2 text-right">
-                                <button wire:click="quickOpen(@js($r['name']))" class="text-xs text-zinc-500 hover:text-white">im Assistenten →</button>
+                            <td class="space-x-3 py-2 text-right whitespace-nowrap">
+                                @if ($r['split'] ?? [])
+                                    <button wire:click="quickSplit(@js($r['name']))" class="btn-ghost btn-sm" title="Zusammenarbeit – künftig überall in die einzelnen Künstler trennen (ARTISTS), Tags werden vorgemerkt">Trennen: {{ implode(' · ', $r['split']) }}</button>
+                                @endif
+                                <button wire:click="$dispatch('open-new-artist', { name: @js($r['name']) })" class="text-xs text-zinc-500 hover:text-white"
+                                        title="Einzeln erfassen – Treffer, Bild, Genre und Schreibweisen von Hand (Dialog, die Liste bleibt)">einzeln erfassen …</button>
                             </td>
                         </tr>
                     @endforeach

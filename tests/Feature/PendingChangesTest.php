@@ -355,4 +355,24 @@ class PendingChangesTest extends TestCase
         $this->assertStringContainsString('/D/DJ BoBo/Pray (1999)/', $new->path, 'Ordner folgt dem Namen');
         $this->assertSame('DJ BoBo', $this->fileTags($new->path)['artist']);
     }
+
+    public function test_export_lists_changes_moves_and_planned_actions(): void
+    {
+        $old = $this->mp3('A/ABBA/Gold/1-01  Waterloo.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '1', 'title' => 'Waterloo']);
+        app(Scanner::class)->scan('library');
+        app(PendingChanges::class)->stage([['type' => 'apply', 'path' => $old, 'tags' => ['genres' => ['Pop']]]], 'Genre');
+
+        $data = app(PendingChanges::class)->export();
+        $this->assertSame(['tracks' => 1, 'albums' => 1, 'actions' => 2], $data['totals']);
+        $track = $data['albums'][0]['tracks'][0];
+        $this->assertSame('library/artists/A/ABBA/Gold/1-01  Waterloo.mp3', $track['path'], 'relativ zum Musikordner');
+        $this->assertSame(['from' => [], 'to' => ['Pop']], $track['changes']['genres']);
+        $this->assertSame('library/artists/A/ABBA/Gold (1992)/01 - Waterloo.mp3', $track['move']['to'], 'Ziel aus den fertigen Tags');
+        $this->assertSame(['Genre'], $track['labels']);
+        $this->assertSame(['apply', 'album_files'], array_column($data['planned_actions'], 'type'), 'Titel zuerst, dann Cover & Extras des Albums');
+        $this->assertSame($track['move']['to'], $data['planned_actions'][0]['target']);
+
+        Livewire::test(PendingPage::class)->assertSee('Als JSON exportieren')
+            ->call('export')->assertFileDownloaded();
+    }
 }
