@@ -48,6 +48,10 @@ class AlbumPlanner
                     $new[$k] = trim((string) $fields[$k]);
                 }
             }
+            // nur die Jahreszahl speichern („2003-05-12“ → „2003“), auch wenn ein Datum eingegeben bzw. nachgeschlagen wurde
+            if (PathBuilder::year($new['year'] ?? '') !== '') {
+                $new['year'] = PathBuilder::year($new['year']);
+            }
             if (array_key_exists('genres', $fields)) {
                 $new['genres'] = $this->genres->expand((array) $fields['genres']);
             }
@@ -79,6 +83,8 @@ class AlbumPlanner
             unset($n);
         }
         $multiDisc = PathBuilder::isMultiDisc($newTagSets);
+        // Ordner-Jahr fürs ganze Album, auch wenn die Titel verschiedene Jahre tragen (Tags bleiben)
+        $albumYear = PathBuilder::albumYear(array_column($newTagSets, 'year'));
 
         if ($category && ! $category['compilation'] && app(Compilations::class)->isVariousArtists($fields['albumartist'] ?? '')) {
             $warnings[] = 'Album-Interpret ist „'.trim($fields['albumartist']).'“ (= '.$compilationArtist.'), die Kategorie ist aber keine Compilation.';
@@ -121,7 +127,7 @@ class AlbumPlanner
                 if (trim($new['artist']) === '') {
                     $problems[] = 'Interpret fehlt – wird nicht eingeordnet';
                 } else {
-                    $target = $this->paths->target($category, $new, $multiDisc, $t->path);
+                    $target = $this->paths->target($category, ['year' => $albumYear] + $new, $multiDisc, $t->path);
                     if ($target !== $t->path) {
                         if (file_exists($target) && ! FileOps::sameFile($t->path, $target)) {
                             $problems[] = 'Zieldatei existiert bereits – '.Quality::compare($t->path, $target)['reason'];

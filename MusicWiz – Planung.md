@@ -199,7 +199,8 @@ Der Bereich Aufräumen prüft den ganzen Bestand und zeigt je Prüfung, wie viel
 | Uneinheitliche Interpreten-Schreibweisen | richtige Schreibweise wählen, als Alias speichern |
 | Kombi-Interpreten ohne `ARTISTS` | `ARTISTS` erzeugen, Ordner nach erstem Künstler |
 | Kombi mit &, und, and, Komma (nicht im Verzeichnis) | nie ungefragt trennen; Vorschlag „Trennen“, wenn alle Teile im Verzeichnis bzw. einzeln eindeutig bei MusicBrainz sind, „Ein Künstler“, wenn MusicBrainz den Namen mit euren Liedern kennt (aus dem Vorladen) – einzeln oder alle auf einmal übernehmen |
-| Album mit uneinheitlichem Album-Interpret, Album-Namen oder Jahr | Werte fürs ganze Album vereinheitlichen; Jahr: das der Mehrheit, sonst das neueste (Sampler erscheinen nach ihrem jüngsten Titel) |
+| Album mit uneinheitlichem Album-Interpret oder Album-Namen | Werte fürs ganze Album vereinheitlichen (verschiedene Jahre sind kein Fund: der Ordner bekommt das Album-Jahr – das der Mehrheit, sonst das neueste; die Tags bleiben) |
+| Jahr als Datum („2003-05-12“) | nur die Jahreszahl schreiben (der Album-Editor speichert ohnehin nur das Jahr) |
 | Album würde beim Ablegen auf mehrere Ordner verteilt bzw. mehrere Dateien hätten dasselbe Ziel | nicht verschieben (nur Tags), Hinweis unter „Nicht am Regelort“ |
 | Sampler ohne „Various Artists“ oder Compilation-Flag | Tags setzen |
 | Sampler im Künstler-Ordner (Flag oder „Various Artists“-Schreibweise) | ohne „Various Artists“-Schreibweise (echter Name, leer, „Kein Album“): Compilation-Flag entfernen; „Various Artists“-Schreibweise: nur melden, im Editor entscheiden |

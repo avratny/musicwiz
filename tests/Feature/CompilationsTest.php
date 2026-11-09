@@ -7,6 +7,7 @@ use App\Livewire\Cleanup;
 use App\Models\Album;
 use App\Support\CleanupChecks;
 use App\Support\Compilations;
+use App\Support\PathBuilder;
 use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -173,9 +174,10 @@ class CompilationsTest extends TestCase
 
     public function test_album_year_majority_else_newest(): void
     {
-        $y = fn (array $years) => CleanupChecks::albumYear(collect($years));
+        $y = fn (array $counts) => PathBuilder::albumYear(array_merge(...array_map(fn ($year, $n) => array_fill(0, $n, (string) $year), array_keys($counts), $counts)));
         $this->assertSame('1999', $y(['1999' => 20, '1998' => 1, '2000' => 3, '' => 14]), 'Mehrheit der Titel mit Jahr');
         $this->assertSame('1996', $y(['1957' => 2, '1961' => 1, '1978' => 2, '1996' => 1]), 'keine Mehrheit: das neueste');
         $this->assertSame('', $y(['' => 5]));
+        $this->assertSame('2003', $y(['2003-05-12' => 2, '1998' => 1]), 'Datum → Jahr');
     }
 }

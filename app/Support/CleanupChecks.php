@@ -58,9 +58,10 @@ class CleanupChecks
             'inverted' => ['Umgedrehte Namen', 'Sortierschreibweise wie „Crystals, The“ → „The Crystals“ (je nach Einstellung auch „Berry, Chuck“ → „Chuck Berry“) – Anzeigetext und ARTISTS.', 'Richtig herum schreiben'],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
-            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret, Album-Namen oder Jahr', 'Tracks eines Ordners haben verschiedene Werte. Jahr: das der Mehrheit, sonst das neueste (ein Sampler erscheint nach seinem jüngsten Titel) – sonst würde das Album beim Ablegen auf mehrere Ordner verteilt.', 'Häufigsten Wert fürs ganze Album setzen'],
+            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
             'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten und mit nur einem Interpreten (bzw. „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
+            'year_date' => ['Jahr als Datum', 'Im Jahr-Tag steht ein Datum („2003-05-12“) oder mehr als die Jahreszahl – nur das Jahr behalten.', 'Nur das Jahr schreiben'],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
             'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret. Album nur, wo eins sein sollte (andere Titel im Ordner haben eins oder Tracknummer vorhanden) – nicht in „Kein Album“.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
@@ -81,7 +82,7 @@ class CleanupChecks
     /** Schritte: Reihenfolge, in der aufgeräumt werden sollte. */
     public const STEPS = [
         1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'integrity', 'duplicates', 'extension']],
-        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'inverted', 'spelling', 'combined', 'album_mixed', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
+        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'inverted', 'spelling', 'combined', 'album_mixed', 'year_date', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
         3 => ['Genres', 'Genre-Liste anwenden', ['genre_unlisted', 'genre_mixed', 'genre_missing', 'electronic_sub']],
         4 => ['Ablage', 'Erst jetzt an den Regelort verschieben', ['misplaced']],
         5 => ['Abschluss', 'Reste, Vollständigkeit, Cover, Künstlerbilder, ReplayGain, Songtexte', ['leftovers', 'incomplete', 'cover', 'cover_embed', 'artist_image', 'replaygain', 'lyrics']],
@@ -452,7 +453,7 @@ class CleanupChecks
      * werden nur diese Alben neu geprüft, die Funde aller anderen übernommen. Die übrigen Prüfungen vergleichen über die
      * ganze Lib (Duplikate, Namen, Genres, Reste, Bilder, Audiodaten) und rechnen immer ganz.
      */
-    public const ALBUM_LOCAL = ['encoding', 'misplaced', 'inverted', 'spelling', 'combined', 'ambiguous', 'album_mixed', 'sampler_flags', 'compilation_in_artists',
+    public const ALBUM_LOCAL = ['encoding', 'misplaced', 'inverted', 'spelling', 'combined', 'ambiguous', 'album_mixed', 'year_date', 'sampler_flags', 'compilation_in_artists',
         'comment', 'missing_tags', 'cover', 'cover_embed', 'incomplete', 'replaygain', 'lyrics', 'genre_mixed', 'electronic_sub'];
 
     /** Höchstens so viele geänderte Alben schrittweise – darüber lohnt das ganze Neurechnen eher */
@@ -614,6 +615,8 @@ class CleanupChecks
                 continue;
             }
             $multi = PathBuilder::isMultiDisc($tracks->map->tags()->all());
+            // Ordner-Jahr fürs ganze Album (Sampler: Titel mit dem Jahr der Original-Single bleiben beisammen)
+            $albumYear = PathBuilder::albumYear($tracks->pluck('year'));
             $moves = [];
             $retagged = [];
             foreach ($tracks as $t) {
@@ -628,7 +631,7 @@ class CleanupChecks
                 $fix = $category['compilation'] ? [] : $this->unifyArtistSpelling($tags);
                 // "Kein Album": Track- und CD-Nummern leeren (auch im Dateinamen)
                 $fix += app(AlbumPlanner::class)->diff($tags, AlbumPlanner::clearNumbersWithoutAlbum($tags));
-                $target = $this->paths->target($category, array_merge($tags, $fix), $multi, $t->path);
+                $target = $this->paths->target($category, array_merge($tags, $fix, ['year' => $albumYear]), $multi, $t->path);
                 if ($fix) {
                     $retagged[PathBuilder::folderArtist($tags)] = PathBuilder::folderArtist(array_merge($tags, $fix));
                     $moves[] = ['type' => 'apply', 'path' => $t->path, 'tags' => $fix, 'target' => $target !== $t->path ? $target : null];
@@ -658,7 +661,7 @@ class CleanupChecks
                     $years = $tracks->pluck('year')->map(fn ($y) => trim((string) $y) ?: '∅')->unique()->sort()->values();
                     $moves = $this->withoutTargets($moves, fn () => true);
                     $held[] = 'würde auf '.$albumDirs->count().' Ordner verteilt'.($years->count() > 1 ? ' (Jahr je Titel: '.$years->take(6)->implode(', ').($years->count() > 6 ? ' …' : '').')' : '')
-                        .' – erst Jahr/Album angleichen (Album-Editor oder „Album uneinheitlich“)';
+                        .' – erst Album angleichen (Album-Editor oder „Album uneinheitlich“)';
                 }
             }
             // zurückgehaltene Ablage: nur fürs Schreiben vorgemerkter Titel von Bedeutung (Titel gilt als erledigt), im Aufräumen kein Schritt
@@ -861,23 +864,6 @@ class CleanupChecks
         return $out;
     }
 
-    /**
-     * Jahr fürs ganze Album: das der Mehrheit der Titel mit Jahr, sonst das neueste – ein Sampler erscheint frühestens mit
-     * seinem jüngsten Titel (bei „Let's Dance“ mit Titeln von 1957 bis 1996 also 1996).
-     *
-     * @param  Collection<string, int>  $years  Jahr => Anzahl (inkl. leer)
-     */
-    public static function albumYear(Collection $years): string
-    {
-        $known = $years->filter(fn ($n, $y) => (string) $y !== '');
-        if ($known->isEmpty()) {
-            return '';
-        }
-        $top = (string) $known->sortDesc()->keys()->first();
-
-        return $known->sum() < $known[$top] * 2 ? $top : (string) $known->keys()->map(fn ($y) => (string) $y)->sort()->last();
-    }
-
     private function checkAlbumMixed(): array
     {
         $out = [];
@@ -885,10 +871,7 @@ class CleanupChecks
             $album = $this->albums()[$albumId] ?? null;
             $titles = $tracks->pluck('album')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
             $aas = $tracks->pluck('albumartist')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
-            $years = $tracks->pluck('year')->map(fn ($v) => trim((string) $v))->countBy()->sortDesc();
-            $year = self::albumYear($years);
-            $yearMixed = $years->count() > 1 && $year !== '';
-            if ($titles->count() <= 1 && $aas->count() <= 1 && ! $yearMixed) {
+            if ($titles->count() <= 1 && $aas->count() <= 1) {
                 continue;
             }
             // "Kein Album"-Ordner mit Einzeltiteln sind gewollt uneinheitlich
@@ -897,11 +880,8 @@ class CleanupChecks
             }
             $title = (string) $titles->keys()->first();
             $aa = (string) $aas->keys()->first();
-            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas, $year, $yearMixed) {
+            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas) {
                 $tags = [];
-                if ($yearMixed && trim((string) $t->year) !== $year) {
-                    $tags['year'] = $year;
-                }
                 if ($titles->count() > 1 && (string) $t->album !== $title) {
                     $tags['album'] = $title;
                 }
@@ -914,7 +894,7 @@ class CleanupChecks
             });
             $detail = [];
             $changes = [];
-            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa], 'Jahr' => [$yearMixed ? $years : collect(), $year]] as $field => [$values, $target]) {
+            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa]] as $field => [$values, $target]) {
                 if ($values->count() <= 1) {
                     continue;
                 }
@@ -1073,6 +1053,33 @@ class CleanupChecks
                 $out[] = $m;
             } elseif (($m['type'] ?? '') === 'apply') {
                 $out[] = ['type' => 'apply', 'path' => $m['path'], 'hold' => true]; // markiert: Ablage zurückgehalten
+            }
+        }
+
+        return $out;
+    }
+
+    /** Jahr-Tag mit Datum („2003-05-12“, „2003-05“, „2003 (Remaster)“) → nur die Jahreszahl; ohne Jahreszahl nicht anfassen. */
+    private function checkYearDate(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $examples = [];
+            $actions = $this->applyActions($tracks, function (Track $t) use (&$examples) {
+                $raw = trim((string) $t->year);
+                $year = PathBuilder::year($raw);
+                if ($year === '' || $raw === $year) {
+                    return [];
+                }
+                $examples[$raw] = $year;
+
+                return ['year' => $year];
+            });
+            if ($actions) {
+                $album = $this->albums()[$albumId] ?? null;
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album),
+                    'detail' => count($actions).' Titel: '.implode(', ', array_slice(array_map(fn ($a, $b) => '„'.$a.'“ → '.$b, array_keys($examples), $examples), 0, 3)).(count($examples) > 3 ? ' …' : ''),
+                    'link' => $this->link($album), 'actions' => $actions];
             }
         }
 

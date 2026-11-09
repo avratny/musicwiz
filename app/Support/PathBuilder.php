@@ -24,6 +24,33 @@ class PathBuilder
      * @param  bool  $multiDisc  Album hat mehrere CDs
      * @param  string  $sourcePath  bisheriger Pfad (für Endung und Ersatztitel)
      */
+    /**
+     * Jahr für den Album-Ordner: das der Mehrheit der Titel mit Jahr, sonst das neueste – ein Sampler erscheint frühestens
+     * mit seinem jüngsten Titel. So landet ein Album immer in einem Ordner, auch wenn die Titel verschiedene Jahre tragen
+     * (Sampler mit dem Jahr der Original-Single); die Tags bleiben dabei unverändert.
+     *
+     * @param  iterable<string|null>  $years  Jahr je Titel
+     */
+    public static function albumYear(iterable $years): string
+    {
+        $counts = [];
+        foreach ($years as $y) {
+            $y = self::year((string) $y);
+            if ($y !== '') {
+                $counts[$y] = ($counts[$y] ?? 0) + 1;
+            }
+        }
+        if (! $counts) {
+            return '';
+        }
+        arsort($counts);
+        $top = (string) array_key_first($counts);
+        $keys = array_map('strval', array_keys($counts));
+        sort($keys);
+
+        return array_sum($counts) < $counts[$top] * 2 ? $top : (string) end($keys);
+    }
+
     public function target(array $category, array $tags, bool $multiDisc, string $sourcePath): string
     {
         $relative = $this->render($category['pattern'], $this->values($tags, $multiDisc, $sourcePath));

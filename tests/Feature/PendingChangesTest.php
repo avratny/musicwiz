@@ -12,6 +12,7 @@ use App\Models\HistoryEntry;
 use App\Models\Operation;
 use App\Models\PendingChange;
 use App\Models\Track;
+use App\Support\AlbumPlanner;
 use App\Support\CleanupChecks;
 use App\Support\OperationRunner;
 use App\Support\PendingChanges;
@@ -388,37 +389,23 @@ class PendingChangesTest extends TestCase
         return $path;
     }
 
-    public function test_sampler_with_year_per_track_is_not_torn_apart(): void
+    public function test_sampler_with_year_per_track_goes_to_one_folder(): void
     {
-        // Jahr der Original-Single je Titel: der Regelort ergäbe drei Ordner – nichts verschieben
+        // Jahr der Original-Single je Titel: Ordner bekommt das Album-Jahr (keine Mehrheit → das neueste), Tags bleiben
         $a = $this->sampler('Dream Dance 12/1-1 ATB - Don\'t Stop.mp3', ['artist' => 'ATB', 'album' => 'Dream Dance 12', 'year' => '1999', 'disc' => '1', 'track' => '1', 'title' => 'Don\'t Stop']);
-        $b = $this->sampler('Dream Dance 12/1-2 Peaches - All Over.mp3', ['artist' => 'Peaches', 'album' => 'Dream Dance 12', 'year' => '', 'disc' => '1', 'track' => '2', 'title' => 'All Over']);
+        $this->sampler('Dream Dance 12/1-2 Peaches - All Over.mp3', ['artist' => 'Peaches', 'album' => 'Dream Dance 12', 'year' => '', 'disc' => '1', 'track' => '2', 'title' => 'All Over']);
         $c = $this->sampler('Dream Dance 12/1-3 Moby - Run On.mp3', ['artist' => 'Moby', 'album' => 'Dream Dance 12', 'year' => '1992', 'disc' => '1', 'track' => '3', 'title' => 'Run On']);
         app(Scanner::class)->scan('library');
+        $this->assertSame([], app(CleanupChecks::class)->findings('album_mixed'), 'verschiedene Jahre sind kein Fund');
 
-        $f = app(CleanupChecks::class)->findings('misplaced');
-        $this->assertCount(1, $f);
-        $this->assertStringContainsString('würde auf 3 Ordner verteilt', $f[0]['detail']);
-        $this->assertSame([], array_filter($f[0]['actions'], fn ($a) => ! empty($a['target'])), 'kein Verschieben');
-
-        // vorgemerkter Titel des Albums: beim Schreiben nur die Tags, das Album bleibt beisammen
         app(PendingChanges::class)->stage([['type' => 'apply', 'path' => $a, 'tags' => ['genres' => ['Trance']]]], 'Genre');
-        $actions = app(PendingChanges::class)->actions()['actions'];
-        $this->assertSame([['type' => 'apply', 'path' => $a, 'tags' => ['genres' => ['Trance']], 'pending_id' => PendingChange::sole()->id, 'revision' => 1]], $actions);
-        OperationRunner::dispatch('pending', 'Schreiben', $actions, ['on_conflict' => 'skip']);
-        foreach ([$a, $b, $c] as $p) {
-            $this->assertFileExists($p);
-        }
-        $this->assertSame(['Trance'], $this->fileTags($a)['genres']);
-
-        // „Album uneinheitlich“ gleicht das Jahr an (keine Mehrheit → das neueste: 1999) – danach wandert das Album geschlossen
-        $mixed = collect(app()->make(CleanupChecks::class)->findings('album_mixed'))->sole();
-        $this->assertContains(['field' => 'Jahr', 'from' => '1992', 'count' => 1, 'to' => '1999'], $mixed['changes']);
-        app(PendingChanges::class)->stage($mixed['actions'], 'Album uneinheitlich');
         $op = OperationRunner::dispatch('pending', 'Schreiben', app(PendingChanges::class)->actions()['actions'], ['on_conflict' => 'skip']);
         $this->assertSame('done', $op->fresh()->status, (string) $op->fresh()->error);
-        $dirs = Track::pluck('dir')->unique()->values()->all();
-        $this->assertSame([$this->base.'/library/sampler/D/Dream Dance 12 (1999)'], $dirs, 'ein Ordner für das ganze Album');
+
+        $dir = $this->base.'/library/sampler/D/Dream Dance 12 (1999)';
+        $this->assertSame([$dir], Track::pluck('dir')->unique()->values()->all(), 'ein Ordner für das ganze Album');
+        $this->assertSame('1992', $this->fileTags($dir.'/03 - Moby - Run On.mp3')['year'], 'Jahr im Tag bleibt');
+        $this->assertFileDoesNotExist($c);
     }
 
     public function test_two_files_with_the_same_target_stay_where_they_are(): void
@@ -435,5 +422,22 @@ class PendingChangesTest extends TestCase
         foreach ([$a, $b, $c] as $p) {
             $this->assertFileExists($p);
         }
+    }
+
+    public function test_year_with_date_keeps_only_the_year(): void
+    {
+        $a = $this->mp3('A/ABBA/Gold (1992)/01 - Waterloo.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992-09-21', 'track' => '1', 'title' => 'Waterloo']);
+        $this->mp3('A/ABBA/Gold (1992)/02 - SOS.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '2', 'title' => 'SOS']);
+        app(Scanner::class)->scan('library');
+        $this->assertSame('1992-09-21', Track::where('path', $a)->value('year'), 'Datum wird so eingelesen');
+
+        $f = collect(app(CleanupChecks::class)->findings('year_date'))->sole();
+        $this->assertSame('1 Titel: „1992-09-21“ → 1992', $f['detail']);
+        $this->assertSame([['type' => 'apply', 'path' => $a, 'tags' => ['year' => '1992']]], $f['actions']);
+        $this->assertTrue(PendingChanges::stageable($f['actions']));
+
+        // Album-Editor: eingegebenes bzw. nachgeschlagenes Datum → nur das Jahr
+        $plan = app(AlbumPlanner::class)->plan(Album::where('dir', dirname($a))->sole(), ['year' => '1992-09-21'], [], false);
+        $this->assertSame(['1992'], array_values(array_unique(array_column(array_column($plan['rows'], 'changed'), 'year'))), 'nur der Titel mit Datum ändert sich, auf 1992');
     }
 }
