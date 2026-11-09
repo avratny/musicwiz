@@ -306,6 +306,25 @@ class Lookup
     }
 
     /** Künstler-Datensatz bei MusicBrainz mit Aliasen, Genres und Tags (eine Abfrage, einen Tag gecacht). */
+    /**
+     * Mitglieder bzw. Beteiligte eines Künstlers bei MusicBrainz („Stone & Van Linden“ → CJ Stone, Marc van Linden) –
+     * Vorschläge beim Trennen einer Zusammenarbeit.
+     *
+     * @return list<string>
+     */
+    public function musicbrainzMembers(string $mbid): array
+    {
+        $data = $this->mb('artist/'.$mbid, ['inc' => 'artist-rels']);
+        $out = [];
+        foreach ($data['relations'] ?? [] as $r) {
+            if (in_array($r['type'] ?? '', ['member of band', 'collaboration'], true) && ($r['direction'] ?? '') === 'backward' && ! empty($r['artist']['name'])) {
+                $out[] = ArtistNames::plainPunctuation($r['artist']['name']);
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
     private function musicbrainzArtist(string $mbid): array
     {
         return $this->mb('artist/'.$mbid, ['inc' => 'aliases+genres+tags']);

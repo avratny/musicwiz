@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\PrefetchArtistLookup;
+use App\Livewire\Artists;
 use App\Livewire\Cleanup;
 use App\Livewire\NewArtistModal;
 use App\Models\Album;
@@ -125,5 +126,56 @@ class CombinedArtistTest extends TestCase
         $this->assertTrue($sg->aliases()->where('alias', 'Simon and Garfunkel')->exists(), 'Bestandsname bleibt Schreibweise');
         $this->assertFalse(Artist::where('name', 'Foo & Bar')->exists());
         $this->assertGreaterThan(0, PendingChange::count());
+    }
+
+    public function test_directory_entry_can_be_split_into_single_artists(): void
+    {
+        $artist = Artist::create(['name' => 'Beam & Yanou', 'mbid' => 'mb-by']);
+        $artist->aliases()->create(['alias' => 'Beam and Yanou']);
+        $artist->aliases()->create(['alias' => 'B&Y']); // keine Kombi-Schreibweise: wird nicht als Trennung gemerkt
+        Artist::create(['name' => 'Beam']);
+        $album = Album::create(['location' => 'library', 'dir' => '/m/B', 'title' => 'Sound', 'category' => 'LIB']);
+        Track::create(['album_id' => $album->id, 'location' => 'library', 'path' => '/m/B/1.mp3', 'dir' => '/m/B', 'filename' => '1.mp3', 'ext' => 'mp3', 'writable' => true,
+            'artist' => 'Beam and Yanou', 'albumartist' => 'Beam & Yanou', 'title' => 'Sound of Love', 'album' => 'Sound', 'artists' => [], 'albumartists' => [], 'genres' => [], 'duration' => 200]);
+
+        $page = Livewire::test(Artists::class)->call('select', $artist->id)
+            ->assertSee('In Einzelkünstler trennen')
+            ->call('openSplitInto')->assertSet('splitInto.parts', ['Beam', 'Yanou'])
+            ->call('saveSplitInto')
+            ->assertSee('getrennt')->assertSet('splitNew', ['Yanou'])->assertSee('„Yanou“ erfassen');
+
+        $this->assertFalse(Artist::where('name', 'Beam & Yanou')->exists());
+        $this->assertEqualsCanonicalizing(['beam & yanou', 'beam and yanou'], ArtistSplit::pluck('name_key')->all());
+        $t = Track::sole();
+        $this->assertSame(['Beam', 'Yanou'], $t->artists, 'ARTISTS vorgemerkt');
+        $this->assertSame(['Beam', 'Yanou'], $t->albumartists);
+        $this->assertGreaterThan(0, PendingChange::count());
+    }
+
+    public function test_split_into_hints_at_existing_names(): void
+    {
+        config(['musicwiz.mb_pause' => 0]);
+        Http::fake(['musicbrainz.org/*' => Http::response(['relations' => [
+            ['type' => 'member of band', 'direction' => 'backward', 'artist' => ['name' => 'CJ Stone']],
+            ['type' => 'member of band', 'direction' => 'backward', 'artist' => ['name' => 'Marc van Linden']],
+        ]])]);
+        $artist = Artist::create(['name' => 'Stone & Van Linden', 'mbid' => 'mb-svl']);
+        $album = Album::create(['location' => 'library', 'dir' => '/m/S', 'title' => 'Mix', 'category' => 'LIB']);
+        foreach (['CJ Stone' => 'Shining', 'Marc van Linden' => 'Waves', 'CJ Stone feat. X' => 'Other'] as $i => $title) {
+            Track::create(['album_id' => $album->id, 'location' => 'library', 'path' => '/m/S/'.md5($i).'.mp3', 'dir' => '/m/S', 'filename' => md5($i).'.mp3', 'ext' => 'mp3',
+                'artist' => $i, 'title' => $title, 'album' => 'Mix', 'artists' => [], 'albumartists' => [], 'genres' => [], 'duration' => 200]);
+        }
+
+        $page = Livewire::test(Artists::class)->call('select', $artist->id)->call('openSplitInto')
+            ->assertSet('splitInto.parts', ['Stone', 'Van Linden'])
+            ->assertSee('neu – kommt im Bestand bisher nicht vor')
+            ->assertSee('Meintest du:')->assertSee('CJ Stone')->assertSee('Marc van Linden');
+        $hints = $page->viewData('splitIntoHints');
+        $this->assertSame(['name' => 'CJ Stone', 'count' => 2, 'source' => 'MusicBrainz'], $hints[0]['suggestions'][0]);
+        $this->assertSame('Marc van Linden', $hints[1]['suggestions'][0]['name']);
+
+        $page->call('useSplitIntoSuggestion', 0, 'CJ Stone')->call('useSplitIntoSuggestion', 1, 'Marc van Linden')
+            ->assertSet('splitInto.parts', ['CJ Stone', 'Marc van Linden'])
+            ->assertSee('im Bestand (2 Titel), nicht im Verzeichnis');
     }
 }

@@ -4,6 +4,7 @@ namespace App\Livewire;
 
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
+use App\Jobs\RefreshCleanup;
 use App\Jobs\ResearchArtistGroup;
 use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
@@ -28,6 +29,7 @@ use App\Support\PendingChanges;
 use App\Support\Settings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Title;
@@ -108,6 +110,7 @@ class Artists extends Component
     public function directoryChangedInModal(): void
     {
         app(ArtistDirectory::class)->flush();
+        $this->splitNew = array_values(array_filter($this->splitNew, fn ($p) => app(ArtistDirectory::class)->check($p)['status'] === 'new'));
     }
 
     public function updatedQuickKind(): void
@@ -205,6 +208,7 @@ class Artists extends Component
     public function select(int $id): void
     {
         $this->selected = $id;
+        $this->splitInto = null;
         $this->splitOpen = $this->mergeOpen = false;
         $this->mergeQ = '';
         $this->mergeIds = [];
@@ -407,6 +411,126 @@ class Artists extends Component
     public function deleteSplit(int $id): void
     {
         ArtistSplit::whereKey($id)->delete();
+    }
+
+    /** „In Einzelkünstler trennen“: Teile (vorbelegt aus dem Namen), Fehlermeldung */
+    public ?array $splitInto = null;
+
+    /** Nach dem Trennen: Einzelnamen, die noch nicht im Verzeichnis stehen (zum Erfassen anbieten) */
+    public array $splitNew = [];
+
+    public function openSplitInto(): void
+    {
+        $a = Artist::find($this->selected);
+        if (! $a) {
+            return;
+        }
+        // Mitglieder laut MusicBrainz: oft die Namen, unter denen die Einzelkünstler im Bestand stehen
+        $members = $a->mbid ? rescue(fn () => app(Lookup::class)->musicbrainzMembers($a->mbid), [], report: false) : [];
+        $this->splitInto = ['parts' => ArtistNames::suggestSplit($a->name) ?: [$a->name, ''], 'members' => $members, 'error' => null];
+    }
+
+    /**
+     * Hinweise je Teil: im Verzeichnis, im Bestand oder neu – und für neue Namen ähnliche vorhandene („Stone“ → „CJ Stone“),
+     * zuerst die Mitglieder laut MusicBrainz.
+     *
+     * @return array<int, array{status: string, label: string, suggestions: list<array{name: string, count: int, source: string}>}>
+     */
+    private function splitIntoHints(ArtistDirectory $directory): array
+    {
+        $counts = $directory->namesInCollection();
+        $known = array_merge(array_fill_keys(Artist::pluck('name')->all(), 0), $counts);
+        $out = [];
+        foreach ($this->splitInto['parts'] ?? [] as $i => $part) {
+            $part = trim((string) $part);
+            if ($part === '') {
+                continue;
+            }
+            $check = $directory->check($part);
+            if (in_array($check['status'], ['ok', 'variant'], true)) {
+                $out[$i] = ['status' => 'known', 'label' => 'im Verzeichnis'.($check['canonical'] !== $part ? ' als „'.$check['canonical'].'“' : ''), 'suggestions' => []];
+
+                continue;
+            }
+            $n = $counts[$part] ?? 0;
+            $key = ArtistNames::compareKey($part);
+            $suggestions = [];
+            foreach ((array) ($this->splitInto['members'] ?? []) as $m) {
+                $mk = ArtistNames::compareKey($m);
+                if ($m !== $part && $mk !== '' && $key !== '' && (str_contains($mk, $key) || str_contains($key, $mk))) {
+                    $suggestions[$m] = ['name' => $m, 'count' => (int) ($counts[$m] ?? 0), 'source' => 'MusicBrainz'];
+                }
+            }
+            // vorhandene Namen, in denen der Teil als ganzes Wort steckt („CJ Stone“, „Marc van Linden“)
+            $pattern = '/(?<![\p{L}\p{N}])'.preg_quote($part, '/').'(?![\p{L}\p{N}])/iu';
+            $local = [];
+            foreach ($known as $name => $c) {
+                $name = (string) $name;
+                if ($name !== $part && ! isset($suggestions[$name]) && ! ArtistNames::looksCollaboration($name) && preg_match($pattern, $name)) {
+                    $local[$name] = ['name' => $name, 'count' => (int) $c, 'source' => $directory->check($name)['status'] === 'ok' ? 'Verzeichnis' : 'Bestand'];
+                }
+            }
+            uasort($local, fn ($a, $b) => $b['count'] <=> $a['count']);
+            $out[$i] = ['status' => $n ? 'collection' : 'new', 'label' => $n ? 'im Bestand ('.$n.' Titel), nicht im Verzeichnis' : 'neu – kommt im Bestand bisher nicht vor',
+                'suggestions' => array_slice(array_values([...$suggestions, ...$local]), 0, 4)];
+        }
+
+        return $out;
+    }
+
+    public function useSplitIntoSuggestion(int $i, string $name): void
+    {
+        $this->splitInto['parts'][$i] = $name;
+    }
+
+    public function addSplitIntoPart(): void
+    {
+        $this->splitInto['parts'][] = '';
+    }
+
+    public function removeSplitIntoPart(int $i): void
+    {
+        unset($this->splitInto['parts'][$i]);
+        $this->splitInto['parts'] = array_values($this->splitInto['parts']);
+    }
+
+    /**
+     * Eintrag ist eine Zusammenarbeit („Beam & Yanou“): aus dem Verzeichnis nehmen, Trennung merken (auch für seine
+     * Kombi-Schreibweisen wie „Beam and Yanou“), Tags der Titel vormerken und die Einzelnamen zum Erfassen anbieten.
+     */
+    public function saveSplitInto(ArtistDirectory $directory): void
+    {
+        $a = Artist::with('aliases')->find($this->selected);
+        if (! $a || ! $this->splitInto) {
+            return;
+        }
+        $parts = array_values(array_unique(array_filter(array_map('trim', $this->splitInto['parts']),
+            fn ($p) => $p !== '' && mb_strtolower($p) !== mb_strtolower($a->name))));
+        if (count($parts) < 2) {
+            $this->splitInto['error'] = 'Mindestens zwei Künstler angeben.';
+
+            return;
+        }
+        $names = [$a->name, ...$a->aliases->pluck('alias')->filter(fn ($n) => ArtistNames::looksCollaboration($n))->all()];
+        DB::transaction(function () use ($a, $names, $parts) {
+            foreach ($names as $n) {
+                ArtistSplit::remember($n, $parts);
+            }
+            // Bild gehört zu keinem Einzelkünstler: in den Papierkorb (lässt sich von dort zurückholen)
+            $dir = rtrim((string) app(Settings::class)->get('artist_images'), '/');
+            if ($a->image && is_file($dir.'/'.$a->image)) {
+                rescue(fn () => app(FileOps::class)->trash($dir.'/'.$a->image), report: false);
+            }
+            $a->delete();
+        });
+        $directory->flush();
+        $staged = app(PendingChanges::class)->stageForNames([...$names, ...$parts], 'Trennen');
+        RefreshCleanup::request();
+        $this->splitNew = array_values(array_filter($parts, fn ($p) => $directory->check($p)['status'] === 'new'));
+        $this->splitInto = null;
+        $this->selected = null;
+        $this->form = [];
+        session()->flash('status', '„'.$a->name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt und steht nicht mehr im Verzeichnis.'.PendingChanges::note($staged));
     }
 
     public function deleteArtist(): void
@@ -884,6 +1008,7 @@ class Artists extends Component
             $data['splits'] = ArtistSplit::orderBy('name')->get();
             $data['genreSuggestion'] = $data['artist'] ? $genres->suggestForArtist($data['artist']) : null;
             $data['artistTracks'] = $data['artist'] ? $this->sampleTracks($data['artist']) : [];
+            $data['splitIntoHints'] = $this->splitInto ? $this->splitIntoHints($directory) : [];
             // ohne Lieder im Bestand: Hinweis, ob welche noch in der Inbox liegen (zählen erst nach dem Einordnen)
             $data['inboxTracks'] = $data['artist'] && ! $data['artistTracks']
                 ? Track::where('location', 'inbox')->where(fn ($q) => $q->where('artist', 'like', '%'.$data['artist']->name.'%')

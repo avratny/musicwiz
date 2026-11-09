@@ -12,6 +12,17 @@
     @if (session('status'))
         <div class="shrink-0 px-6 pt-3"><div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">{{ session('status') }}</div></div>
     @endif
+    @if ($splitNew)
+        <div class="shrink-0 px-6 pt-3">
+            <div class="flex flex-wrap items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200">
+                <span>Noch nicht im Künstlerverzeichnis:</span>
+                @foreach ($splitNew as $n)
+                    <button wire:click="$dispatch('open-new-artist', { name: @js($n) })" class="btn-ghost btn-sm" wire:key="sn{{ md5($n) }}">„{{ $n }}“ erfassen …</button>
+                @endforeach
+                <button wire:click="$set('splitNew', [])" class="ml-auto opacity-70 hover:opacity-100" title="Später – sie stehen auch unter „Schnell erfassen“">✕</button>
+            </div>
+        </div>
+    @endif
 
     @if ($tab === 'directory')
         <div class="flex min-h-0 flex-1 overflow-hidden">
@@ -152,8 +163,45 @@
                                 @unless ($artist->base_name)
                                     <button wire:click="$toggle('mergeOpen')" class="btn-ghost {{ $mergeOpen ? 'border-blue-500/60 text-blue-200' : '' }}" title="Andere Einträge sind nur andere Schreibweisen dieses Künstlers">Ist derselbe wie …</button>
                                 @endunless
+                                @if (\App\Support\ArtistNames::looksCollaboration($artist->name))
+                                    <button wire:click="openSplitInto" class="btn-ghost {{ $splitInto ? 'border-blue-500/60 text-blue-200' : '' }}" title="Kein fester Act, sondern eine Zusammenarbeit – künftig in die einzelnen Künstler trennen">In Einzelkünstler trennen …</button>
+                                @endif
                                 <button wire:click="deleteArtist" data-confirm-label="Löschen" wire:confirm="Künstler aus dem Verzeichnis löschen? (Dateien bleiben unverändert)" class="btn-ghost ml-auto hover:text-red-400">Löschen</button>
                             </div>
+                            @if ($splitInto)
+                                <div class="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3">
+                                    <div class="text-sm text-zinc-300">„{{ $artist->name }}“ ist eine Zusammenarbeit? Dann wird der Eintrag aus dem Verzeichnis genommen und künftig getrennt – auch seine Kombi-Schreibweisen. Die Tags (ARTISTS) der Titel werden vorgemerkt, neue Einzelnamen kannst du danach erfassen.</div>
+                                    <div class="mt-2 space-y-1.5">
+                                        @foreach ($splitInto['parts'] as $i => $p)
+                                            @php $h = $splitIntoHints[$i] ?? null; @endphp
+                                            <div wire:key="sip{{ $i }}">
+                                                <div class="flex items-center gap-2">
+                                                    <input wire:model.live.debounce.400ms="splitInto.parts.{{ $i }}" class="input-sm w-72">
+                                                    @if ($h)
+                                                        <span class="text-xs {{ ['known' => 'text-emerald-300', 'collection' => 'text-blue-300', 'new' => 'text-amber-300'][$h['status']] }}">{{ $h['status'] === 'known' ? '✓' : ($h['status'] === 'new' ? '⚠' : '•') }} {{ $h['label'] }}</span>
+                                                    @endif
+                                                    @if (count($splitInto['parts']) > 2)<button wire:click="removeSplitIntoPart({{ $i }})" class="text-zinc-500 hover:text-red-300">✕</button>@endif
+                                                </div>
+                                                @if ($h && $h['suggestions'])
+                                                    <div class="mt-1 ml-1 flex flex-wrap items-center gap-1.5 text-xs">
+                                                        <span class="text-zinc-500">Meintest du:</span>
+                                                        @foreach ($h['suggestions'] as $s)
+                                                            <button wire:click="useSplitIntoSuggestion({{ $i }}, @js($s['name']))" class="rounded border border-zinc-700 px-2 py-0.5 text-zinc-200 hover:border-blue-500 hover:text-white"
+                                                                    title="{{ $s['source'] }}">{{ $s['name'] }}<span class="text-zinc-500">{{ $s['count'] ? ' · '.$s['count'].' Titel' : '' }}{{ $s['source'] === 'MusicBrainz' ? ' · MusicBrainz' : '' }}</span></button>
+                                                        @endforeach
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        @endforeach
+                                        <button wire:click="addSplitIntoPart" class="text-xs text-zinc-400 hover:text-white">+ weiterer Künstler</button>
+                                    </div>
+                                    @if ($splitInto['error'])<p class="mt-1 text-sm text-amber-300">{{ $splitInto['error'] }}</p>@endif
+                                    <div class="mt-2 flex items-center gap-2">
+                                        <button wire:click="saveSplitInto" data-confirm-label="Trennen" wire:confirm="„{{ $artist->name }}“ aus dem Verzeichnis nehmen und künftig in die Einzelkünstler trennen? Die Dateien ändern sich erst mit „Änderungen schreiben“." class="btn-primary btn-sm">Trennen</button>
+                                        <button wire:click="$set('splitInto', null)" class="btn-ghost btn-sm">Abbrechen</button>
+                                    </div>
+                                </div>
+                            @endif
                             @if ($mergeOpen)
                                 <div class="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3">
                                     <div class="text-sm text-zinc-300">Welche Einträge sind in Wahrheit <strong>„{{ $artist->name }}“</strong>? Sie werden zu Schreibweisen dieses Künstlers; Varianten, IDs, Genre und Bild werden übernommen, wo hier noch nichts steht.</div>
@@ -410,9 +458,9 @@
         </div>
     @elseif ($tab === 'quick')
         @include('livewire.partials.quick-artists')
-        {{-- einzeln erfassen als Dialog: Auswahl in der Liste bleibt erhalten --}}
-        <livewire:new-artist-modal />
     @else
         @include('livewire.partials.new-artist-wizard')
     @endif
+    {{-- „Neuen Künstler erfassen“ als Dialog (Schnell erfassen, nach dem Trennen) – die Liste bleibt erhalten --}}
+    <livewire:new-artist-modal />
 </div>
