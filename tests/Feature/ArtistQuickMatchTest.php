@@ -151,4 +151,19 @@ class ArtistQuickMatchTest extends TestCase
         $this->assertSame(['Gerhard Polt', 'Gisela Schneeberger'], Track::sole()->artists, 'ARTISTS im Zwilling vorgemerkt');
         $this->assertSame(1, PendingChange::count());
     }
+
+    public function test_typographic_punctuation_from_musicbrainz_becomes_plain(): void
+    {
+        $this->assertSame('Lexy & K-Paul', ArtistNames::plainPunctuation("Lexy & K\u{2010}Paul"));
+        $this->assertSame("Sluts'n'Strings & 909", ArtistNames::plainPunctuation("Sluts\u{2019}n\u{2019}Strings & 909"));
+
+        // vorhandene Einträge: Migration benennt um, alter Name bleibt Schreibweise, die normale Schreibweise als Alias fällt weg
+        $artist = Artist::create(['name' => "Lexy & K\u{2010}Paul"]);
+        $artist->aliases()->create(['alias' => 'Lexy & K-Paul', 'source' => 'musicbrainz']);
+        (require database_path('migrations/2026_11_09_000100_plain_punctuation_in_artist_names.php'))->up();
+
+        $artist->refresh();
+        $this->assertSame('Lexy & K-Paul', $artist->name);
+        $this->assertSame(["Lexy & K\u{2010}Paul"], $artist->aliases()->pluck('alias')->all());
+    }
 }

@@ -178,6 +178,15 @@ class ArtistNames
         return (bool) preg_match('/\s(&|und|and|x)\s|,\s/iu', $name);
     }
 
+    /**
+     * Typografische Satzzeichen (z. B. von MusicBrainz) durch die üblichen ersetzen: „‐“ → „-“, „’“ → „'“, „…“ → „...“.
+     * Sie sehen gleich aus, sind aber andere Zeichen – in Tags und Ordnernamen sollen die normalen stehen.
+     */
+    public static function plainPunctuation(string $name): string
+    {
+        return strtr($name, ["\u{2010}" => '-', "\u{2011}" => '-', "\u{2012}" => '-', "\u{2019}" => "'", "\u{2018}" => "'", "\u{201C}" => '"', "\u{201D}" => '"', "\u{2026}" => '...', "\u{00A0}" => ' ']);
+    }
+
     /** Vergleichsschlüssel: klein, ohne Punkte, Bindestriche, Leerzeichen und Akzente, &/and/und vereinheitlicht. */
     public static function compareKey(?string $name): string
     {

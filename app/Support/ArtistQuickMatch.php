@@ -92,7 +92,7 @@ class ArtistQuickMatch
         if ($result === null) {
             return ['pending', '', null];
         }
-        $hits = $result['hits'] ?? [];
+        $hits = array_map(fn ($h) => ['name' => ArtistNames::plainPunctuation((string) ($h['name'] ?? ''))] + $h, $result['hits'] ?? []);
         $withSongs = array_values(array_filter($hits, fn ($h) => ! empty($h['songs'])));
         $exact = array_values(array_filter($hits, fn ($h) => ! empty($h['exact'])));
         if (count($withSongs) === 1 && ! empty($withSongs[0]['exact'])) {
@@ -150,7 +150,7 @@ class ArtistQuickMatch
         foreach ($picks as $p) {
             $orig = $p['name'];
             $hit = $p['hit'];
-            $final = $p['mb_spelling'] ? trim((string) $hit['name']) : $orig;
+            $final = $p['mb_spelling'] ? ArtistNames::plainPunctuation(trim((string) $hit['name'])) : $orig;
             $artist = Artist::where('name', $final)->first();
             if (! $artist) {
                 $artist = Artist::create(['name' => $final]);

@@ -453,4 +453,15 @@ class PendingChangesTest extends TestCase
         $this->assertArrayNotHasKey('genres', $pc->tags_before, 'Genres nicht angefasst');
         $this->assertSame(['Schrammeln', 'Austria'], Track::where('path', $a)->sole()->genres);
     }
+
+    public function test_stage_for_many_names_does_not_overflow_sqlite(): void
+    {
+        // viele Künstler mit allen MusicBrainz-Schreibweisen auf einmal („Alle Vorschläge übernehmen“)
+        $a = $this->mp3('L/Lexy & K-Paul/Lexy (2000)/01 - Freak.mp3', ['artist' => 'Lexy & K-Paul', 'albumartist' => 'Lexy & K-Paul', 'album' => 'Lexy', 'year' => '2000', 'track' => '1', 'title' => 'Freak']);
+        app(Scanner::class)->scan('library');
+        $names = array_map(fn ($i) => 'Name '.$i, range(1, 400));
+        $names[] = 'Lexy & K-Paul';
+
+        $this->assertSame(0, app(PendingChanges::class)->stageForNames($names, 'Test'), 'läuft durch (nichts zu ändern)');
+    }
 }

@@ -86,16 +86,22 @@ class PendingChanges
         if (! $names) {
             return 0;
         }
-        // grob vorfiltern (ein „_“ im Namen trifft etwas mehr – genau geprüft wird danach von den Prüfungen)
+        // grob vorfiltern (ein „_“ im Namen trifft etwas mehr – genau geprüft wird danach von den Prüfungen); in Häppchen:
+        // mit allen MusicBrainz-Schreibweisen vieler Künstler wäre eine einzige Abfrage zu groß für SQLite (max. 1000 Ebenen)
         $like = fn (string $n) => '%'.$n.'%';
-        $albumIds = Track::where('location', 'library')->whereNotNull('album_id')
-            ->where(function ($q) use ($names, $like) {
-                foreach ($names as $n) {
-                    foreach (['artist', 'albumartist', 'artists', 'albumartists'] as $col) {
-                        $q->orWhere($col, 'like', $like($n));
+        $albumIds = [];
+        foreach (array_chunk($names, 40) as $chunk) {
+            $ids = Track::where('location', 'library')->whereNotNull('album_id')
+                ->where(function ($q) use ($chunk, $like) {
+                    foreach ($chunk as $n) {
+                        foreach (['artist', 'albumartist', 'artists', 'albumartists'] as $col) {
+                            $q->orWhere($col, 'like', $like($n));
+                        }
                     }
-                }
-            })->distinct()->pluck('album_id')->all();
+                })->distinct()->pluck('album_id')->all();
+            array_push($albumIds, ...$ids);
+        }
+        $albumIds = array_values(array_unique($albumIds));
         $count = 0;
         foreach (self::NAME_CHECKS as $key) {
             // jede Prüfung auf dem schon aktualisierten Zwilling (frische Instanz)

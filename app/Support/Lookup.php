@@ -45,7 +45,7 @@ class Lookup
         $name = preg_replace('/^(.*),\s*(The|Die|Les|Los)$/iu', '$2 $1', trim($name));
         $key = ArtistNames::compareKey($name);
         $map = fn ($data) => array_map(fn ($a) => [
-            'name' => $a['name'],
+            'name' => ArtistNames::plainPunctuation((string) $a['name']), // „Lexy & K‐Paul“ → „Lexy & K-Paul“
             'mbid' => $a['id'],
             'disambiguation' => $a['disambiguation'] ?? null,
             'country' => $a['country'] ?? null,
