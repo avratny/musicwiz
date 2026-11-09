@@ -60,7 +60,7 @@ class CleanupChecks
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
             'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
-            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern – im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', null],
+            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Steht ein echter Album-Interpret drin, ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
             'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
@@ -977,14 +977,22 @@ class CleanupChecks
         return $out;
     }
 
-    /** Sampler (Flag bzw. „Various Artists“-Schreibweise) im Künstler-Ordner: nur melden, entschieden wird im Editor. */
+    /**
+     * Sampler (Flag bzw. „Various Artists“-Schreibweise) im Künstler-Ordner. Mit echtem Album-Interpreten (z. B. Best-of
+     * oder DJ-Mix eines Künstlers) ist nur das Flag falsch → entfernen; sonst nur melden, entschieden wird im Editor.
+     */
     private function checkCompilationInArtists(): array
     {
         $out = [];
         foreach ($this->byAlbum() as $albumId => $tracks) {
             $album = $this->albums()[$albumId] ?? null;
             if ($reason = $this->compilationInArtists($album, $tracks)) {
-                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => 'Erkannt an: '.$reason.' · liegt in „'.$album->category.'“', 'link' => $this->link($album), 'actions' => []];
+                $aa = (string) $tracks->map(fn ($t) => trim((string) $t->albumartist))->filter()->countBy()->sortDesc()->keys()->first();
+                $realArtist = $aa !== '' && ! $this->compilations->isVariousArtists($aa) && ! Compilations::isPlaceholder($aa);
+                $actions = $realArtist ? $this->applyActions($tracks->filter(fn ($t) => (bool) $t->compilation), fn () => ['compilation' => false]) : [];
+                $detail = 'Erkannt an: '.$reason.' · liegt in „'.$album->category.'“'
+                    .($actions ? ' · Album-Interpret „'.$aa.'“ bleibt, Flag wird entfernt' : ' · im Album-Editor entscheiden');
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $detail, 'link' => $this->link($album), 'actions' => $actions];
             }
         }
 

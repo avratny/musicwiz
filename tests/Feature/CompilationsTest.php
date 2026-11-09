@@ -7,6 +7,7 @@ use App\Livewire\Cleanup;
 use App\Models\Album;
 use App\Support\CleanupChecks;
 use App\Support\Compilations;
+use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
@@ -98,7 +99,7 @@ class CompilationsTest extends TestCase
             ->assertSee('→ neu')->assertSee('Gold (Remaster)')->assertSee('✓ bleibt')->assertSee('∅ (leer)');
     }
 
-    public function test_compilation_in_artist_folder_is_only_reported(): void
+    public function test_compilation_in_artist_folder_flag_is_removed_with_real_album_artist(): void
     {
         // „Various“ als Album-Interpret, liegt aber bei den Künstlern
         $this->file('library/artists/V/Various/Party (1999)/01 - ABBA.mp3', ['artist' => 'ABBA', 'albumartist' => 'Various', 'album' => 'Party', 'year' => '1999', 'track' => '1', 'comment' => 'LIB']);
@@ -116,9 +117,15 @@ class CompilationsTest extends TestCase
 
         $reported = collect($checks->findings('compilation_in_artists'));
         $this->assertEqualsCanonicalizing(['Various – Party', 'ABBA – Gold'], $reported->pluck('title')->all());
-        $this->assertTrue($reported->every(fn ($f) => $f['actions'] === []));
-        $this->assertStringContainsString('Compilation-Flag', $reported->firstWhere('title', 'ABBA – Gold')['detail']);
+        // „Various“ als Album-Interpret: nur melden, im Editor entscheiden
+        $this->assertSame([], $reported->firstWhere('title', 'Various – Party')['actions']);
         $this->assertStringContainsString('„Various“', $reported->firstWhere('title', 'Various – Party')['detail']);
+        // echter Album-Interpret „ABBA“: nur das Flag ist falsch → entfernen
+        $gold = $reported->firstWhere('title', 'ABBA – Gold');
+        $this->assertStringContainsString('Compilation-Flag', $gold['detail']);
+        $this->assertStringContainsString('„ABBA“ bleibt', $gold['detail']);
+        $this->assertSame([['type' => 'apply', 'path' => $this->base.'/library/artists/A/ABBA/Gold/01 - Waterloo.mp3', 'tags' => ['compilation' => false]]], $gold['actions']);
+        $this->assertTrue(PendingChanges::stageable($gold['actions']), 'wird vorgemerkt, nicht sofort geschrieben');
 
         // bis zur Entscheidung arbeitet nichts dagegen (Flag entfernen, nach V/Various verschieben)
         $titles = fn (string $key) => collect($checks->findings($key))->pluck('title')->all();
