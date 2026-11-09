@@ -170,4 +170,12 @@ class CompilationsTest extends TestCase
         $this->assertSame([], $f['actions']);
         $this->assertStringContainsString('3 verschiedene Interpreten – im Album-Editor entscheiden', $f['detail']);
     }
+
+    public function test_album_year_majority_else_newest(): void
+    {
+        $y = fn (array $years) => CleanupChecks::albumYear(collect($years));
+        $this->assertSame('1999', $y(['1999' => 20, '1998' => 1, '2000' => 3, '' => 14]), 'Mehrheit der Titel mit Jahr');
+        $this->assertSame('1996', $y(['1957' => 2, '1961' => 1, '1978' => 2, '1996' => 1]), 'keine Mehrheit: das neueste');
+        $this->assertSame('', $y(['' => 5]));
+    }
 }

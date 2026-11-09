@@ -410,6 +410,15 @@ class PendingChangesTest extends TestCase
             $this->assertFileExists($p);
         }
         $this->assertSame(['Trance'], $this->fileTags($a)['genres']);
+
+        // „Album uneinheitlich“ gleicht das Jahr an (keine Mehrheit → das neueste: 1999) – danach wandert das Album geschlossen
+        $mixed = collect(app()->make(CleanupChecks::class)->findings('album_mixed'))->sole();
+        $this->assertContains(['field' => 'Jahr', 'from' => '1992', 'count' => 1, 'to' => '1999'], $mixed['changes']);
+        app(PendingChanges::class)->stage($mixed['actions'], 'Album uneinheitlich');
+        $op = OperationRunner::dispatch('pending', 'Schreiben', app(PendingChanges::class)->actions()['actions'], ['on_conflict' => 'skip']);
+        $this->assertSame('done', $op->fresh()->status, (string) $op->fresh()->error);
+        $dirs = Track::pluck('dir')->unique()->values()->all();
+        $this->assertSame([$this->base.'/library/sampler/D/Dream Dance 12 (1999)'], $dirs, 'ein Ordner für das ganze Album');
     }
 
     public function test_two_files_with_the_same_target_stay_where_they_are(): void

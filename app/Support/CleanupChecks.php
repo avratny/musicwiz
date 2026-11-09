@@ -58,7 +58,7 @@ class CleanupChecks
             'inverted' => ['Umgedrehte Namen', 'Sortierschreibweise wie „Crystals, The“ → „The Crystals“ (je nach Einstellung auch „Berry, Chuck“ → „Chuck Berry“) – Anzeigetext und ARTISTS.', 'Richtig herum schreiben'],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
-            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
+            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret, Album-Namen oder Jahr', 'Tracks eines Ordners haben verschiedene Werte. Jahr: das der Mehrheit, sonst das neueste (ein Sampler erscheint nach seinem jüngsten Titel) – sonst würde das Album beim Ablegen auf mehrere Ordner verteilt.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
             'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten und mit nur einem Interpreten (bzw. „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
@@ -861,6 +861,23 @@ class CleanupChecks
         return $out;
     }
 
+    /**
+     * Jahr fürs ganze Album: das der Mehrheit der Titel mit Jahr, sonst das neueste – ein Sampler erscheint frühestens mit
+     * seinem jüngsten Titel (bei „Let's Dance“ mit Titeln von 1957 bis 1996 also 1996).
+     *
+     * @param  Collection<string, int>  $years  Jahr => Anzahl (inkl. leer)
+     */
+    public static function albumYear(Collection $years): string
+    {
+        $known = $years->filter(fn ($n, $y) => (string) $y !== '');
+        if ($known->isEmpty()) {
+            return '';
+        }
+        $top = (string) $known->sortDesc()->keys()->first();
+
+        return $known->sum() < $known[$top] * 2 ? $top : (string) $known->keys()->map(fn ($y) => (string) $y)->sort()->last();
+    }
+
     private function checkAlbumMixed(): array
     {
         $out = [];
@@ -868,7 +885,10 @@ class CleanupChecks
             $album = $this->albums()[$albumId] ?? null;
             $titles = $tracks->pluck('album')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
             $aas = $tracks->pluck('albumartist')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
-            if ($titles->count() <= 1 && $aas->count() <= 1) {
+            $years = $tracks->pluck('year')->map(fn ($v) => trim((string) $v))->countBy()->sortDesc();
+            $year = self::albumYear($years);
+            $yearMixed = $years->count() > 1 && $year !== '';
+            if ($titles->count() <= 1 && $aas->count() <= 1 && ! $yearMixed) {
                 continue;
             }
             // "Kein Album"-Ordner mit Einzeltiteln sind gewollt uneinheitlich
@@ -877,8 +897,11 @@ class CleanupChecks
             }
             $title = (string) $titles->keys()->first();
             $aa = (string) $aas->keys()->first();
-            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas) {
+            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas, $year, $yearMixed) {
                 $tags = [];
+                if ($yearMixed && trim((string) $t->year) !== $year) {
+                    $tags['year'] = $year;
+                }
                 if ($titles->count() > 1 && (string) $t->album !== $title) {
                     $tags['album'] = $title;
                 }
@@ -891,7 +914,7 @@ class CleanupChecks
             });
             $detail = [];
             $changes = [];
-            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa]] as $field => [$values, $target]) {
+            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa], 'Jahr' => [$yearMixed ? $years : collect(), $year]] as $field => [$values, $target]) {
                 if ($values->count() <= 1) {
                     continue;
                 }
