@@ -149,6 +149,20 @@
                     </div>
                 </div>
             @endif
+            @if ($combinedSuggest)
+                @php
+                    $nSplit = count(array_filter($combinedSuggest, fn ($s) => $s['kind'] === 'split'));
+                    $nArtist = count($combinedSuggest) - $nSplit;
+                @endphp
+                <div class="shrink-0 px-6 pt-3">
+                    <div class="flex flex-wrap items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-100">
+                        <span class="min-w-0 flex-1">Für {{ count($combinedSuggest) }} Namen gibt es einen klaren Vorschlag: {{ $nSplit }} × trennen (alle Teile bekannt), {{ $nArtist }} × ein Künstler (MusicBrainz kennt den Namen mit euren Liedern). Der Rest bleibt zum Entscheiden.</span>
+                        <button wire:click="acceptAllCombined" data-confirm-label="Übernehmen" wire:loading.attr="disabled"
+                                wire:confirm="{{ count($combinedSuggest) }} Vorschläge übernehmen? {{ $nSplit }} Kombis werden künftig getrennt, {{ $nArtist }} als je ein Künstler angelegt (mit MusicBrainz-ID, Genre, Schreibweisen). Die Tags der betroffenen Titel werden vorgemerkt."
+                                class="btn-primary btn-sm">Alle Vorschläge übernehmen ({{ count($combinedSuggest) }})</button>
+                    </div>
+                </div>
+            @endif
             @if ($splitNewArtists)
                 <div class="shrink-0 px-6 pt-3">
                     <div class="flex flex-wrap items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200">
@@ -220,11 +234,20 @@
                                     @if (count($f['changes']) > 12)<div class="text-xs text-zinc-500">… und {{ count($f['changes']) - 12 }} weitere Werte</div>@endif
                                 @else
                                     <div class="text-xs whitespace-pre-line text-zinc-400">{{ $f['detail'] }}</div>
+                                    @if (! empty($f['new_artist']) && isset($combinedSuggest[$f['new_artist']]))
+                                        <div class="text-xs text-blue-300">Vorschlag: {{ $combinedSuggest[$f['new_artist']]['reason'] }}</div>
+                                    @endif
                                 @endif
                             </div>
                             <div class="flex shrink-0 items-center gap-2">
+                                @php $sug = ! empty($f['new_artist']) ? ($combinedSuggest[$f['new_artist']] ?? null) : null; @endphp
+                                @if ($sug)
+                                    <button wire:click="acceptCombined(@js($f['new_artist']))" wire:loading.attr="disabled" class="btn-primary btn-sm" title="Vorschlag: {{ $sug['reason'] }}">
+                                        {{ $sug['kind'] === 'split' ? 'Trennen: '.implode(' · ', $sug['parts']) : 'Ist ein Künstler: '.$sug['hit']['name'] }}
+                                    </button>
+                                @endif
                                 @if (! empty($f['new_artist']))
-                                    <button wire:click="$dispatch('open-new-artist', { name: @js($f['new_artist']) })" class="btn-primary btn-sm"
+                                    <button wire:click="$dispatch('open-new-artist', { name: @js($f['new_artist']) })" class="{{ $sug ? 'btn-ghost' : 'btn-primary' }} btn-sm"
                                             title="„{{ $f['new_artist'] }}“ ist ein Künstler (z. B. Duo/Band) – im Künstlerverzeichnis erfassen, mit MusicBrainz, Bild und Genre">Ist ein Künstler – erfassen …</button>
                                     <button wire:click="openSplit(@js($f['new_artist']))" class="btn-ghost btn-sm"
                                             title="Zusammenarbeit mehrerer Künstler – künftig überall in die einzelnen Künstler trennen (ARTISTS)">Trennen …</button>

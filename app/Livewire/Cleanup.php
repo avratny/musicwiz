@@ -10,11 +10,15 @@ use App\Models\CleanupException;
 use App\Models\DuplicateException;
 use App\Models\Operation;
 use App\Support\ArtistDirectory;
+use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistNames;
+use App\Support\ArtistQuickMatch;
 use App\Support\AutoCleanup;
 use App\Support\CleanupChecks;
+use App\Support\CombinedSuggestions;
 use App\Support\FileOps;
 use App\Support\Integrity;
+use App\Support\Lookup;
 use App\Support\OperationRunner;
 use App\Support\PendingChanges;
 use App\Support\Quality;
@@ -302,6 +306,51 @@ class Cleanup extends Component
         $this->done = '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt.'.PendingChanges::note($staged);
     }
 
+    /** „Kombi mit &, und, and, Komma“: Vorschlag für einen Namen übernehmen (Trennen bzw. als ein Künstler anlegen). */
+    public function acceptCombined(string $name): void
+    {
+        $this->applyCombined([$name]);
+    }
+
+    /** „Kombi mit &, und, and, Komma“: alle Vorschläge auf einmal übernehmen. */
+    public function acceptAllCombined(CleanupChecks $checks): void
+    {
+        $this->applyCombined(array_column($checks->displayFindings('combined_manual')[0], 'new_artist'));
+    }
+
+    /** @param  list<string>  $names */
+    private function applyCombined(array $names): void
+    {
+        $suggestions = app(CombinedSuggestions::class)->for(array_values(array_filter($names)));
+        $splits = array_filter($suggestions, fn ($s) => $s['kind'] === 'split');
+        $artists = array_filter($suggestions, fn ($s) => $s['kind'] === 'artist');
+        if (! $suggestions) {
+            return;
+        }
+        foreach ($splits as $name => $s) {
+            ArtistSplit::remember($name, $s['parts']);
+        }
+        $staged = $splits ? app(PendingChanges::class)->stageForNames(array_map('strval', array_keys($splits)), 'Trennen') : 0;
+        $created = ['created' => 0, 'staged' => 0];
+        if ($artists) {
+            // wie „Schnell erfassen“: mit MusicBrainz-ID, Genre und Schreibweisen; MusicBrainz-Schreibweise („Simon and Garfunkel“ → „Simon & Garfunkel“)
+            $picks = array_map(fn ($name, $s) => ['name' => (string) $name, 'hit' => $s['hit'], 'mb_spelling' => true], array_keys($artists), $artists);
+            $created = app(ArtistQuickMatch::class)->save($picks, app(Lookup::class), app(ArtistGenreSuggestions::class));
+        }
+        app(ArtistDirectory::class)->flush();
+        RefreshCleanup::request();
+        $this->splitNewArtists = array_values(array_unique(array_filter(array_merge(...array_values(array_map(fn ($s) => $s['parts'], $splits)) ?: [[]]),
+            fn ($p) => app(ArtistDirectory::class)->check($p)['status'] === 'new')));
+        $msg = [];
+        if ($splits) {
+            $msg[] = count($splits) === 1 ? '„'.array_key_first($splits).'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', reset($splits)['parts'])).' getrennt' : count($splits).' Kombis werden künftig getrennt';
+        }
+        if ($artists) {
+            $msg[] = count($artists) === 1 ? '„'.array_key_first($artists).'“ als ein Künstler angelegt' : count($artists).' als je ein Künstler angelegt';
+        }
+        $this->done = implode(' · ', $msg).'.'.PendingChanges::note($staged + $created['staged']);
+    }
+
     /** „Umgedrehte Namen“: Verzeichnis-Einträge richtig herum benennen (alter Name wird Schreibweise). */
     public function renameInvertedArtists(ArtistDirectory $directory): void
     {
@@ -396,6 +445,8 @@ class Cleanup extends Component
             'pendingCount' => app(PendingChanges::class)->count(),
             'splitStatus' => $this->split ? $this->splitPartStatus() : [],
             'invertedArtists' => $this->check === 'inverted' ? app(ArtistDirectory::class)->invertedEntries() : collect(),
+            // Kombis: Vorschlag je Name (Verzeichnis, MusicBrainz vom Vorladen) – für alle Funde gezählt, angezeigt für die sichtbaren
+            'combinedSuggest' => $this->check === 'combined_manual' ? app(CombinedSuggestions::class)->for(array_values(array_filter(array_column($findings, 'new_artist')))) : [],
             'looseCount' => $looseCount,
             'progress' => $fresh ? null : CleanupChecks::progress(),
             'scanRunning' => (bool) (app(Scanner::class)->status()['running'] ?? false),

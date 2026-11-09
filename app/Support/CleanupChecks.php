@@ -54,7 +54,7 @@ class CleanupChecks
             'extension' => ['Uneinheitliche Endungen', 'z. B. „.Mp3“ statt „.mp3“.', 'Endung klein schreiben'],
             'encoding' => ['Kaputte Zeichen in Tags', 'Falsch gelesene Umlaute („KÃ¶nig“), unsichtbare Zeichen, Unicode-Form – sicher behebbar; falsche Codepage und verlorene Zeichen im Zeichen-Assistenten.', 'Sichere Korrekturen schreiben'],
             'ambiguous' => ['Gleichnamige Künstler ohne Zuordnung', 'Der Name gibt es mehrfach (z. B. „Adam [DE]“ / „Adam [GB]“) – diese Lieder sind noch keiner Person zugeordnet.', null],
-            'combined_manual' => ['Kombi mit &, und, and, Komma', 'Wird nie automatisch getrennt – im Künstlerverzeichnis entscheiden.', null],
+            'combined_manual' => ['Kombi mit &, und, and, Komma', 'Wird nie ungefragt getrennt. Klare Fälle bekommen einen Vorschlag: trennen, wenn alle Teile bekannt sind; ein Künstler, wenn MusicBrainz den Namen mit euren Liedern kennt.', null],
             'inverted' => ['Umgedrehte Namen', 'Sortierschreibweise wie „Crystals, The“ → „The Crystals“ (je nach Einstellung auch „Berry, Chuck“ → „Chuck Berry“) – Anzeigetext und ARTISTS.', 'Richtig herum schreiben'],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],

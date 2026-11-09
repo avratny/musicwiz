@@ -198,6 +198,7 @@ Der Bereich Aufräumen prüft den ganzen Bestand und zeigt je Prüfung, wie viel
 | Umgedrehte Namen („Crystals, The“; einstellbar: aus / nur Artikel / auch Personen) | richtig herum schreiben („The Crystals“) |
 | Uneinheitliche Interpreten-Schreibweisen | richtige Schreibweise wählen, als Alias speichern |
 | Kombi-Interpreten ohne `ARTISTS` | `ARTISTS` erzeugen, Ordner nach erstem Künstler |
+| Kombi mit &, und, and, Komma (nicht im Verzeichnis) | nie ungefragt trennen; Vorschlag „Trennen“, wenn alle Teile im Verzeichnis bzw. einzeln eindeutig bei MusicBrainz sind, „Ein Künstler“, wenn MusicBrainz den Namen mit euren Liedern kennt (aus dem Vorladen) – einzeln oder alle auf einmal übernehmen |
 | Album mit uneinheitlichem Album-Interpret oder Album-Namen | Werte fürs ganze Album vereinheitlichen |
 | Sampler ohne „Various Artists“ oder Compilation-Flag | Tags setzen |
 | Sampler im Künstler-Ordner (Flag oder „Various Artists“-Schreibweise) | ohne „Various Artists“-Schreibweise (echter Name, leer, „Kein Album“): Compilation-Flag entfernen; „Various Artists“-Schreibweise: nur melden, im Editor entscheiden |

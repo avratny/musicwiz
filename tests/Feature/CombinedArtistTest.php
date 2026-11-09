@@ -2,15 +2,18 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\PrefetchArtistLookup;
 use App\Livewire\Cleanup;
 use App\Livewire\NewArtistModal;
 use App\Models\Album;
 use App\Models\Artist;
+use App\Models\ArtistSplit;
 use App\Models\PendingChange;
 use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
 use App\Support\CleanupChecks;
+use App\Support\Lookup;
 use App\Support\SettingsBackup;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -81,5 +84,46 @@ class CombinedArtistTest extends TestCase
         // Sicherung nimmt die Trennung mit
         $export = app(SettingsBackup::class)->export(false);
         $this->assertSame([['name' => 'Yanou & Liz', 'parts' => ['Yanou', 'Liz']]], $export['artist_splits']);
+    }
+
+    public function test_clear_combis_get_a_suggestion_and_can_be_taken_all_at_once(): void
+    {
+        config(['musicwiz.mb_pause' => 0]);
+        Artist::create(['name' => 'Yanou']);
+        Artist::create(['name' => 'Liz']);
+        $album = Album::create(['location' => 'library', 'dir' => '/m/C', 'title' => 'Mix', 'category' => 'LIB']);
+        foreach (['Yanou & Liz' => 'King of My Castle', 'Simon and Garfunkel' => 'The Boxer', 'Foo & Bar' => 'Unbekannt'] as $artist => $title) {
+            Track::create(['album_id' => $album->id, 'location' => 'library', 'path' => '/m/C/'.md5($artist).'.mp3', 'dir' => '/m/C', 'filename' => md5($artist).'.mp3', 'ext' => 'mp3', 'writable' => true,
+                'artist' => $artist, 'albumartist' => 'Yanou', 'title' => $title, 'album' => 'Mix', 'artists' => [], 'albumartists' => [], 'genres' => [], 'duration' => 200]);
+        }
+        // Vorladen: MusicBrainz kennt „Simon & Garfunkel“ mit „The Boxer“, „Foo & Bar“ nicht
+        Http::fake(function ($request) {
+            $url = urldecode($request->url());
+            if (str_contains($url, '/ws/2/artist/')) {
+                return Http::response(['id' => 'mb-sg', 'name' => 'Simon & Garfunkel', 'aliases' => [], 'genres' => [], 'tags' => []]);
+            }
+            if (str_contains($url, '/ws/2/recording')) {
+                return Http::response(['recordings' => [['title' => 'The Boxer', 'artist-credit' => [['artist' => ['id' => 'mb-sg']]]]]]);
+            }
+
+            return Http::response(['artists' => str_contains($url, 'Garfunkel') ? [['id' => 'mb-sg', 'name' => 'Simon & Garfunkel', 'score' => 100, 'type' => 'Group']] : []]);
+        });
+        PrefetchArtistLookup::prefetch(app(Lookup::class), 'Simon and Garfunkel', ['The Boxer']);
+        PrefetchArtistLookup::prefetch(app(Lookup::class), 'Foo & Bar', ['Unbekannt']);
+
+        $page = Livewire::test(Cleanup::class)->set('check', 'combined_manual')
+            ->assertSee('Trennen: Yanou · Liz')
+            ->assertSee('Ist ein Künstler: Simon &amp; Garfunkel', false)
+            ->assertSee('Alle Vorschläge übernehmen (2)');
+        $this->assertArrayNotHasKey('Foo & Bar', $page->viewData('combinedSuggest'), 'unbekannt: von Hand entscheiden');
+
+        $page->call('acceptAllCombined')->assertSee('getrennt');
+        $this->assertSame(['Yanou', 'Liz'], ArtistSplit::where('name_key', 'yanou & liz')->sole()->parts);
+        $this->assertSame(['Yanou', 'Liz'], Track::where('artist', 'Yanou & Liz')->sole()->artists, 'ARTISTS im Zwilling vorgemerkt');
+        $sg = Artist::where('name', 'Simon & Garfunkel')->sole();
+        $this->assertSame('mb-sg', $sg->mbid);
+        $this->assertTrue($sg->aliases()->where('alias', 'Simon and Garfunkel')->exists(), 'Bestandsname bleibt Schreibweise');
+        $this->assertFalse(Artist::where('name', 'Foo & Bar')->exists());
+        $this->assertGreaterThan(0, PendingChange::count());
     }
 }
