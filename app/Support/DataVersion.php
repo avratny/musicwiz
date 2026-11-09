@@ -5,7 +5,6 @@ namespace App\Support;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
-use App\Models\ArtistSplit;
 use App\Models\HistoryEntry;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
@@ -48,10 +47,13 @@ class DataVersion
         });
     }
 
-    /** Gemerkte Zusammenarbeiten (ändern, wie Namen getrennt werden) */
+    /**
+     * Wie Namen getrennt werden (gemerkte Zusammenarbeiten, geschützte Namen mit „feat.“ o. Ä.). Nicht jede Änderung im
+     * Verzeichnis: sonst rechnete jeder neue Künstler Namensliste und Profile der ganzen Lib neu.
+     */
     public static function splits(): string
     {
-        return md5(ArtistSplit::count().'|'.ArtistSplit::max('updated_at').'|'.Cache::get(self::DIRECTORY_BUMP, 0));
+        return ArtistNames::rulesVersion();
     }
 
     /** Künstlerverzeichnis (Namen, Aliase, gleichnamige Personen). */

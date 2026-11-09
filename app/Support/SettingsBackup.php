@@ -339,6 +339,7 @@ class SettingsBackup
 
     private function afterChange(): void
     {
+        app(Settings::class)->set([]); // gemeinsame Instanz: Zwischenspeicher leeren (Tabelle direkt geändert)
         app(ArtistDirectory::class)->flush();
         ArtistNames::flushProtected();
         // Mehrfach-CDs neu bilden, falls sich Zuordnungen geändert haben

@@ -96,6 +96,17 @@ class ArtistNames
         return self::$protected;
     }
 
+    /**
+     * Stand der Regeln, die das Trennen bestimmen (geschützte Namen mit Trenner, gemerkte Zusammenarbeiten) – frisch aus
+     * der Datenbank. Schlüssel für Namensliste und Profile: andere Änderungen im Verzeichnis rechnen sie nicht neu.
+     */
+    public static function rulesVersion(): string
+    {
+        self::flushProtected();
+
+        return md5(serialize([self::protectedNames(), self::splitRules()]));
+    }
+
     public static function flushProtected(): void
     {
         self::$protected = null;

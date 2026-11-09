@@ -9,6 +9,7 @@ use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
 use App\Support\DataVersion;
 use App\Support\Lookup;
+use App\Support\Settings;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -24,6 +25,9 @@ class AppServiceProvider extends ServiceProvider
         // ein neues und las alle Künstler und Schreibweisen erneut (bei großem Verzeichnis zehntausende Abfragen);
         // nach Änderungen leert flush() die gemeinsame Instanz
         $this->app->scoped(ArtistDirectory::class);
+        // Einstellungen ebenso: app(Compilations::class) u. Ä. in Schleifen lasen sonst pro Aufruf die Tabelle neu
+        // (Namensliste/Profile über die ganze Lib: zwei Abfragen pro Titel); set() leert den Zwischenspeicher
+        $this->app->scoped(Settings::class);
     }
 
     /**
