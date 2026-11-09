@@ -369,10 +369,62 @@ class PendingChangesTest extends TestCase
         $this->assertSame(['from' => [], 'to' => ['Pop']], $track['changes']['genres']);
         $this->assertSame('library/artists/A/ABBA/Gold (1992)/01 - Waterloo.mp3', $track['move']['to'], 'Ziel aus den fertigen Tags');
         $this->assertSame(['Genre'], $track['labels']);
+        $this->assertSame(['ABBA', '1992', 'Waterloo'], [$track['tags']['artist'], $track['tags']['year'], $track['tags']['title']], 'Felder zum Prüfen');
         $this->assertSame(['apply', 'album_files'], array_column($data['planned_actions'], 'type'), 'Titel zuerst, dann Cover & Extras des Albums');
         $this->assertSame($track['move']['to'], $data['planned_actions'][0]['target']);
 
         Livewire::test(PendingPage::class)->assertSee('Als JSON exportieren')
             ->call('export')->assertFileDownloaded();
+    }
+
+    /** Sampler, Datei frei unter library/sampler/… */
+    private function sampler(string $rel, array $tags): string
+    {
+        $path = $this->base.'/library/sampler/'.$rel;
+        File::ensureDirectoryExists(dirname($path));
+        file_put_contents($path, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));
+        app(TagTool::class)->write([['path' => $path, 'tags' => $tags + ['comment' => 'LIB COMPILATION', 'albumartist' => 'Various Artists', 'compilation' => true]]]);
+
+        return $path;
+    }
+
+    public function test_sampler_with_year_per_track_is_not_torn_apart(): void
+    {
+        // Jahr der Original-Single je Titel: der Regelort ergäbe drei Ordner – nichts verschieben
+        $a = $this->sampler('Dream Dance 12/1-1 ATB - Don\'t Stop.mp3', ['artist' => 'ATB', 'album' => 'Dream Dance 12', 'year' => '1999', 'disc' => '1', 'track' => '1', 'title' => 'Don\'t Stop']);
+        $b = $this->sampler('Dream Dance 12/1-2 Peaches - All Over.mp3', ['artist' => 'Peaches', 'album' => 'Dream Dance 12', 'year' => '', 'disc' => '1', 'track' => '2', 'title' => 'All Over']);
+        $c = $this->sampler('Dream Dance 12/1-3 Moby - Run On.mp3', ['artist' => 'Moby', 'album' => 'Dream Dance 12', 'year' => '1992', 'disc' => '1', 'track' => '3', 'title' => 'Run On']);
+        app(Scanner::class)->scan('library');
+
+        $f = app(CleanupChecks::class)->findings('misplaced');
+        $this->assertCount(1, $f);
+        $this->assertStringContainsString('würde auf 3 Ordner verteilt', $f[0]['detail']);
+        $this->assertSame([], array_filter($f[0]['actions'], fn ($a) => ! empty($a['target'])), 'kein Verschieben');
+
+        // vorgemerkter Titel des Albums: beim Schreiben nur die Tags, das Album bleibt beisammen
+        app(PendingChanges::class)->stage([['type' => 'apply', 'path' => $a, 'tags' => ['genres' => ['Trance']]]], 'Genre');
+        $actions = app(PendingChanges::class)->actions()['actions'];
+        $this->assertSame([['type' => 'apply', 'path' => $a, 'tags' => ['genres' => ['Trance']], 'pending_id' => PendingChange::sole()->id, 'revision' => 1]], $actions);
+        OperationRunner::dispatch('pending', 'Schreiben', $actions, ['on_conflict' => 'skip']);
+        foreach ([$a, $b, $c] as $p) {
+            $this->assertFileExists($p);
+        }
+        $this->assertSame(['Trance'], $this->fileTags($a)['genres']);
+    }
+
+    public function test_two_files_with_the_same_target_stay_where_they_are(): void
+    {
+        $a = $this->mp3('A/ABBA/Gold/1-01 Waterloo.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '1', 'title' => 'Waterloo']);
+        $b = $this->mp3('A/ABBA/Gold/1-01 Waterloo (3).mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '1', 'title' => 'Waterloo']);
+        $c = $this->mp3('A/ABBA/Gold/1-02 SOS.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '2', 'title' => 'SOS']);
+        app(Scanner::class)->scan('library');
+
+        $f = app(CleanupChecks::class)->findings('misplaced')[0];
+        $this->assertStringContainsString('2 Datei(en) hätten dasselbe Ziel', $f['detail']);
+        $this->assertStringContainsString('würde auf 2 Ordner verteilt', $f['detail'], 'SOS allein umziehen hieße: Album zerrissen');
+        $this->assertSame([], $f['actions'], 'nichts verschieben, bis die Duplikate entschieden sind');
+        foreach ([$a, $b, $c] as $p) {
+            $this->assertFileExists($p);
+        }
     }
 }

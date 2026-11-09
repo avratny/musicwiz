@@ -155,4 +155,19 @@ class CompilationsTest extends TestCase
             ->assertSet('fields.category', 'LIB COMPILATION')
             ->assertSee('Sampler erkannt an: Album-Interpret „Diverse“.');
     }
+
+    public function test_compilation_flag_stays_with_several_performers_in_artist_folder(): void
+    {
+        // „All That Jazz“: Album-Interpret Acker Bilk, Titel von drei Interpreten – echter Sampler, nicht einfach Flag weg
+        $n = 0;
+        foreach (['Acker Bilk' => 'Stranger On The Shore', 'Chris Barber' => 'High Society', 'Kenny Ball' => 'Acapulco 1922'] as $artist => $title) {
+            $n++;
+            $this->file("library/artists/A/Acker Bilk/All That Jazz/0$n - $title.mp3", ['artist' => $artist, 'albumartist' => 'Acker Bilk', 'album' => 'All That Jazz', 'track' => (string) $n, 'title' => $title, 'comment' => 'LIB', 'compilation' => true]);
+        }
+        app(Scanner::class)->scan('library');
+
+        $f = collect(app(CleanupChecks::class)->findings('compilation_in_artists'))->sole();
+        $this->assertSame([], $f['actions']);
+        $this->assertStringContainsString('3 verschiedene Interpreten – im Album-Editor entscheiden', $f['detail']);
+    }
 }

@@ -60,7 +60,7 @@ class CleanupChecks
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
             'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
-            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten (echter Name, leer, „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
+            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten und mit nur einem Interpreten (bzw. „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
             'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret. Album nur, wo eins sein sollte (andere Titel im Ordner haben eins oder Tracknummer vorhanden) – nicht in „Kein Album“.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
@@ -640,13 +640,44 @@ class CleanupChecks
             if (! $moves) {
                 continue;
             }
+            $held = [];
+            // Schutz 1: mehrere Titel mit demselben Ziel (z. B. „Lied (3).flac“ neben „Lied.flac“) – keiner wird verschoben,
+            // sonst gewinnt zufällig eine Kopie; erst unter „Duplikate“ entscheiden
+            $byTarget = array_count_values(array_filter(array_map(fn ($m) => $m['target'] ?? null, $moves)));
+            $clash = array_filter($byTarget, fn ($n) => $n > 1);
+            if ($clash) {
+                $moves = $this->withoutTargets($moves, fn ($m) => isset($clash[$m['target'] ?? '']));
+                $held[] = array_sum($clash).' Datei(en) hätten dasselbe Ziel – erst unter „Duplikate“ entscheiden';
+            }
+            // Schutz 2: das Album würde auf mehrere Ordner verteilt (z. B. Sampler mit dem Jahr der Original-Single je Titel) –
+            // nichts verschieben, erst Jahr bzw. Album angleichen („Album uneinheitlich“ oder Editor)
+            if (! $this->isLooseFolder($album)) {
+                $targetOf = array_column(array_filter($moves, fn ($m) => ! empty($m['target'])), 'target', 'path');
+                $albumDirs = $tracks->map(fn ($t) => Scanner::albumDir(dirname($targetOf[$t->path] ?? $t->path)))->unique();
+                if ($albumDirs->count() > 1 && $targetOf) {
+                    $years = $tracks->pluck('year')->map(fn ($y) => trim((string) $y) ?: '∅')->unique()->sort()->values();
+                    $moves = $this->withoutTargets($moves, fn () => true);
+                    $held[] = 'würde auf '.$albumDirs->count().' Ordner verteilt'.($years->count() > 1 ? ' (Jahr je Titel: '.$years->take(6)->implode(', ').($years->count() > 6 ? ' …' : '').')' : '')
+                        .' – erst Jahr/Album angleichen (Album-Editor oder „Album uneinheitlich“)';
+                }
+            }
+            // zurückgehaltene Ablage: nur fürs Schreiben vorgemerkter Titel von Bedeutung (Titel gilt als erledigt), im Aufräumen kein Schritt
+            if (! $this->includePending) {
+                $moves = array_values(array_filter($moves, fn ($m) => empty($m['hold'])));
+            }
+            if (! $moves && ! $held) {
+                continue;
+            }
             $withTarget = array_filter($moves, fn ($m) => ! empty($m['target']));
             $dirs = array_unique(array_map(fn ($m) => Scanner::albumDir(dirname($m['target'])), $withTarget));
             if ($withTarget && count($withTarget) === $tracks->count() && count($dirs) === 1 && reset($dirs) !== $album->dir) {
                 $moves[] = ['type' => 'album_files', 'from_dir' => $album->dir, 'to_dir' => reset($dirs)];
             }
-            $first = reset($withTarget) ?: $moves[0];
+            $first = reset($withTarget) ?: ($moves[0] ?? null);
             $detail = count($withTarget).' Datei(en)'.(! empty($first['target']) ? ': '.$this->rel($first['path']).' → '.$this->rel($first['target']) : '');
+            if ($held) {
+                $detail .= "\n⚠ Nicht verschoben: ".implode(' · ', $held);
+            }
             $cleared = count(array_filter($moves, fn ($m) => array_key_exists('track', $m['tags'] ?? []) || array_key_exists('disc', $m['tags'] ?? [])));
             if ($cleared) {
                 $detail .= "\n".$cleared.' Einzellied(er): Track- und CD-Nummer leeren („'.$this->settings->get('no_album').'“)';
@@ -988,12 +1019,37 @@ class CleanupChecks
             $album = $this->albums()[$albumId] ?? null;
             if ($reason = $this->compilationInArtists($album, $tracks)) {
                 $aa = (string) $tracks->map(fn ($t) => trim((string) $t->albumartist))->filter()->countBy()->sortDesc()->keys()->first();
-                // nur das Flag macht es zum Sampler (Album-Interpret echt, leer, Platzhalter, „Kein Album“): Flag ist falsch
-                $flagOnly = ! $this->compilations->isVariousArtists($aa);
+                // nur das Flag macht es zum Sampler (Album-Interpret echt, leer, Platzhalter, „Kein Album“) und alle Titel sind vom
+                // selben Interpreten (Gäste mit „feat.“ zählen nicht): Flag ist falsch. Mehrere Interpreten („All That Jazz“
+                // von Acker Bilk, Chris Barber, Kenny Ball) sind ein echter Sampler – im Editor entscheiden
+                $performers = $tracks->map(fn ($t) => ArtistNames::compareKey(($t->artists ?: ArtistNames::split($t->artist))[0] ?? ''))->filter()->unique();
+                $flagOnly = ! $this->compilations->isVariousArtists($aa) && ($performers->count() <= 1 || $this->isLooseFolder($album));
                 $actions = $flagOnly ? $this->applyActions($tracks->filter(fn ($t) => (bool) $t->compilation), fn () => ['compilation' => false]) : [];
                 $detail = 'Erkannt an: '.$reason.' · liegt in „'.$album->category.'“'
-                    .($actions ? ($aa !== '' ? ' · Album-Interpret „'.$aa.'“ bleibt, Flag wird entfernt' : ' · Flag wird entfernt') : ' · im Album-Editor entscheiden');
+                    .($actions ? ($aa !== '' ? ' · Album-Interpret „'.$aa.'“ bleibt, Flag wird entfernt' : ' · Flag wird entfernt')
+                        : ($performers->count() > 1 ? ' · '.$performers->count().' verschiedene Interpreten – im Album-Editor entscheiden' : ' · im Album-Editor entscheiden'));
                 $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $detail, 'link' => $this->link($album), 'actions' => $actions];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Ziele entfernen (Tag-Korrekturen bleiben); reine Verschiebungen fallen weg. Für vorgemerkte Titel bleibt so die
+     * Ablage aus, beim „Änderungen schreiben“ werden nur die Tags geschrieben.
+     */
+    private function withoutTargets(array $moves, callable $which): array
+    {
+        $out = [];
+        foreach ($moves as $m) {
+            if (! $which($m)) {
+                $out[] = $m;
+            } elseif (! empty($m['tags'])) {
+                unset($m['target']);
+                $out[] = $m;
+            } elseif (($m['type'] ?? '') === 'apply') {
+                $out[] = ['type' => 'apply', 'path' => $m['path'], 'hold' => true]; // markiert: Ablage zurückgehalten
             }
         }
 

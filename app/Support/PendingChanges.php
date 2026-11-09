@@ -277,6 +277,8 @@ class PendingChanges
             $albums[$id]['tracks'][] = array_filter([
                 'track_id' => $t->id,
                 'path' => $rel($t->path),
+                // gewünschter Stand der wichtigsten Felder (zum Prüfen, z. B. Interpreten je Album, Jahr je Titel)
+                'tags' => array_intersect_key($after, array_flip(['artist', 'artists', 'albumartist', 'album', 'year', 'disc', 'track', 'title', 'compilation', 'comment'])),
                 'changes' => collect((array) $pc->tags_before)->map(fn ($from, $k) => ['from' => $from, 'to' => $after[$k] ?? null])->all() ?: null,
                 'move' => $target ? ['from' => $rel($t->path), 'to' => $rel($target)] : null,
                 'cover' => $pc->cover ? 'neues Cover' : ($pc->remove_cover ? 'entfernen' : ($pc->embed_cover && ! $t->cover_embedded ? 'fehlendes einbetten' : null)),
@@ -352,6 +354,9 @@ class PendingChanges
             }
             $pc = $pending[$path] ?? null;
             $tags = ($a['tags'] ?? []) + ($pc ? self::wantedTags($pc) : []);
+            if (! $pc && ! $tags && empty($a['target'])) {
+                continue; // Ablage zurückgehalten (z. B. Album würde zerrissen), nichts zu tun
+            }
             $actions[] = array_filter(['type' => 'apply', 'path' => $path, 'tags' => $tags ?: null, 'target' => $a['target'] ?? null,
                 'pending_id' => $pc?->id, 'revision' => $pc?->revision] + $cover($pc), fn ($v) => $v !== null);
             $handled[$path] = true;
