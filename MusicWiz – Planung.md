@@ -211,6 +211,8 @@ Weitere Prüfungen: **Beschädigte Audiodaten** (per Knopf „Audiodaten prüfen
 
 Dazu kommen Genre-Prüfungen: Genres, die nicht auf der Liste stehen (Behebung über die Zuordnungstabelle), Alben mit gemischten Genres, Alben ohne Genre und Electronic-Alben ohne Unterstil; außerdem Künstler ohne Bild.
 
+- **Vormerken statt sofort schreiben (digitaler Zwilling):** Behebungen im Aufräumen, Speichern im Album-Editor (Lib-Alben: Tags, Ablage, neues/entferntes Cover) und Entscheidungen im Künstlerverzeichnis (umbenennen, zusammenführen, Schreibweise, Trennen, umgedrehte Namen) ändern nur die Datenbank – die Liste reagiert sofort. Der Seitenleisten-Punkt „Änderungen schreiben“ zeigt alles Vorgemerkte je Album und schreibt je Datei einmal die Tags und verschiebt höchstens einmal an den Ort, den die fertigen Tags ergeben (Cover und Extras mit); der neue Pfad kommt danach in die Datenbank. Verwerfen je Album oder alles. Einordnen aus der Inbox, ins Blackhole verschieben, Papierkorb, ReplayGain, Songtexte und Cover-Behebungen im Aufräumen laufen weiter sofort. Roon/Navidrome sehen Änderungen erst nach dem Schreiben.
+- **Prüfen nur bei Bedarf:** nach Änderungen an einzelnen Alben werden nur diese neu geprüft; lib-weite Prüfungen (Duplikate, Genres …) erst beim Öffnen, veraltete Zahlen grau.
 - **Nichts wird endgültig gelöscht:** Aussortiertes wandert in einen einstellbaren Papierkorb-Ordner auf dem Share, den Andreas selbst leert.
 - Die Prüfungen laufen auf den Scan-Daten in SQLite, nicht direkt auf dem Share.
 

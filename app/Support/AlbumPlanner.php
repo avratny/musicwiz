@@ -26,7 +26,7 @@ class AlbumPlanner
      */
     public function plan(Album $album, array $fields, array $trackEdits, bool $move, ?string $cover = null, bool $removeCover = false): array
     {
-        $tracks = $album->tracks()->get();
+        $tracks = $album->tracks()->with('pendingChange')->get();
         $category = $this->settings->category($fields['category'] ?? null);
         $compilationArtist = (string) $this->settings->get('compilation_artist');
         $warnings = [];
@@ -108,7 +108,10 @@ class AlbumPlanner
         $targets = [];
         foreach ($tracks as $t) {
             $new = $newTagSets[$t->id];
-            $changed = $this->diff($t->tags(), $new);
+            // mit dem Dateistand vergleichen (nicht dem Zwilling): vorgemerkte Änderungen aus dem Aufräumen werden mitgeschrieben
+            $fileTags = PendingChanges::fileTags($t);
+            $pending = $t->pendingChange;
+            $changed = $this->diff($fileTags, $new);
             $target = null;
             $problems = [];
             foreach ($unresolved[$t->id] ?? [] as $name) {
@@ -138,8 +141,9 @@ class AlbumPlanner
                 'path' => $t->path,
                 'target' => $target !== $t->path ? $target : null,
                 'changed' => $changed,
+                'pending' => $pending ? ['id' => $pending->id, 'revision' => $pending->revision] : null,
                 'embed' => $embed && in_array($t->id, $embed['tracks'], true),
-                'old' => array_intersect_key($t->tags(), $changed),
+                'old' => array_intersect_key($fileTags, $changed),
                 'problems' => $problems,
                 'blocked' => (bool) array_filter($problems, fn ($p) => ! str_contains($p, 'existiert') && ! str_contains($p, 'dasselbe Ziel')),
                 'conflict' => (bool) array_filter($problems, fn ($p) => str_contains($p, 'existiert') || str_contains($p, 'dasselbe Ziel')),
@@ -194,6 +198,8 @@ class AlbumPlanner
                 'embed_from' => $embed ? $plan['embed_cover']['from'] : null,
                 'remove_cover' => $removeCover ?: null,
                 'target' => $row['target'],
+                'pending_id' => $row['pending']['id'] ?? null,
+                'revision' => $row['pending']['revision'] ?? null,
             ], fn ($v) => $v !== null && $v !== []);
             $targetDirs[dirname($row['target'] ?? $row['path'])] = true;
         }
@@ -201,7 +207,7 @@ class AlbumPlanner
         $mainTarget = $targetDirs ? Scanner::albumDir($targetDirs[0]) : $plan['album_dir'];
         if (count($targetDirs) > 1) {
             // mehrere CD-Ordner: gemeinsamer Elternordner
-            $mainTarget = $this->commonDir($targetDirs);
+            $mainTarget = self::commonDir($targetDirs);
         }
         $albumDirs = $plan['album_dirs'] ?? [$plan['album_dir']];
         if ($plan['move'] && $allMoved) {
@@ -255,7 +261,7 @@ class AlbumPlanner
         return $changed;
     }
 
-    private function commonDir(array $dirs): string
+    public static function commonDir(array $dirs): string
     {
         $parts = array_map(fn ($d) => explode('/', $d), $dirs);
         $common = [];

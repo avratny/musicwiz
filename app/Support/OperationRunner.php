@@ -146,6 +146,11 @@ class OperationRunner
                 $this->scanner->rescanPaths(array_keys($this->touched));
                 $this->scanner->refreshLeftovers(array_keys($this->touched));
             });
+            foreach ($this->pendingCarry as $path => $rest) {
+                PendingChanges::carryOver($path, $rest);
+            }
+            $this->pendingCarry = [];
+            PendingChanges::pruneCovers();
         } catch (\Throwable $e) {
             report($e);
             $errors[] = 'Neu einlesen: '.$e->getMessage();
@@ -179,6 +184,9 @@ class OperationRunner
         return $paths;
     }
 
+    /** Vormerkungen, die nach dem Schreiben noch offen sind (neuer Pfad => Rest), siehe PendingChanges::written */
+    private array $pendingCarry = [];
+
     private function runAction(Operation $op, array $a, string $onConflict): void
     {
         switch ($a['type']) {
@@ -186,6 +194,12 @@ class OperationRunner
                 $path = $a['path'];
                 if (! is_file($path)) {
                     throw new RuntimeException('Datei fehlt: '.$path);
+                }
+                // vorgemerkte Änderung: nur schreiben, wenn sie noch genau so besteht (Vorschau kann veraltet sein – inzwischen
+                // verworfen oder Neues vorgemerkt); sonst nichts schreiben, die Vormerkung bleibt fürs nächste Mal
+                if (! empty($a['pending_id']) && ! PendingChanges::stillCurrent((int) $a['pending_id'], (int) ($a['revision'] ?? 0))) {
+                    $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $path, 'error' => 'übersprungen – Vormerkung inzwischen geändert oder verworfen']));
+                    break;
                 }
                 $this->touch($path);
                 $tags = $a['tags'] ?? [];
@@ -205,6 +219,14 @@ class OperationRunner
                 }
                 if (! empty($a['target']) && $a['target'] !== $path) {
                     $this->moveLogged($op, $path, $a['target'], $onConflict);
+                }
+                // vorgemerkte Änderung geschrieben: erledigt – oder (unterwegs Neues vorgemerkt) auf den neuen Pfad tragen
+                if (! empty($a['pending_id'])) {
+                    $rest = PendingChanges::written((int) $a['pending_id'], (int) ($a['revision'] ?? 0), $tags);
+                    if ($rest) {
+                        // tatsächlicher Ort: am Ziel – oder (Ziel belegt, übersprungen) noch am alten Platz
+                        $this->pendingCarry[! empty($a['target']) && ! is_file($path) ? $a['target'] : $path] = $rest;
+                    }
                 }
                 break;
 

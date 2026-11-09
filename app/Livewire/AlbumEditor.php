@@ -21,9 +21,11 @@ use App\Support\InboxMatcher;
 use App\Support\Lookup;
 use App\Support\OperationRunner;
 use App\Support\PathBuilder;
+use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
+use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Component;
@@ -530,6 +532,25 @@ class AlbumEditor extends Component
         }
     }
 
+    /** Vorgemerkte Änderungen dieses Albums in die Dateien schreiben (Tags, dann an den Regelort). */
+    public function writePendingAlbum(PendingChanges $pending): void
+    {
+        $plan = $pending->actions([$this->albumId]);
+        if (! $plan['actions'] || $this->operationId) {
+            return;
+        }
+        $this->operationId = OperationRunner::dispatch('pending', 'Vorgemerkte Änderungen schreiben: '.$this->albumLabel(), $plan['actions'], ['on_conflict' => 'skip'])->id;
+        $this->dispatch('activity-changed');
+    }
+
+    /** Vorgemerkte Änderungen dieses Albums verwerfen: Felder wieder wie in den Dateien. */
+    public function discardPendingAlbum(PendingChanges $pending): void
+    {
+        $pending->discard([$this->albumId]);
+        $this->loadAlbum($this->album());
+        session()->flash('status', 'Vorgemerkte Änderungen verworfen.');
+    }
+
     /** Titel, deren Lautheits-Tags sich schreiben lassen (MP3/FLAC mit Audiodaten). */
     private function replaygainTracks()
     {
@@ -603,7 +624,19 @@ class AlbumEditor extends Component
     {
         $planner = app(AlbumPlanner::class);
         $plan = $planner->plan($this->album(), $this->plannerFields(), $this->trackEdits(), $this->planMove, $this->newCover, $this->removeCover);
+        // Lib: nur im Zwilling vormerken – geschrieben wird über „Änderungen schreiben“
+        if ($this->album()->location === 'library') {
+            $this->stagePlan($plan);
+
+            return;
+        }
         $actions = $planner->actions($plan, $this->onConflict);
+        // Vormerkungen von Titeln, die im Editor auf den Dateistand zurückgesetzt wurden (nichts zu schreiben): verwerfen
+        $written = array_column(array_filter($actions, fn ($a) => ! empty($a['pending_id'])), 'pending_id');
+        $reverted = array_values(array_diff(array_filter(array_map(fn ($r) => $r['pending']['id'] ?? null, $plan['rows'])), $written));
+        if ($reverted) {
+            app(PendingChanges::class)->discardIds($reverted);
+        }
         if (! $actions) {
             $this->plan = null;
             session()->flash('status', 'Keine Änderungen.');
@@ -620,6 +653,58 @@ class AlbumEditor extends Component
         $this->plan = null;
         $this->newCover = null;
         $this->removeCover = false;
+        $this->dispatch('activity-changed');
+    }
+
+    /**
+     * Vorschau eines Lib-Albums vormerken: Tags (und Cover) in den Zwilling; Ordner und Dateinamen ergeben sich beim
+     * Schreiben aus den fertigen Tags. Belegte Ziele werden dann übersprungen, nie überschrieben.
+     */
+    private function stagePlan(array $plan): void
+    {
+        $pending = app(PendingChanges::class);
+        $cover = $plan['cover'] ? PendingChanges::keepCover($plan['cover']) : null;
+        $tracks = Track::with('pendingChange')->whereIn('id', array_column($plan['rows'], 'track_id'))->get()->keyBy('id');
+        $skipped = 0;
+        $dirs = [];
+        DB::transaction(function () use ($plan, $pending, $cover, $tracks, &$skipped, &$dirs) {
+            foreach ($plan['rows'] as $row) {
+                $t = $tracks[$row['track_id']] ?? null;
+                if (! $t) {
+                    continue;
+                }
+                if ($row['blocked']) {
+                    $skipped++;
+
+                    continue;
+                }
+                // vorgemerkte Felder, die im Editor wieder auf den Dateistand gesetzt wurden: Vormerkung dafür aufheben
+                $tags = $row['changed'] + array_intersect_key(PendingChanges::fileTags($t), (array) ($t->pendingChange?->tags_before ?? []));
+                $extra = ['cover' => $cover, 'remove_cover' => (bool) $plan['remove_cover'], 'embed_cover' => (bool) $row['embed']];
+                if (! $tags && ! $row['target'] && ! array_filter($extra)) {
+                    continue;
+                }
+                $pending->stageTrack($t, $tags, $plan['move'] && $row['target'], 'Album-Editor', $row['conflict'] ? null : $row['target'], $extra);
+                $dirs[$t->dir] = true;
+            }
+        });
+        $pending->afterChange(array_keys($dirs));
+        PendingChanges::pruneCovers();
+
+        $this->plan = null;
+        $this->newCover = null;
+        $this->removeCover = false;
+        // Album kann sich durch neue Tags neu gebildet haben: über einen Titel wiederfinden
+        $album = Album::find($this->albumId) ?? Track::find($plan['rows'][0]['track_id'] ?? 0)?->albumRecord;
+        $count = $album ? app(PendingChanges::class)->count([$album->id]) : 0;
+        session()->flash('status', $count
+            ? $count.' Titel vorgemerkt – noch nicht in den Dateien. Schreiben mit „jetzt schreiben“ oder unter „Änderungen schreiben“.'.($skipped ? ' '.$skipped.' Titel ausgelassen (siehe Vorschau).' : '')
+            : 'Keine Änderungen.');
+        if ($album && $album->id !== $this->albumId) {
+            $this->redirect($album->editUrl(), navigate: true);
+        } elseif ($album) {
+            $this->loadAlbum($album);
+        }
         $this->dispatch('activity-changed');
     }
 
@@ -935,6 +1020,7 @@ class AlbumEditor extends Component
             'genreSuggestion' => $genreSuggestion,
             'unlistedGenres' => array_values(array_filter($trackGenres, fn ($g) => ! $genres->isListed($g))),
             'compilationArtist' => $compilationArtist,
+            'pendingCount' => app(PendingChanges::class)->count([$this->albumId]),
             'hasAcoustid' => trim((string) $settings->get('acoustid_key')) !== '',
             'vaWarning' => $category && ! $category['compilation'] && app(Compilations::class)->isVariousArtists($this->fields['albumartist']),
             'base' => $settings->base(),

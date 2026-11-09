@@ -548,6 +548,8 @@ class Scanner
             $columns = array_diff(array_keys($rows[0]), ['path', 'created_at']);
             Track::upsert($rows, ['path'], $columns);
             Cache::increment(self::INDEX_BUMP);
+            // Datei mit Vormerkung neu gelesen: der Zwilling behält die vorgemerkten Werte, der Dateistand wird nachgeführt
+            PendingChanges::reapply(array_column($rows, 'path'));
         }
     }
 

@@ -16,6 +16,7 @@ use App\Support\CleanupChecks;
 use App\Support\FileOps;
 use App\Support\Integrity;
 use App\Support\OperationRunner;
+use App\Support\PendingChanges;
 use App\Support\Quality;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -94,11 +95,25 @@ class Cleanup extends Component
             return;
         }
         $label = CleanupChecks::definitions()[$this->check][0] ?? $this->check;
+        $this->selected = array_values(array_diff($this->selected, [$findingId]));
+        // Tags/Ablage nur vormerken (digitaler Zwilling) – sofort sichtbar, geschrieben wird per „Änderungen schreiben“
+        if (PendingChanges::stageable($actions)) {
+            app(PendingChanges::class)->stage($actions, $label);
+            $this->refreshOpenCheck();
+
+            return;
+        }
         $op = OperationRunner::dispatch('cleanup', $label.': '.$f['title'], $actions, ['on_conflict' => $this->onConflict]);
         $this->watching[] = $op->id;
         $this->running[$findingId] = $op->id;
-        $this->selected = array_values(array_diff($this->selected, [$findingId]));
         $this->dispatch('activity-changed');
+    }
+
+    /** Nach dem Vormerken: die offene Prüfung gleich im selben Klick neu (nur die geänderten Alben – Millisekunden). */
+    private function refreshOpenCheck(): void
+    {
+        Cache::put(CleanupChecks::FOCUS, $this->check, now()->addMinutes(30));
+        app()->make(CleanupChecks::class)->refreshAll(0);
     }
 
     public function previewFix(CleanupChecks $checks, bool $all = false): void
@@ -110,8 +125,11 @@ class Cleanup extends Component
             $findings = array_filter($findings, fn ($f) => in_array($f['id'], $this->selected, true));
         }
         $actions = [];
+        $staged = [];
         foreach ($findings as $f) {
-            array_push($actions, ...$this->actionsFor($f));
+            $fa = $this->actionsFor($f);
+            // Tags/Ablage werden vorgemerkt (digitaler Zwilling), alles andere läuft sofort
+            PendingChanges::stageable($fa) ? array_push($staged, ...$fa) : array_push($actions, ...$fa);
         }
         // Belegte Ziele: vorab zeigen, was mit "bessere Version behalten" passieren würde
         $notes = [];
@@ -134,10 +152,11 @@ class Cleanup extends Component
         // Aktionen nur im Server-Zwischenspeicher: im Seitenzustand würden tausende Pfade bei jedem Aktualisieren
         // hin- und hergeschickt (Livewire-Grenze 1 MB) – angezeigt werden ohnehin nur die ersten 300
         $token = bin2hex(random_bytes(8));
-        Cache::put(self::PREVIEW_KEY.$token, ['actions' => $actions, 'count' => count($findings)], now()->addHours(2));
+        Cache::put(self::PREVIEW_KEY.$token, ['actions' => $actions, 'staged' => $staged, 'count' => count($findings)], now()->addHours(2));
         $this->preview = [
-            'token' => $token, 'count' => count($findings), 'all' => $all, 'total' => count($actions),
-            'shown' => array_slice($actions, 0, self::PREVIEW_SHOWN),
+            'token' => $token, 'count' => count($findings), 'all' => $all, 'total' => count($actions) + count($staged),
+            'staged' => count($staged),
+            'shown' => array_slice([...$staged, ...$actions], 0, self::PREVIEW_SHOWN),
             'notes' => array_filter($notes, fn ($i) => $i < self::PREVIEW_SHOWN, ARRAY_FILTER_USE_KEY),
             'notesCount' => count($notes),
             'hasMoves' => collect($actions)->contains(fn ($a) => in_array($a['type'], ['move', 'apply'], true) && ! empty($a['target'])),
@@ -151,18 +170,25 @@ class Cleanup extends Component
     public function confirm(): void
     {
         $stored = $this->preview ? Cache::pull(self::PREVIEW_KEY.$this->preview['token']) : null;
-        if (! $stored || ! $stored['actions']) {
+        if (! $stored || (! $stored['actions'] && ! ($stored['staged'] ?? []))) {
             $this->preview = null;
 
             return;
         }
         $label = CleanupChecks::definitions()[$this->check][0] ?? $this->check;
-        $op = OperationRunner::dispatch('cleanup', 'Aufräumen: '.$label.' ('.$stored['count'].' Funde)', $stored['actions'], ['on_conflict' => $this->onConflict]);
-        $this->watching[] = $op->id;
+        $this->done = null;
+        if ($stored['staged'] ?? []) {
+            $n = app(PendingChanges::class)->stage($stored['staged'], $label);
+            $this->done = $n.' Titel vorgemerkt – in die Dateien kommt es mit „Änderungen schreiben“.';
+            $this->refreshOpenCheck();
+        }
+        if ($stored['actions']) {
+            $op = OperationRunner::dispatch('cleanup', 'Aufräumen: '.$label.' ('.$stored['count'].' Funde)', $stored['actions'], ['on_conflict' => $this->onConflict]);
+            $this->watching[] = $op->id;
+        }
         $this->preview = null;
         $this->selected = [];
         $this->dispatch('activity-changed');
-        $this->done = null;
     }
 
     private function actionsFor(array $finding): array
@@ -268,11 +294,12 @@ class Cleanup extends Component
             return;
         }
         ArtistSplit::remember($name, $parts);
+        $staged = app(PendingChanges::class)->stageForNames([$name], 'Trennen');
         RefreshCleanup::request();
         $this->split = null;
         // nichts automatisch anlegen – neue Künstler gleich zum Erfassen anbieten
         $this->splitNewArtists = array_values(array_filter($parts, fn ($p) => app(ArtistDirectory::class)->check($p)['status'] === 'new'));
-        $this->done = '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt. In die Dateien schreibt das „Kombi-Interpreten ohne ARTISTS“ (Schritt 2).';
+        $this->done = '„'.$name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt.'.PendingChanges::note($staged);
     }
 
     /** „Umgedrehte Namen“: Verzeichnis-Einträge richtig herum benennen (alter Name wird Schreibweise). */
@@ -280,16 +307,19 @@ class Cleanup extends Component
     {
         $persons = app(Settings::class)->get('invert_names') === 'persons';
         $done = [];
+        $names = [];
         foreach ($directory->invertedEntries() as $artist) {
             $to = ArtistNames::uninvert($artist->name, $persons);
             if ($to !== null) {
                 $from = $artist->name;
                 $directory->rename($artist, $to);
                 $done[] = '„'.$from.'“ → „'.$to.'“';
+                array_push($names, $from, $to);
             }
         }
+        $staged = app(PendingChanges::class)->stageForNames($names, 'Umgedrehte Namen');
         RefreshCleanup::request();
-        $this->done = $done ? 'Im Verzeichnis umbenannt: '.implode(', ', array_slice($done, 0, 8)).(count($done) > 8 ? ' … ('.count($done).')' : '').'. Die Tags schreibt „Richtig herum schreiben“.' : null;
+        $this->done = $done ? 'Im Verzeichnis umbenannt: '.implode(', ', array_slice($done, 0, 8)).(count($done) > 8 ? ' … ('.count($done).')' : '').'.'.PendingChanges::note($staged) : null;
     }
 
     /** Künstler im Dialog erfasst (z. B. „Simon & Garfunkel“ als ein Künstler): Funde neu berechnen lassen. */
@@ -356,12 +386,14 @@ class Cleanup extends Component
 
         return view('livewire.cleanup', [
             'defs' => $defs,
-            'counts' => $checks->displayCounts(),
+            'counts' => array_map(fn ($c) => $c['count'], $countStates = $checks->countsWithState()),
+            'countStates' => $countStates,
             // veraltet: Liste/Anzahlen vom letzten Stand, Beheben gesperrt bis zur Neuberechnung
             // gesperrt wird nur, solange die offene Prüfung selbst veraltet ist – die Zahlen links dürfen nachziehen
             'stale' => $staleList,
             'countsStale' => ! $fresh,
             'pending' => $pending,
+            'pendingCount' => app(PendingChanges::class)->count(),
             'splitStatus' => $this->split ? $this->splitPartStatus() : [],
             'invertedArtists' => $this->check === 'inverted' ? app(ArtistDirectory::class)->invertedEntries() : collect(),
             'looseCount' => $looseCount,

@@ -18,6 +18,7 @@ Route::livewire('/youtube', Livewire\YouTubeDownload::class)->name('youtube');
 Route::livewire('/papierkorb', Livewire\TrashPage::class)->name('trash');
 Route::livewire('/kuenstler', Livewire\Artists::class)->name('artists');
 Route::livewire('/aufraeumen', Livewire\Cleanup::class)->name('cleanup');
+Route::livewire('/aenderungen', Livewire\PendingPage::class)->name('pending');
 Route::livewire('/aufraeumen/zeichen', Livewire\TextRepairAssistant::class)->name('text-repair');
 Route::livewire('/verlauf', Livewire\History::class)->name('history');
 Route::livewire('/statistik', Livewire\Statistics::class)->name('statistics');

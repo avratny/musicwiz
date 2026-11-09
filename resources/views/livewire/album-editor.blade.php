@@ -63,6 +63,17 @@
         </div>
     @endif
 
+    {{-- Vorgemerkte Änderungen aus Aufräumen/Verzeichnis: stehen schon in den Feldern, aber noch nicht in den Dateien --}}
+    @if ($pendingCount)
+        <div class="shrink-0 px-6 pt-4">
+            <div class="flex flex-wrap items-center gap-3 rounded-lg border border-violet-500/30 bg-violet-500/10 px-4 py-2 text-sm text-violet-200">
+                <span class="flex-1">{{ $pendingCount }} {{ $pendingCount === 1 ? 'Titel hat' : 'Titel haben' }} vorgemerkte Änderungen – angezeigt, aber noch nicht in den Dateien. Geschrieben wird mit „jetzt schreiben“ bzw. unter <a href="{{ route('pending') }}" wire:navigate class="underline">Änderungen schreiben</a>.</span>
+                <button wire:click="discardPendingAlbum" data-confirm-label="Verwerfen" wire:confirm="Vorgemerkte Änderungen dieses Albums verwerfen? Die Felder zeigen dann wieder den Stand der Dateien." class="btn-ghost btn-sm" @disabled($operation)>verwerfen</button>
+                <button wire:click="writePendingAlbum" class="btn-primary btn-sm" @disabled($operation)>jetzt schreiben</button>
+            </div>
+        </div>
+    @endif
+
     {{-- Künstler, die laut Verzeichnis (bzw. MusicBrainz) anders heißen: umbenennen vorschlagen --}}
     @if ($renames)
         <div class="shrink-0 px-6 pt-4">
@@ -474,15 +485,15 @@
                 @if ($operation)
                     <span class="flex items-center gap-2 text-sm text-violet-200"><span class="size-2 animate-pulse rounded-full bg-violet-400"></span> {{ $operation->statusLabel() }}: {{ $operation->done }}/{{ $operation->total }}</span>
                 @else
-                    <span class="text-xs text-zinc-500">Geschrieben wird erst nach Bestätigung der Vorschau.</span>
+                    <span class="text-xs text-zinc-500">{{ $isInbox ? 'Geschrieben wird erst nach Bestätigung der Vorschau.' : 'Wird nur vorgemerkt – in die Dateien über „Änderungen schreiben“.' }}</span>
                 @endif
                 <div class="ml-auto flex gap-2">
                     @if ($isInbox)
                         <button wire:click="preview(false)" class="btn-ghost" @disabled($operation)>Tags speichern …</button>
                         <button wire:click="preview(true)" class="btn-accent" @disabled($operation)>Einordnen …</button>
                     @else
-                        <button wire:click="preview(false)" class="btn-ghost" @disabled($operation)>Nur Tags speichern …</button>
-                        <button wire:click="preview(true)" class="btn-primary" @disabled($operation)>Speichern …</button>
+                        <button wire:click="preview(false)" class="btn-ghost" @disabled($operation)>Nur Tags vormerken …</button>
+                        <button wire:click="preview(true)" class="btn-primary" @disabled($operation)>Vormerken …</button>
                     @endif
                 </div>
             </footer>
@@ -502,7 +513,7 @@
              x-on:mouseup="if ($event.target !== $el) downOutside = false">
             <div class="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center gap-3 border-b border-zinc-800 px-6 py-4">
-                    <h2 class="text-lg font-semibold">Vorschau: {{ $planMove ? ($isInbox ? 'Einordnen' : 'Speichern & verschieben') : 'Tags speichern' }}</h2>
+                    <h2 class="text-lg font-semibold">Vorschau: {{ $isInbox ? ($planMove ? 'Einordnen' : 'Tags speichern') : ($planMove ? 'Vormerken (mit Ablage)' : 'Tags vormerken') }}</h2>
                     @if ($plan['category'])<span class="badge-violet">{{ $plan['category']['name'] }}</span>@endif
                     <button wire:click="closePreview" class="ml-auto text-zinc-400 hover:text-white">✕</button>
                 </div>
@@ -558,7 +569,9 @@
                     </div>
                 </div>
                 <div class="flex items-center gap-4 border-t border-zinc-800 px-6 py-4">
-                    @if ($conflicts)
+                    @if (! $isInbox)
+                        <span class="text-xs text-zinc-500">Nur vorgemerkt: Die Dateien ändern sich erst über „Änderungen schreiben“ – dann auch Ordner und Dateinamen nach den fertigen Tags{{ $conflicts ? '; belegte Ziele werden übersprungen' : '' }}.</span>
+                    @elseif ($conflicts)
                         <label class="flex items-center gap-2 text-sm text-amber-200">
                             {{ $conflicts }} Konflikt(e):
                             <select wire:model.live="onConflict" class="input-sm w-auto">
@@ -569,7 +582,7 @@
                         </label>
                     @endif
                     <button wire:click="closePreview" class="btn-ghost ml-auto">Abbrechen</button>
-                    <button wire:click="confirm" wire:loading.attr="disabled" class="btn-accent">Bestätigen &amp; ausführen</button>
+                    <button wire:click="confirm" wire:loading.attr="disabled" class="btn-accent">{{ $isInbox ? 'Bestätigen & ausführen' : 'Vormerken' }}</button>
                 </div>
             </div>
         </div>

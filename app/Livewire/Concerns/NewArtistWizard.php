@@ -12,6 +12,7 @@ use App\Support\ArtistImages;
 use App\Support\ArtistNames;
 use App\Support\Covers;
 use App\Support\Lookup;
+use App\Support\PendingChanges;
 use App\Support\Settings;
 use Livewire\Attributes\Url;
 
@@ -429,6 +430,7 @@ trait NewArtistWizard
         if ($aliases > ($orig !== $final ? 1 : 0)) {
             $msg .= ' – '.$aliases.' Schreibweise(n) mitgespeichert';
         }
+        $staged = $orig !== $final || $aliases ? app(PendingChanges::class)->stageForNames([$orig, $final], 'Neuer Künstler') : 0;
         if ($this->wizImage && ! $artist->image) {
             try {
                 // per URL geladen: schon geprüfte Datei nehmen, sonst jetzt herunterladen
@@ -439,7 +441,7 @@ trait NewArtistWizard
             }
         }
         $directory->flush();
-        session()->flash('status', $msg.'.');
+        session()->flash('status', $msg.'.'.PendingChanges::note($staged));
         $this->wizNext($directory);
     }
 
@@ -452,7 +454,8 @@ trait NewArtistWizard
         }
         $this->wizStoreAliases($artist, (string) $this->wizName, $directory);
         $directory->flush();
-        session()->flash('status', '„'.$this->wizName.'“ als Schreibweise von „'.$artist->name.'“ gespeichert.');
+        $staged = app(PendingChanges::class)->stageForNames([(string) $this->wizName, $artist->name], 'Schreibweise');
+        session()->flash('status', '„'.$this->wizName.'“ als Schreibweise von „'.$artist->name.'“ gespeichert.'.PendingChanges::note($staged));
         $this->wizNext($directory);
     }
 

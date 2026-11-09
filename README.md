@@ -17,7 +17,9 @@ bestätigter Vorschau. Jede Aktion steht im Verlauf und lässt sich rückgängig
 - **Künstler** – Künstlerverzeichnis mit Schreibweisen, MusicBrainz-/Discogs-ID, Bild und Standard-Genre; gleichnamige Künstler
   auseinanderhalten; neue Namen aus dem Bestand Schritt für Schritt erfassen.
 - **Aufräumen** – Prüfungen in fünf Schritten (Defekte Dateien, Duplikate, Schreibweisen, Genres, Cover, Ablageort, Reste …),
-  jeweils mit Vorschau und „Übernehmen“. Einzelne Prüfungen lassen sich als Automatik freigeben (standardmäßig alles aus).
+  jeweils mit Vorschau und „Übernehmen“. Tags und Ablage werden erst vorgemerkt (Datenbank) und mit „Änderungen schreiben“
+  gesammelt in die Dateien geschrieben – je Datei einmal Tags, höchstens einmal verschieben. Das gilt auch fürs Speichern
+  im Album-Editor (Lib); Einordnen aus der Inbox schreibt sofort. Einzelne Prüfungen lassen sich als Automatik freigeben (standardmäßig alles aus).
 - **YouTube-Download** – Ton als MP3 (beste VBR-Stufe, mit Tags und Cover) direkt in die Inbox; einstellbare Pausen,
   Bandbreite und Tagesgrenze, damit YouTube nicht sperrt. Herkunft steht im Tag `SOURCE`.
 - **FLAC-Kandidaten** – Lib-Alben nur als MP3, nach Bewertung bzw. Bitrate; Suchlinks zu Qobuz (Interpret / Komplett), Merkliste.

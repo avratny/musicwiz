@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Track extends Model
 {
@@ -23,6 +24,12 @@ class Track extends Model
 
     public const TAG_KEYS = ['title', 'artist', 'artists', 'album', 'albumartist', 'albumartists', 'track', 'tracktotal',
         'disc', 'disctotal', 'year', 'genres', 'comment', 'compilation'];
+
+    /** Vorgemerkte Änderung (Aufräumen/Verzeichnis, noch nicht in der Datei) */
+    public function pendingChange(): HasOne
+    {
+        return $this->hasOne(PendingChange::class);
+    }
 
     /** Relation heißt nicht "album", weil die Spalte "album" den Albumnamen enthält. */
     public function albumRecord(): BelongsTo

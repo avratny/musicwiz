@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Livewire\Cleanup;
+use App\Livewire\PendingPage;
 use App\Models\Operation;
+use App\Models\PendingChange;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
@@ -30,15 +32,24 @@ class CleanupLiveTest extends TestCase
             ->assertViewHas('counts', fn ($c) => $c['extension'] === 2)
             ->assertViewHas('total', 2)
             ->call('selectAll')->assertSet('selected', fn ($s) => count($s) === 2)
-            ->call('previewFix', true)
-            ->call('confirm'); // Queue im Test: sync – Aktion ist sofort fertig
+            ->call('previewFix', true)->assertSee('wird vorgemerkt')
+            ->call('confirm');
 
-        $this->assertSame('done', Operation::latest('id')->first()->status);
+        // vorgemerkt: Funde sofort weg, Dateien noch unverändert, kein Worker
+        $this->assertNull(Operation::latest('id')->first(), 'nichts ausgeführt');
+        $this->assertFileExists($base.'/library/artists/A/ABBA/Kein Album/SOS.MP3');
         $page->call('$refresh')
             ->assertViewHas('counts', fn ($c) => $c['extension'] === 0)
             ->assertViewHas('total', 0)
             ->assertSet('selected', [])
-            ->assertSee('Liste aktualisiert');
+            ->assertSee('2 Titel vorgemerkt')
+            ->assertSee('Änderungen schreiben (2)');
+
+        // schreiben auf der eigenen Seite (Queue im Test: sync – sofort fertig)
+        Livewire::test(PendingPage::class)->assertSee('Alle schreiben (2)')->assertSee('Dateiname')->call('write');
+        $this->assertSame('done', Operation::latest('id')->first()->status, (string) Operation::latest('id')->first()->error);
+        $this->assertFileExists($base.'/library/artists/A/ABBA/Kein Album/SOS.mp3');
+        $this->assertSame(0, PendingChange::count());
 
         File::deleteDirectory($base);
     }
@@ -77,8 +88,11 @@ class CleanupLiveTest extends TestCase
         $page = Livewire::test(Cleanup::class)->set('check', 'combined')->assertSee('Übernehmen')->assertViewHas('total', 2);
         $apollo = collect($page->viewData('findings'))->first(fn ($f) => str_contains($f['detail'], 'Apollo'));
         $page->call('applyOne', $apollo['id'])->call('$refresh')->assertViewHas('total', 1);
+        Livewire::test(PendingPage::class)->call('write'); // vorgemerkt → schreiben
 
-        $path = collect(glob($base.'/library/sampler/*/01 - Apollo vs. Crystal Lake - Free.mp3'))->first() ?? collect(glob($base.'/library/sampler/*/*Apollo*'))->first();
+        // beim Schreiben landet das Album am Regelort (Sampler mit Buchstabenordner)
+        $path = collect(glob($base.'/library/sampler/*/*/*Apollo vs. Crystal Lake - Free.mp3'))->first();
+        $this->assertNotNull($path, 'Datei am Regelort');
         $tags = app(TagTool::class)->read([$path])[$path]['tags'];
         $this->assertSame(['Apollo', 'Crystal Lake'], $tags['artists']);
         File::deleteDirectory($base);

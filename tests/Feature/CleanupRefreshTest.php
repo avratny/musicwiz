@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\RefreshCleanup;
 use App\Livewire\Cleanup;
-use App\Models\Operation;
+use App\Models\PendingChange;
 use App\Models\Track;
 use App\Support\CleanupChecks;
 use App\Support\Scanner;
@@ -24,6 +24,13 @@ class CleanupRefreshTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // die Tests arbeiten mit „Uneinheitliche Endungen“ (lib-weit): als offene Prüfung rechnet der Job sie mit
+        Cache::put(CleanupChecks::FOCUS, 'extension');
+    }
+
     public function test_open_check_is_refreshed_first_and_unlocked_early(): void
     {
         Track::create(['location' => 'library', 'path' => '/m/a.Mp3', 'dir' => '/m', 'filename' => 'a.Mp3', 'ext' => 'mp3', 'duration' => 100]);
@@ -34,9 +41,10 @@ class CleanupRefreshTest extends TestCase
 
         // Seite mit „Uneinheitliche Endungen“ offen → diese Prüfung kommt zuerst dran
         Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('Diese Prüfung wird gerade neu berechnet');
+        Cache::put(CleanupChecks::FOCUS, 'extension');
         $this->assertSame('partial', app()->make(CleanupChecks::class)->refreshAll(0)); // ein Häppchen = eine Prüfung
         Livewire::test(Cleanup::class)->set('check', 'extension')
-            ->assertSee('Diese Prüfung ist aktuell – beheben geht')
+            ->assertDontSee('wird gerade neu berechnet') // offene Prüfung frisch: kein Hinweis, Beheben frei
             ->assertSee('a.Mp3');
         [, $staleOther] = app()->make(CleanupChecks::class)->displayFindings('broken');
         $this->assertTrue($staleOther, 'andere Prüfungen kommen danach');
@@ -51,6 +59,7 @@ class CleanupRefreshTest extends TestCase
         // Job: in Häppchen, bis alles frisch ist
         do {
             Queue::fake();
+            Cache::put(CleanupChecks::FOCUS, 'extension'); // Seite mit dieser Prüfung offen
             (new RefreshCleanup)->handle();
         } while (Queue::pushed(RefreshCleanup::class)->isNotEmpty());
         $this->assertTrue(app()->make(CleanupChecks::class)->isFresh());
@@ -78,7 +87,7 @@ class CleanupRefreshTest extends TestCase
 
         Queue::fake();
         $page->call('confirm');
-        $this->assertCount(3000, Operation::latest('id')->first()->payload['actions'], 'alle Aktionen aus dem Zwischenspeicher');
+        $this->assertSame(3000, PendingChange::count(), 'alle Aktionen aus dem Zwischenspeicher vorgemerkt');
     }
 
     public function test_without_any_state_the_page_computes_nothing(): void
@@ -98,6 +107,7 @@ class CleanupRefreshTest extends TestCase
         Cache::put(CleanupChecks::PROGRESS, ['done' => 2, 'total' => 33, 'current' => 'Mögliche Duplikate', 'started_at' => now()->subMinute()->toIso8601String()]);
         Livewire::test(Cleanup::class)->assertSee('Prüfung 3 von 33: Mögliche Duplikate')->assertSee('läuft seit 1 Minute');
 
+        Cache::put(CleanupChecks::FOCUS, 'extension'); // Seite mit dieser Prüfung offen
         (new RefreshCleanup)->handle();
         $this->assertNull(CleanupChecks::progress(), 'nach dem Lauf aufgeräumt');
         Livewire::test(Cleanup::class)->set('check', 'extension')->assertSee('a.Mp3');
@@ -137,9 +147,10 @@ class CleanupRefreshTest extends TestCase
         Queue::assertPushedTimes(RefreshCleanup::class, 1);
         $this->assertSame(1, app(CleanupChecks::class)->displayCounts()['extension']);
 
+        Cache::put(CleanupChecks::FOCUS, 'extension'); // Seite mit dieser Prüfung offen
         (new RefreshCleanup)->handle();
         $this->assertTrue(app(CleanupChecks::class)->isFresh());
-        Livewire::test(Cleanup::class)->set('check', 'extension')->assertDontSee('wird gerade neu berechnet')->assertDontSee('übrigen Prüfungen');
+        Livewire::test(Cleanup::class)->set('check', 'extension')->assertDontSee('wird gerade neu berechnet');
         File::deleteDirectory($base);
     }
 }

@@ -23,6 +23,7 @@ use App\Support\Genres;
 use App\Support\Homonyms;
 use App\Support\Lookup;
 use App\Support\OperationRunner;
+use App\Support\PendingChanges;
 use App\Support\Settings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -223,7 +224,9 @@ class Artists extends Component
             return;
         }
         // Namensänderung: Bild mit umbenennen, alter Name wird Variante
+        $staged = 0;
         if ($name !== $a->name) {
+            $oldName = $a->name;
             try {
                 $a = app(ArtistDirectory::class)->rename($a, $name);
             } catch (\Throwable $e) {
@@ -231,6 +234,7 @@ class Artists extends Component
 
                 return;
             }
+            $staged = app(PendingChanges::class)->stageForNames([$oldName, $name], 'Künstler umbenannt');
         }
         $a->fill([
             'mbid' => trim($this->form['mbid'] ?? '') ?: null,
@@ -238,7 +242,7 @@ class Artists extends Component
             'default_genre' => ($this->form['default_genre'] ?? '') ?: null,
         ]);
         $a->save();
-        session()->flash('status', 'Gespeichert.');
+        session()->flash('status', 'Gespeichert.'.PendingChanges::note($staged));
     }
 
     /** Standard-Genre sofort speichern (ohne „Speichern“). */
@@ -297,8 +301,9 @@ class Artists extends Component
             return;
         }
         $result = $directory->merge($target, $ids);
+        $staged = $result['merged'] ? app(PendingChanges::class)->stageForNames([...$result['merged'], $target->name], 'Künstler zusammengeführt') : 0;
         $msg = $result['merged']
-            ? '„'.implode('“, „', $result['merged']).'“ '.(count($result['merged']) === 1 ? 'ist' : 'sind').' jetzt Schreibweise von „'.$target->name.'“. Die Dateien gleicht Aufräumen → „Uneinheitliche Interpreten-Schreibweisen“ an.'
+            ? '„'.implode('“, „', $result['merged']).'“ '.(count($result['merged']) === 1 ? 'ist' : 'sind').' jetzt Schreibweise von „'.$target->name.'“.'.PendingChanges::note($staged)
             : 'Nichts zusammengeführt.';
         if ($result['skipped']) {
             $msg .= ' Ausgelassen (gleichnamige Person, bewusst getrennt): „'.implode('“, „', $result['skipped']).'“.';
@@ -362,6 +367,10 @@ class Artists extends Component
         ArtistAlias::updateOrCreate(['alias' => $alias], ['artist_id' => $a->id]);
         RejectedAlias::forget($a->id, $alias); // von Hand wieder eingetragen: nicht mehr abgelehnt
         $this->newAlias = '';
+        $staged = app(PendingChanges::class)->stageForNames([$alias, $a->name], 'Schreibweise');
+        if ($staged) {
+            session()->flash('status', '„'.$alias.'“ ist jetzt eine Schreibweise von „'.$a->name.'“.'.PendingChanges::note($staged));
+        }
     }
 
     /** Schreibweise löschen und merken – sonst trägt das nächste Holen von MusicBrainz sie wieder ein. */
@@ -600,9 +609,10 @@ class Artists extends Component
             }
         }
         unset($this->choice[$key], $this->exclude[$key], $this->include[$key]);
+        $staged = app(PendingChanges::class)->stageForNames([...$names, $canonical], 'Schreibweisen-Vorschlag');
         session()->flash('status', '„'.$canonical.'“ gespeichert.'
             .($separate ? ' Als eigene Künstler eingetragen: „'.implode('“, „', $separate).'“.' : '')
-            .' Die Tags im Bestand passt „Aufräumen › Schreibweisen“ an.');
+            .PendingChanges::note($staged));
     }
 
     /** Alle Namen der Gruppe sind verschiedene Künstler: jeweils eigener Eintrag, keine Aliase. */

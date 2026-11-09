@@ -6,6 +6,7 @@ use App\Livewire\Cleanup;
 use App\Livewire\NewArtistModal;
 use App\Models\Album;
 use App\Models\Artist;
+use App\Models\PendingChange;
 use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
@@ -67,7 +68,10 @@ class CombinedArtistTest extends TestCase
         $this->assertSame(['Yanou', 'Liz', 'Gast'], ArtistNames::split('yanou & liz feat. Gast'), 'gilt unabhängig von Groß/klein und mit feat.');
         $checks = app()->make(CleanupChecks::class);
         $this->assertSame([], $checks->findings('combined_manual'), 'entschieden – nicht mehr gemeldet');
-        $this->assertSame(['Yanou', 'Liz'], $checks->findings('combined')[0]['actions'][0]['tags']['artists'], 'ARTISTS-Vorschlag für die Dateien');
+        // „Trennen“ merkt ARTISTS gleich vor (digitaler Zwilling) – nichts mehr im Aufräumen zu tun
+        $this->assertSame([], $checks->findings('combined'));
+        $this->assertSame(['Yanou', 'Liz'], Track::where('path', '/m/S/1.mp3')->value('artists'));
+        $this->assertSame(['artists' => []], PendingChange::sole()->tags_before);
         $this->assertArrayHasKey('Liz', app(ArtistDirectory::class)->namesInCollection(), 'Liz taucht bei „Neue Künstler erfassen“ auf');
 
         // steht als ein Künstler im Verzeichnis → nicht trennen

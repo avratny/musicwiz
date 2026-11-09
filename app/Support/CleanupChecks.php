@@ -12,6 +12,7 @@ use App\Models\GenreMapping;
 use App\Models\HistoryEntry;
 use App\Models\IntegrityResult;
 use App\Models\Leftover;
+use App\Models\PendingChange;
 use App\Models\Track;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -129,8 +130,30 @@ class CleanupChecks
     /** Sind alle Prüfungen für den aktuellen Datenstand berechnet? */
     public function isFresh(): bool
     {
-        return Cache::has('cleanup.counts.'.$this->version());
+        // lib-weite Prüfungen rechnen erst, wenn man sie öffnet – „frisch“ = offene Prüfung + alle Album-Prüfungen
+        foreach ($this->neededKeys() as $key) {
+            if (! Cache::has($this->findingsKey($key, $this->version()))) {
+                return false;
+            }
+        }
+
+        return true;
     }
+
+    /** Was der Hintergrund-Job rechnet: die offene Prüfung zuerst, dann die (schrittweisen) Album-Prüfungen. */
+    private function neededKeys(): array
+    {
+        $focus = Cache::get(self::FOCUS);
+        $keys = self::ALBUM_LOCAL;
+        if (is_string($focus) && isset(self::definitions()[$focus])) {
+            $keys = [$focus, ...array_values(array_diff($keys, [$focus]))];
+        }
+
+        return $keys;
+    }
+
+    /** Letzter Stand, zu dem diese Prüfung berechnet wurde (für die Anzeige, solange sie nicht frisch ist) */
+    private const LAST_OF = 'cleanup.last.';
 
     /** Fortschritt der Neuberechnung im Hintergrund: done, total, current (Name der Prüfung), started_at */
     public const PROGRESS = 'cleanup.progress';
@@ -149,11 +172,7 @@ class CleanupChecks
     public function refreshAll(float $budget = INF): string
     {
         $until = microtime(true) + $budget;
-        $keys = array_keys(self::definitions());
-        $focus = Cache::get(self::FOCUS);
-        if (in_array($focus, $keys, true)) {
-            $keys = [$focus, ...array_diff($keys, [$focus])];
-        }
+        $keys = $this->neededKeys();
         $started = Cache::get(self::PROGRESS)['started_at'] ?? now()->toIso8601String();
         Cache::put(self::PROGRESS, ['done' => 0, 'total' => count($keys), 'current' => null, 'started_at' => $started], now()->addHours(2));
         $incremental = $this->changedSinceLast();
@@ -172,11 +191,8 @@ class CleanupChecks
             $done = count(array_filter($keys, fn ($k) => Cache::has($this->findingsKey($k, $this->version()))));
             Cache::put(self::PROGRESS, ['done' => $done, 'total' => count($keys), 'current' => self::definitions()[$key][0], 'started_at' => $started], now()->addHours(2));
             $merged = $incremental && in_array($key, self::ALBUM_LOCAL, true) ? $this->incrementalFindings($key, ...$incremental) : null;
-            $merged !== null
-                ? Cache::put($this->findingsKey($key, $this->version()), $merged, now()->addDays(self::TTL_DAYS))
-                : $this->findings($key);
+            $merged !== null ? $this->storeFindings($key, $merged) : $this->findings($key);
         }
-        $this->counts();
         Cache::put(self::META.$this->version(), ['full' => self::versionParts($this->settings)[0], 'albums' => self::albumState()['albums']], now()->addDays(self::TTL_DAYS));
         Cache::forever(self::LAST_VERSION, $this->version());
         Cache::forget(self::PROGRESS);
@@ -192,12 +208,25 @@ class CleanupChecks
     /** Anzahlen für die Seitenleiste: aktuell, sonst der letzte fertige Stand (nie alles im Seitenaufruf neu rechnen). */
     public function displayCounts(): array
     {
-        if ($this->isFresh()) {
-            return $this->counts();
-        }
-        $last = Cache::get(self::LAST_VERSION);
+        return array_map(fn ($c) => $c['count'], $this->countsWithState());
+    }
 
-        return ($last ? Cache::get('cleanup.counts.'.$last) : null) ?? [];
+    /**
+     * Anzahl je Prüfung mit Stand: aktuell, sonst die letzte berechnete (veraltet) – nie im Seitenaufruf rechnen.
+     *
+     * @return array<string, array{count: ?int, stale: bool}>
+     */
+    public function countsWithState(): array
+    {
+        $out = [];
+        foreach (array_keys(self::definitions()) as $key) {
+            $current = Cache::get($this->findingsKey($key, $this->version()));
+            $last = $current === null ? Cache::get(self::LAST_OF.$key) : null;
+            $list = $current ?? ($last ? Cache::get($this->findingsKey($key, $last)) : null);
+            $out[$key] = ['count' => $list === null ? null : count(array_filter($list, fn ($f) => ! ($f['dismissed'] ?? false))), 'stale' => $current === null];
+        }
+
+        return $out;
     }
 
     /**
@@ -213,7 +242,7 @@ class CleanupChecks
         if ($current !== null) {
             return [$current, false, false];
         }
-        $last = Cache::get(self::LAST_VERSION);
+        $last = Cache::get(self::LAST_OF.$key) ?? Cache::get(self::LAST_VERSION);
         $stale = $last ? Cache::get($this->findingsKey($key, $last)) : null;
 
         return $stale !== null ? [$stale, true, false] : [[], true, true];
@@ -301,6 +330,11 @@ class CleanupChecks
                 foreach (DB::table('albums')->where('location', 'library')->orderBy('id')->select(self::ALBUM_FIELDS)->cursor() as $r) {
                     hash_update($ctx[(int) $r->id] ??= hash_init('xxh128'), 'A'.implode("\x1f", (array) $r));
                 }
+                // vorgemerkte Ablage ändert keine Tags, aber die Funde („Nicht am Regelort“ lässt diese Titel aus)
+                foreach (DB::table('pending_changes')->join('tracks', 'tracks.id', '=', 'pending_changes.track_id')
+                    ->orderBy('pending_changes.id')->select(['tracks.album_id', 'pending_changes.track_id', 'pending_changes.relocate'])->cursor() as $r) {
+                    hash_update($ctx[(int) ($r->album_id ?? 0)] ??= hash_init('xxh128'), 'P'.$r->track_id.'|'.$r->relocate);
+                }
                 $albums = array_map(fn ($c) => hash_final($c), $ctx);
                 ksort($albums);
 
@@ -319,13 +353,80 @@ class CleanupChecks
         }
 
         // Funde gehen über den ganzen Bestand (und teils aufs Share): nur bei geändertem Datenstand neu berechnen
-        return Cache::remember($this->findingsKey($key, $this->version()), now()->addDays(self::TTL_DAYS), fn () => $this->{$method}());
+        $cacheKey = $this->findingsKey($key, $this->version());
+        if (($cached = Cache::get($cacheKey)) !== null) {
+            return $cached;
+        }
+        $found = $this->{$method}();
+        $this->storeFindings($key, $found);
+
+        return $found;
+    }
+
+    /** Funde speichern und als letzten Stand dieser Prüfung merken (nur ohne aufgeklappte Ausnahmen). */
+    private function storeFindings(string $key, array $found): void
+    {
+        Cache::put($this->findingsKey($key, $this->version()), $found, now()->addDays(self::TTL_DAYS));
+        if (! $this->withDismissed) {
+            Cache::forever(self::LAST_OF.$key, $this->version());
+        }
     }
 
     // ---------------------------------------------------------------- Daten
 
     /** Nur diese Alben prüfen (schrittweises Neuberechnen nach Änderungen an einzelnen Alben); null = alle */
     private ?array $onlyAlbums = null;
+
+    /** Ablage auch für vorgemerkte Titel berechnen (beim „Änderungen schreiben“) */
+    private bool $includePending = false;
+
+    private ?array $pendingIds = null;
+
+    /** @return array<int, true> Track-IDs mit Vormerkung */
+    private function pendingTrackIds(): array
+    {
+        return $this->pendingIds ??= PendingChange::pluck('track_id')->flip()->map(fn () => true)->all();
+    }
+
+    /**
+     * Behebungen einer Prüfung nur für diese Alben (frisch gerechnet, ohne Zwischenspeicher) – z. B. damit Entscheidungen
+     * im Künstlerverzeichnis die betroffenen Titel gleich vormerken.
+     *
+     * @param  list<int>  $albumIds
+     * @return list<list<array>> Aktionen je Fund
+     */
+    public function fixActions(array $albumIds, string $key): array
+    {
+        $method = 'check'.str_replace('_', '', ucwords($key, '_'));
+        if (! $albumIds || ! method_exists($this, $method)) {
+            return [];
+        }
+        $part = clone $this;
+        $part->onlyAlbums = $albumIds;
+        $part->withDismissed = false;
+        $part->tracks = $part->albums = null;
+
+        return array_values(array_filter(array_map(fn ($f) => $f['actions'], $part->{$method}())));
+    }
+
+    /**
+     * Ablage-Aktionen („Nicht am Regelort“) für diese Alben, vorgemerkte Titel eingeschlossen – Grundlage für
+     * „Änderungen schreiben“ (Zielpfad aus den fertigen Tags, Cover & Extras mit dem Album).
+     *
+     * @param  list<int>  $albumIds
+     */
+    public function placementActions(array $albumIds): array
+    {
+        if (! $albumIds) {
+            return [];
+        }
+        $part = clone $this;
+        $part->onlyAlbums = $albumIds;
+        $part->includePending = true;
+        $part->tracks = $part->albums = null;
+
+        return collect($part->checkMisplaced())->flatMap(fn ($f) => $f['actions'])->values()->all();
+    }
 
     private function tracks(): Collection
     {
@@ -516,6 +617,10 @@ class CleanupChecks
             $moves = [];
             $retagged = [];
             foreach ($tracks as $t) {
+                // vorgemerkte Titel landen beim „Änderungen schreiben“ ohnehin am Regelort (aus den fertigen Tags)
+                if (! $this->includePending && isset($this->pendingTrackIds()[$t->id])) {
+                    continue;
+                }
                 if (trim((string) $t->artist) === '' && ! $category['compilation']) {
                     continue;
                 }
@@ -1447,7 +1552,9 @@ class CleanupChecks
 
     private function checkExtension(): array
     {
-        return $this->tracks()->filter(fn ($t) => pathinfo($t->filename, PATHINFO_EXTENSION) !== strtolower(pathinfo($t->filename, PATHINFO_EXTENSION)))
+        // vorgemerkte Titel bekommen beim Schreiben ohnehin ihren Zielnamen (Endung klein)
+        return $this->tracks()->filter(fn ($t) => ! isset($this->pendingTrackIds()[$t->id])
+            && pathinfo($t->filename, PATHINFO_EXTENSION) !== strtolower(pathinfo($t->filename, PATHINFO_EXTENSION)))
             ->map(fn ($t) => [
                 'id' => 't'.$t->id,
                 'title' => $this->rel($t->path),

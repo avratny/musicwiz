@@ -1,6 +1,10 @@
 @php $rel = fn ($p) => str_starts_with((string) $p, $base.'/') ? substr($p, strlen($base) + 1) : $p; @endphp
 <div class="flex h-full flex-col overflow-hidden" @if ($active->isNotEmpty() || $watching || ($integrity['running'] ?? false) || $stale || $countsStale) wire:poll.2s @endif>
-    <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Behoben wird erst nach Klick – mit Vorschau, rückgängig machbar." />
+    <x-page-header title="Aufräumen" subtitle="Prüfungen auf den Scan-Daten der Lib (nicht Inbox und Blackhole). Tags und Ablage werden erst vorgemerkt – in die Dateien kommt es mit „Änderungen schreiben“.">
+        @if ($pendingCount)
+            <a href="{{ route('pending') }}" wire:navigate class="btn-primary" title="Vorgemerkte Tags und Ablage in die Dateien schreiben">Änderungen schreiben ({{ $pendingCount }}) →</a>
+        @endif
+    </x-page-header>
     @foreach ($autoHeld as $heldCheck => $h)
         <div class="mx-6 mt-3 shrink-0 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
             Automatik „{{ $h['label'] }}“ angehalten: {{ $h['count'] }} Schritte auf einmal (mehr als {{ \App\Support\AutoCleanup::LIMIT }} laufen nie ohne Nachfrage).
@@ -22,7 +26,12 @@
                         class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition {{ $check === $key ? 'bg-zinc-800 text-white ring-1 ring-zinc-700' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-100' }}">
                     <span class="flex-1">{{ $label }}</span>
                     @if (! empty($auto[$key]))<span class="badge-blue" title="Automatik aktiv für: {{ implode(', ', array_map(fn ($c) => $c === '_other' ? 'Sonstige' : $c, array_keys($auto[$key]))) }}">auto</span>@endif
-                    <span class="{{ ($counts[$key] ?? 0) ? 'badge-violet' : 'badge-gray' }}">{{ $counts[$key] ?? 0 }}</span>
+                    @if ($countStates[$key]['stale'] ?? false)
+                        {{-- veraltet: letzter bekannter Stand, wird beim Öffnen neu berechnet --}}
+                        <span class="badge-gray opacity-60" title="Stand vom letzten Berechnen – wird beim Öffnen neu berechnet">{{ $counts[$key] ?? '–' }}</span>
+                    @else
+                        <span class="{{ ($counts[$key] ?? 0) ? 'badge-violet' : 'badge-gray' }}">{{ $counts[$key] ?? 0 }}</span>
+                    @endif
                 </button>
             @endforeach
                 </div>
@@ -67,7 +76,7 @@
                     <button wire:click="previewFix(true)" class="btn-primary" @disabled($active->isNotEmpty() || $stale) title="{{ $stale ? 'Funde werden gerade aktualisiert' : ($active->isNotEmpty() ? 'Es läuft noch eine Aktion' : '') }}">Alle beheben …</button>
                 @endif
             </div>
-            @if ($stale || $countsStale)
+            @if ($stale)
                 <div class="shrink-0 px-6 pt-3">
                     <div class="rounded-lg border px-4 py-2 text-sm {{ $stale ? 'border-blue-500/30 bg-blue-500/10 text-blue-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400' }}">
                         <div class="flex items-center gap-2">
@@ -309,6 +318,7 @@
             <div class="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl">
                 <div class="flex items-center border-b border-zinc-800 px-6 py-4">
                     <h2 class="text-lg font-semibold">Vorschau: {{ $defs[$check][2] }} · {{ $preview['count'] }} Funde, {{ $preview['total'] }} Schritte</h2>
+                    @if ($preview['staged'] ?? 0)<span class="ml-3 text-sm text-violet-300" title="Nur in der Datenbank – in die Dateien kommt es mit „Änderungen schreiben“">{{ $preview['staged'] === $preview['total'] ? 'wird vorgemerkt' : $preview['staged'].' davon vorgemerkt' }}</span>@endif
                     <button wire:click="$set('preview', null)" class="ml-auto text-zinc-400 hover:text-white">✕</button>
                 </div>
                 <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3 font-mono text-xs">
@@ -344,7 +354,7 @@
                         </label>
                     @endif
                     <button wire:click="$set('preview', null)" class="btn-ghost ml-auto">Abbrechen</button>
-                    <button wire:click="confirm" class="btn-accent">Bestätigen &amp; ausführen</button>
+                    <button wire:click="confirm" class="btn-accent">{{ ($preview['staged'] ?? 0) === $preview['total'] ? 'Vormerken' : 'Bestätigen & ausführen' }}</button>
                 </div>
             </div>
         </div>

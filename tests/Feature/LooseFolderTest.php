@@ -7,6 +7,7 @@ use App\Models\Album;
 use App\Models\Operation;
 use App\Support\CleanupChecks;
 use App\Support\OperationRunner;
+use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
@@ -45,6 +46,8 @@ class LooseFolderTest extends TestCase
         $rows = $editor->get('rows');
         $sos = array_search('SOS', array_column($rows, 'title'), true);
         $editor->call('toggleGenre', 'Pop', $sos)->call('preview', false)->call('confirm');
+        // Lib: Editor merkt nur vor – geschrieben wird gesammelt
+        OperationRunner::dispatch('pending', 'Schreiben', app(PendingChanges::class)->actions()['actions'], ['on_conflict' => 'skip']);
         $this->assertSame('done', Operation::latest('id')->first()->status);
 
         $read = fn ($t) => app(TagTool::class)->read([$base."/library/artists/A/ABBA/Kein Album/$t.mp3"])[$base."/library/artists/A/ABBA/Kein Album/$t.mp3"]['tags']['genres'];
