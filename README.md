@@ -107,6 +107,25 @@ Artisan-Befehle als Share-Benutzer ausführen (sonst entstehen Dateien, die root
 docker compose exec -u 1000:1000 app php artisan musicwiz:scan inbox
 ```
 
+## Schnittstelle (API)
+
+Unter `/api` (z. B. `http://10.1.1.5:8000/api`) lässt sich der Bestand als JSON abfragen und Änderungen vormerken – etwa
+für eine Analyse von außen. **In die Dateien geschrieben wird darüber nie**, nur mit „Änderungen schreiben“ in der App.
+Ohne Anmeldung: nur im eigenen Netz erreichbar machen. `GET /api` listet alle Aufrufe.
+
+| Aufruf | Zweck |
+|---|---|
+| `GET /api/checks`, `GET /api/checks/{key}` | Prüfungen und ihre Funde (`?fresh=1` rechnet neu) |
+| `POST /api/checks/{key}/stage` | Behebungen vormerken (`{"ids": [...]}` bzw. `{"all": true}`; nur Tags/Ablage) |
+| `GET /api/pending` | alles Vorgemerkte inkl. geplanter Aktionen (wie der JSON-Export) |
+| `POST /api/pending/stage`, `POST /api/pending/discard` | eigene Tag-Änderungen vormerken bzw. Vormerkungen verwerfen |
+| `GET /api/albums`, `/api/albums/{id}`, `/api/tracks`, `/api/artists`, `/api/history`, `/api/stats` | lesen |
+| `GET /api/status` | laufende Vorgänge, Warteschlange, fehlgeschlagene Jobs, Speicherplatz, Ordnerrechte, PHP-Grenzen |
+| `GET /api/logs?entries=50&level=warning` | Fehlerprotokoll (neueste zuerst, Zugangsdaten geschwärzt) |
+| `GET /api/history/{id}?errors=1` | eine Aktion mit allen Einträgen bzw. nur Fehlern/Hinweisen |
+
+Das Protokoll liegt im Betrieb zusätzlich zu den Docker-Logs in `data/logs/musicwiz-JJJJ-MM-TT.log` (7 Tage).
+
 ## Entwicklung
 
 Voraussetzung: Docker. PHP, Composer und Node laufen in Containern (lokal ist kein PHP nötig).

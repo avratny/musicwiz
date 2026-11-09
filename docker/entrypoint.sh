@@ -8,7 +8,7 @@ cd /app
 if [ "$(id -u)" = "0" ]; then
     PUID="${PUID:-1000}"
     PGID="${PGID:-1000}"
-    mkdir -p storage/app storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
+    mkdir -p storage/app/logs storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
     chown -R "$PUID:$PGID" storage bootstrap/cache /data /config /usr/local/bin/yt-dlp
     # PGID auch als Zusatzgruppe: Netzwerk-Shares (NFS mit sec=sys, SMB) prüfen die Gruppenliste – mit leerer Liste
     # wurden Ordner, die nur der Gruppe gehören (z. B. 3001:0, Rechte 770), als „keine Berechtigung“ abgewiesen.
@@ -16,7 +16,7 @@ if [ "$(id -u)" = "0" ]; then
     exec setpriv --reuid="$PUID" --regid="$PGID" --groups="$PGID${PGROUPS:+,$PGROUPS}" "$0" "$@"
 fi
 
-mkdir -p storage/app/cache storage/framework/sessions storage/framework/views storage/logs
+mkdir -p storage/app/cache storage/app/logs storage/framework/sessions storage/framework/views storage/logs
 
 # Schlüssel einmal erzeugen und im Datenverzeichnis aufheben (bleibt bei Updates gleich)
 if [ -z "${APP_KEY:-}" ]; then

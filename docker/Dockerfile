@@ -47,7 +47,7 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction \
 COPY --chmod=755 docker/entrypoint.sh /usr/local/bin/musicwiz-entrypoint
 # Start als root: der Entrypoint übernimmt PUID/PGID (Besitzer des Shares) und läuft dann als dieser Benutzer weiter
 USER root
-ENV APP_ENV=production APP_DEBUG=false LOG_CHANNEL=stderr \
+ENV APP_ENV=production APP_DEBUG=false LOG_CHANNEL=stack LOG_STACK=stderr,app_file LOG_DAILY_DAYS=7 \
     DB_DATABASE=/app/storage/app/musicwiz.sqlite CACHE_STORE=file CACHE_FILE_PATH=/app/storage/app/cache \
     SESSION_DRIVER=file QUEUE_CONNECTION=database HOME=/tmp
 ENTRYPOINT ["musicwiz-entrypoint"]
