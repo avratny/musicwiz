@@ -60,9 +60,9 @@ class CleanupChecks
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
             'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
-            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Steht ein echter Album-Interpret drin, ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
+            'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten (echter Name, leer, „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
-            'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret.', null],
+            'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret. Album nur, wo eins sein sollte (andere Titel im Ordner haben eins oder Tracknummer vorhanden) – nicht in „Kein Album“.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
             'genre_mixed' => ['Alben mit gemischten Genres', 'Tracks eines Albums (kein Sampler) haben verschiedene Genres.', 'Häufigstes Genre fürs ganze Album'],
             'genre_missing' => ['Alben ohne Genre', 'Kein Genre im Tag – Vorschlag aus dem Standard-Genre des Künstlers bzw. seinen anderen Liedern.', 'Vorgeschlagenes Genre schreiben'],
@@ -988,10 +988,11 @@ class CleanupChecks
             $album = $this->albums()[$albumId] ?? null;
             if ($reason = $this->compilationInArtists($album, $tracks)) {
                 $aa = (string) $tracks->map(fn ($t) => trim((string) $t->albumartist))->filter()->countBy()->sortDesc()->keys()->first();
-                $realArtist = $aa !== '' && ! $this->compilations->isVariousArtists($aa) && ! Compilations::isPlaceholder($aa);
-                $actions = $realArtist ? $this->applyActions($tracks->filter(fn ($t) => (bool) $t->compilation), fn () => ['compilation' => false]) : [];
+                // nur das Flag macht es zum Sampler (Album-Interpret echt, leer, Platzhalter, „Kein Album“): Flag ist falsch
+                $flagOnly = ! $this->compilations->isVariousArtists($aa);
+                $actions = $flagOnly ? $this->applyActions($tracks->filter(fn ($t) => (bool) $t->compilation), fn () => ['compilation' => false]) : [];
                 $detail = 'Erkannt an: '.$reason.' · liegt in „'.$album->category.'“'
-                    .($actions ? ' · Album-Interpret „'.$aa.'“ bleibt, Flag wird entfernt' : ' · im Album-Editor entscheiden');
+                    .($actions ? ($aa !== '' ? ' · Album-Interpret „'.$aa.'“ bleibt, Flag wird entfernt' : ' · Flag wird entfernt') : ' · im Album-Editor entscheiden');
                 $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $detail, 'link' => $this->link($album), 'actions' => $actions];
             }
         }
@@ -1038,13 +1039,17 @@ class CleanupChecks
         foreach ($this->byAlbum() as $albumId => $tracks) {
             $missing = [];
             $album = $this->albums()[$albumId] ?? null;
+            $loose = $album && $this->isLooseFolder($album);
             // Einzelner Track bzw. "Kein Album": Tracknummer braucht es nicht (dort wird sie sogar geleert)
-            $needsNumber = count($tracks) > 1 && ! ($album && $this->isLooseFolder($album));
+            $needsNumber = count($tracks) > 1 && ! $loose;
+            // Album nur verlangen, wo eins sein sollte: nicht in „Kein Album“ (Einzellieder), sondern wenn andere Titel im
+            // Ordner einen Albumnamen haben oder der Titel eine Tracknummer trägt – lose Lieder ohne beides sind Einzellieder
+            $hasAlbum = $tracks->contains(fn ($t) => trim((string) $t->album) !== '');
             foreach ($tracks as $t) {
                 if (trim((string) $t->artist) === '') {
                     $missing['Interpret'] = ($missing['Interpret'] ?? 0) + 1;
                 }
-                if (trim((string) $t->album) === '') {
+                if (trim((string) $t->album) === '' && ! $loose && ($hasAlbum || trim((string) $t->track) !== '')) {
                     $missing['Album'] = ($missing['Album'] ?? 0) + 1;
                 }
                 if ($needsNumber && trim((string) $t->track) === '') {

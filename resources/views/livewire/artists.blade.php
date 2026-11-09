@@ -5,7 +5,7 @@
         @endif
     </x-page-header>
     <div class="flex shrink-0 gap-1 border-b border-zinc-800 px-6 py-2">
-        @foreach (['directory' => 'Verzeichnis', 'suggestions' => 'Vorschläge (Schreibweisen)', 'unknown' => 'Neue Künstler erfassen'] as $k => $label)
+        @foreach (['directory' => 'Verzeichnis', 'suggestions' => 'Vorschläge (Schreibweisen)', 'unknown' => 'Neue Künstler erfassen', 'quick' => 'Schnell erfassen'] as $k => $label)
             <button wire:click="$set('tab', '{{ $k }}')" class="{{ $tab === $k ? 'tab-active' : 'tab' }}">{{ $label }}</button>
         @endforeach
     </div>
@@ -408,6 +408,8 @@
                 @endforelse
             </div>
         </div>
+    @elseif ($tab === 'quick')
+        @include('livewire.partials.quick-artists')
     @else
         @include('livewire.partials.new-artist-wizard')
     @endif

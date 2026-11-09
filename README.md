@@ -15,7 +15,8 @@ bestätigter Vorschau. Jede Aktion steht im Verlauf und lässt sich rückgängig
 - **Lib** – Übersicht über die eingeordnete Sammlung, Album-Editor mit Vorschau; Alben lassen sich von hier direkt ins Blackhole verschieben.
 - **Blackhole** – Musik, die nicht gehört wird: eigener Scan, nur Suche; Album oder Titel lassen sich zurück in die Inbox holen.
 - **Künstler** – Künstlerverzeichnis mit Schreibweisen, MusicBrainz-/Discogs-ID, Bild und Standard-Genre; gleichnamige Künstler
-  auseinanderhalten; neue Namen aus dem Bestand Schritt für Schritt erfassen.
+  auseinanderhalten; neue Namen aus dem Bestand Schritt für Schritt erfassen. „Schnell erfassen“ legt eindeutige
+  MusicBrainz-Treffer (Name passt, eure Lieder gefunden) gesammelt an.
 - **Aufräumen** – Prüfungen in fünf Schritten (Defekte Dateien, Duplikate, Schreibweisen, Genres, Cover, Ablageort, Reste …),
   jeweils mit Vorschau und „Übernehmen“. Tags und Ablage werden erst vorgemerkt (Datenbank) und mit „Änderungen schreiben“
   gesammelt in die Dateien geschrieben – je Datei einmal Tags, höchstens einmal verschieben. Das gilt auch fürs Speichern

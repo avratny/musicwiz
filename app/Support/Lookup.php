@@ -484,6 +484,23 @@ class Lookup
         });
     }
 
+    /**
+     * Bildvorschläge nur aus dem Zwischenspeicher (vom Vorladen) – für Listen, die nicht auf Dienste warten dürfen:
+     * zuerst Fanart.tv (hängt an der MusicBrainz-ID), dann Deezer-Treffer mit genau diesem Namen.
+     *
+     * @param  list<string>  $names  Bestandsname und ggf. MusicBrainz-Schreibweise
+     * @return list<array{url:string, thumb:string, source:string, size:string}>
+     */
+    public function cachedArtistImages(array $names, ?string $mbid, int $limit = 3): array
+    {
+        $keys = array_map(fn ($n) => ArtistNames::compareKey($n), $names);
+        $fanart = $mbid ? (array) Cache::get('fanart:'.$mbid, []) : [];
+        $deezer = array_filter((array) Cache::get('deezer:artist:'.md5($names[0] ?? ''), []),
+            fn ($i) => in_array(ArtistNames::compareKey(substr((string) ($i['source'] ?? ''), strlen('Deezer: '))), $keys, true));
+
+        return array_slice(array_values([...$fanart, ...$deezer]), 0, $limit);
+    }
+
     public function fanartArtistImages(string $mbid): array
     {
         $key = trim((string) $this->settings->get('fanart_key'));

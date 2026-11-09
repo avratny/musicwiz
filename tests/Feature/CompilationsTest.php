@@ -110,13 +110,21 @@ class CompilationsTest extends TestCase
         $this->file('library/artists/Y/Yanou/Sunrise (2006)/01 - King of My Castle.mp3', ['artist' => 'Yanou feat. Liz', 'albumartist' => 'Yanou', 'album' => 'Sunrise', 'year' => '2006', 'track' => '1', 'comment' => 'LIB']);
         // Platzhalter: nur prüfen
         $this->file('library/artists/U/Unknown Artist/X/01 - T.mp3', ['artist' => 'Someone', 'albumartist' => 'Unknown Artist', 'album' => 'X', 'track' => '1', 'comment' => 'LIB']);
+        // Einzellied in „Kein Album“ mit Flag, ohne Album-Interpreten (aus einem Sampler übrig geblieben)
+        $this->file('library/artists/N/Nana/Kein Album/Lonely.mp3', ['artist' => 'Nana', 'title' => 'Lonely', 'comment' => 'LIB', 'compilation' => true]);
         // „Sampler“ als Interpret eines Titels: fehlender Name
         $this->file('library/artists/F/Foo/Y/01 - T.mp3', ['artist' => 'Sampler', 'albumartist' => 'Foo', 'album' => 'Y', 'track' => '1', 'comment' => 'LIB']);
         app(Scanner::class)->scan('library');
         $checks = app(CleanupChecks::class);
 
         $reported = collect($checks->findings('compilation_in_artists'));
-        $this->assertEqualsCanonicalizing(['Various – Party', 'ABBA – Gold'], $reported->pluck('title')->all());
+        $this->assertCount(3, $reported, $reported->pluck('title')->toJson(JSON_UNESCAPED_UNICODE));
+        $this->assertContains('Various – Party', $reported->pluck('title')->all());
+        $this->assertContains('ABBA – Gold', $reported->pluck('title')->all());
+        // „Kein Album“ ohne Album-Interpreten: Flag ist falsch → entfernen
+        $loose = $reported->first(fn ($f) => str_contains($f['title'], 'Kein Album'));
+        $this->assertStringContainsString('Flag wird entfernt', $loose['detail']);
+        $this->assertSame([['type' => 'apply', 'path' => $this->base.'/library/artists/N/Nana/Kein Album/Lonely.mp3', 'tags' => ['compilation' => false]]], $loose['actions']);
         // „Various“ als Album-Interpret: nur melden, im Editor entscheiden
         $this->assertSame([], $reported->firstWhere('title', 'Various – Party')['actions']);
         $this->assertStringContainsString('„Various“', $reported->firstWhere('title', 'Various – Party')['detail']);

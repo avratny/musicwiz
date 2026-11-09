@@ -10,7 +10,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
-/** „Fehlende Tags“: Tracknummer nur bei Alben mit mehreren Tracks verlangen. */
+/** „Fehlende Tags“: Tracknummer nur bei Alben mit mehreren Tracks, Album nur, wo eins sein sollte. */
 class MissingTagsTest extends TestCase
 {
     use RefreshDatabase;
@@ -25,20 +25,30 @@ class MissingTagsTest extends TestCase
             'A/ABBA/Gold (1992)/SOS.mp3' => 'Gold',
             'A/ABBA/Kein Album/Mamma Mia.mp3' => '',
             'A/ABBA/Kein Album/Chiquitita.mp3' => '',
+            // Album-Ordner, ein Titel ohne Albumnamen: fehlt wirklich
+            'A/ABBA/Arrival (1976)/01 Dancing Queen.mp3' => 'Arrival',
+            'A/ABBA/Arrival (1976)/02 Money.mp3' => '',
+            // loses Lied ohne Album und ohne Tracknummer (nicht in „Kein Album“): Einzellied, kein fehlendes Album
+            'B/Blondie/Call Me.mp3' => '',
+            // ohne Album, aber mit Tracknummer: gehört zu einem Album
+            'C/Cher/Believe.mp3' => '#3',
         ];
         foreach ($files as $rel => $album) {
             $path = $base.'/library/artists/'.$rel;
             File::ensureDirectoryExists(dirname($path));
             file_put_contents($path, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));
-            app(TagTool::class)->write([['path' => $path, 'tags' => ['artist' => 'ABBA', 'album' => $album, 'title' => pathinfo($rel, PATHINFO_FILENAME), 'comment' => 'LIB']]]);
+            $number = str_starts_with($album, '#') ? substr($album, 1) : (preg_match('/^(\d+) /', basename($rel), $m) ? $m[1] : '');
+            app(TagTool::class)->write([['path' => $path, 'tags' => ['artist' => explode('/', $rel)[1], 'album' => str_starts_with($album, '#') ? '' : $album,
+                'track' => $number, 'title' => pathinfo($rel, PATHINFO_FILENAME), 'comment' => 'LIB']]]);
         }
         app(Scanner::class)->scan('library');
 
         $findings = app(CleanupChecks::class)->findings('missing_tags');
         $byTitle = collect($findings)->mapWithKeys(fn ($f) => [$f['title'] => $f['detail']]);
-        $this->assertCount(2, $findings, 'Einzeltrack-Album fehlt in der Liste: '.$byTitle->toJson(JSON_UNESCAPED_UNICODE));
         $this->assertSame(['Tracknummer fehlt (2)'], $byTitle->filter(fn ($d) => str_contains($d, 'Tracknummer'))->values()->all(), 'nur „Gold“ mit zwei Tracks');
-        $this->assertSame(1, $byTitle->filter(fn ($d) => $d === 'Album fehlt (2)')->count(), '„Kein Album“: fehlendes Album ja, Tracknummer nein');
+        $albumMissing = collect($findings)->filter(fn ($f) => str_contains($f['detail'], 'Album fehlt'))->pluck('detail', 'title')->all();
+        $this->assertSame(['Album fehlt (1)', 'Album fehlt (1)'], array_values($albumMissing), 'nur Arrival (Ordner mit Album) und Cher (Tracknummer): '.json_encode($albumMissing, JSON_UNESCAPED_UNICODE));
+        $this->assertCount(3, $findings, 'Gold (Tracknummer), Arrival, Cher – kein Fund für „Kein Album“, die Single und das lose Lied: '.$byTitle->toJson(JSON_UNESCAPED_UNICODE));
         File::deleteDirectory($base);
     }
 }
