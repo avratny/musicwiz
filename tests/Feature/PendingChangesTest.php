@@ -440,4 +440,17 @@ class PendingChangesTest extends TestCase
         $plan = app(AlbumPlanner::class)->plan(Album::where('dir', dirname($a))->sole(), ['year' => '1992-09-21'], [], false);
         $this->assertSame(['1992'], array_values(array_unique(array_column(array_column($plan['rows'], 'changed'), 'year'))), 'nur der Titel mit Datum ändert sich, auf 1992');
     }
+
+    public function test_editor_keeps_unlisted_genres_when_genre_field_is_empty(): void
+    {
+        $a = $this->mp3('D/Die singenden Weinhauer/Badner Luft (1970)/01 - Badner Luft.mp3', ['artist' => 'Die singenden Weinhauer', 'albumartist' => 'Die singenden Weinhauer',
+            'album' => 'Badner Luft', 'year' => '1970', 'track' => '1', 'title' => 'Badner Luft', 'genres' => ['Schrammeln', 'Austria']]);
+        app(Scanner::class)->scan('library');
+        $page = Livewire::test(AlbumEditor::class, ['album' => Album::where('dir', dirname($a))->sole()])->assertSet('fields.genres', []);
+        $page->set('fields.year', '1971')->call('preview', false)->call('confirm');
+
+        $pc = PendingChange::sole();
+        $this->assertArrayNotHasKey('genres', $pc->tags_before, 'Genres nicht angefasst');
+        $this->assertSame(['Schrammeln', 'Austria'], Track::where('path', $a)->sole()->genres);
+    }
 }

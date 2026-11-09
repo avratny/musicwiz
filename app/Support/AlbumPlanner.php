@@ -52,7 +52,9 @@ class AlbumPlanner
             if (PathBuilder::year($new['year'] ?? '') !== '') {
                 $new['year'] = PathBuilder::year($new['year']);
             }
-            if (array_key_exists('genres', $fields)) {
+            // leeres Genre-Feld lässt die vorhandenen Genres in Ruhe: das Feld zeigt nur Listen-Genres – Werte, die nicht auf
+            // der Liste stehen („Schrammeln“), gingen sonst beim Speichern verloren (Zuordnung: Aufräumen › Genres)
+            if (array_filter((array) ($fields['genres'] ?? []))) {
                 $new['genres'] = $this->genres->expand((array) $fields['genres']);
             }
             if (! empty($edit['genres'])) {
