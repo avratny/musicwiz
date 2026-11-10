@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\CombiCheck;
 use App\Support\Lookup;
 use App\Support\Settings;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -71,10 +72,14 @@ class PrefetchArtistLookup implements ShouldQueue
                     if (trim((string) app(Settings::class)->get('fanart_key')) !== '') {
                         rescue(fn () => $lookup->fanartArtistImages($pick['mbid']), report: false);
                     }
+                    rescue(fn () => $lookup->audiodbArtist($pick['mbid'], $name), report: false);
                 }
             },
             fn () => $lookup->hasDiscogs() ? $lookup->discogsArtists($name) : null,
             fn () => $lookup->deezerArtistImages($name),
+            fn () => $lookup->hasSpotify() ? $lookup->spotifyArtist($name, $titles) : null,
+            // Kombi-Namen: Act oder Zusammenarbeit? (eingetragene Künstler bei Deezer, Spotify, MusicBrainz)
+            fn () => CombiCheck::applies($name) ? app(CombiCheck::class)->check($name) : null,
         ];
         foreach ($steps as $step) {
             rescue($step, report: false);

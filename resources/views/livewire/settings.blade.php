@@ -269,6 +269,14 @@
                     <p class="mt-1 text-xs text-zinc-500">Kostenloser Key auf fanart.tv; Suche läuft über die MusicBrainz-ID des Künstlers.</p></div>
                 <div><label class="label">AcoustID-Anwendungsschlüssel</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.acoustid_key" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
                     <p class="mt-1 text-xs text-zinc-500">Kostenlos auf acoustid.org › „Register your application“. Damit erkennt der Album-Editor Titel ohne Tags am Fingerabdruck.</p></div>
+                <div><label class="label">Spotify (Client-ID und Client-Secret)</label>
+                    <div class="grid gap-2 sm:grid-cols-2" x-data="{ show: false }">
+                        <input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.spotify_client_id" placeholder="Client-ID" class="input font-mono" autocomplete="off" spellcheck="false">
+                        <div class="flex gap-2"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.spotify_client_secret" placeholder="Client-Secret" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
+                    </div>
+                    <p class="mt-1 text-xs text-zinc-500">Kostenlos auf developer.spotify.com › Dashboard › „Create app“ (Redirect-URI beliebig, z. B. http://localhost). Liefert Künstlerfotos, Genres und – zusammen mit Deezer und MusicBrainz – ob ein Kombi-Name ein Act oder eine Zusammenarbeit ist.</p></div>
+                <div><label class="label">TheAudioDB-API-Key</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.audiodb_key" placeholder="leer = freier Test-Key (30 Abfragen/min)" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
+                    <p class="mt-1 text-xs text-zinc-500">Premium-Key aus dem Profil auf theaudiodb.com (100 Abfragen/min). Liefert Künstlerfotos, Fanart, Logo, Genre/Stil und Biografie – gesucht über die MusicBrainz-ID, also immer der richtige Künstler.</p></div>
                 <p class="text-xs text-zinc-500">MusicBrainz, Deezer und LRCLIB (Songtexte) brauchen keine Anmeldung. Der Container braucht für das Nachschlagen Internetzugang.</p>
             </div>
         @endif

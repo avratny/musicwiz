@@ -31,6 +31,29 @@ class ArtistGenreSuggestions
                 $errors[] = 'MusicBrainz: '.$e->getMessage();
             }
         }
+        if ($mbid) {
+            try {
+                // TheAudioDB: Genre und Stil („Techno“ / „Electronic“), Genre zählt doppelt
+                $a = $this->lookup->audiodbArtist($mbid, $name);
+                $w = array_filter([(string) ($a['genre'] ?? '') => 2, (string) ($a['style'] ?? '') => 1], fn ($v, $k) => $k !== '', ARRAY_FILTER_USE_BOTH);
+                if ($w) {
+                    $proposals[] = ['source' => 'TheAudioDB'] + $this->describe($w);
+                }
+            } catch (\Throwable $e) {
+                $errors[] = 'TheAudioDB: '.$e->getMessage();
+            }
+        }
+        if ($this->lookup->hasSpotify()) {
+            try {
+                // Spotify-Genres („german trance“, „hands up“) – ohne Gewichtung, alle gleich
+                $genres = $this->lookup->spotifyArtist($name)['genres'] ?? [];
+                if ($genres) {
+                    $proposals[] = ['source' => 'Spotify'] + $this->describe(array_fill_keys(array_map('ucwords', $genres), 1));
+                }
+            } catch (\Throwable $e) {
+                $errors[] = 'Spotify: '.$e->getMessage();
+            }
+        }
         if ($discogsId && $this->lookup->hasDiscogs()) {
             try {
                 $proposals[] = ['source' => 'Discogs'] + $this->describe($this->lookup->discogsArtistGenres($name));

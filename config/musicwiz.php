@@ -38,6 +38,9 @@ return [
     'lookup_cache_days' => (int) env('MUSIC_LOOKUP_CACHE_DAYS', 10),
 
     'discogs_token' => env('DISCOGS_TOKEN', ''),
+    'spotify_client_id' => env('SPOTIFY_CLIENT_ID', ''),
+    'spotify_client_secret' => env('SPOTIFY_CLIENT_SECRET', ''),
+    'audiodb_key' => env('AUDIODB_KEY', ''),
     'fanart_key' => env('FANART_KEY', ''),
     // AcoustID (Titel per Fingerabdruck erkennen): kostenloser Anwendungs-Schlüssel von https://acoustid.org/new-application
     'acoustid_key' => env('ACOUSTID_KEY', ''),

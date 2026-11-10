@@ -505,7 +505,8 @@ class Lookup
 
     /**
      * Bildvorschläge nur aus dem Zwischenspeicher (vom Vorladen) – für Listen, die nicht auf Dienste warten dürfen:
-     * zuerst Fanart.tv (hängt an der MusicBrainz-ID), dann Deezer-Treffer mit genau diesem Namen.
+     * zuerst TheAudioDB und Fanart.tv (hängen an der MusicBrainz-ID), dann Spotify (über ein eigenes Lied abgesichert), dann Deezer-Treffer
+     * mit genau diesem Namen.
      *
      * @param  list<string>  $names  Bestandsname und ggf. MusicBrainz-Schreibweise
      * @return list<array{url:string, thumb:string, source:string, size:string}>
@@ -514,10 +515,248 @@ class Lookup
     {
         $keys = array_map(fn ($n) => ArtistNames::compareKey($n), $names);
         $fanart = $mbid ? (array) Cache::get('fanart:'.$mbid, []) : [];
+        // Spotify: über ein eigenes Lied abgesicherter Treffer aus dem Zwischenspeicher (vom Vorladen)
+        $spotify = (array) (Cache::get('spotify:artist:'.md5($names[0] ?? ''))['images'] ?? []);
+        // TheAudioDB über die MusicBrainz-ID: Foto zuerst (Fanart/Breitbild sind Querformat)
+        $audiodb = array_slice((array) ($this->audiodbArtistCached($mbid, $names[0] ?? '')['images'] ?? []), 0, 2);
         $deezer = array_filter((array) Cache::get('deezer:artist:'.md5($names[0] ?? ''), []),
             fn ($i) => in_array(ArtistNames::compareKey(substr((string) ($i['source'] ?? ''), strlen('Deezer: '))), $keys, true));
 
-        return array_slice(array_values([...$fanart, ...$deezer]), 0, $limit);
+        return array_slice(array_values([...$audiodb, ...$fanart, ...$spotify, ...$deezer]), 0, $limit);
+    }
+
+    // ------------------------------------------------------------ eingetragene Künstler eines Lieds (Kombi-Prüfung)
+
+    /**
+     * Welche Künstler sind bei MusicBrainz für dieses Lied eingetragen? „Dr. Motte & WestBam – Sunshine“ → [Dr. Motte, WestBam]
+     * (zwei Künstler = Zusammenarbeit), „Simon & Garfunkel – The Boxer“ → [Simon & Garfunkel] (ein Act).
+     *
+     * @return list<string>|null null = Lied nicht gefunden
+     */
+    public function musicbrainzCredit(string $artist, string $title): ?array
+    {
+        $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+        $data = $this->mb('recording', ['query' => 'recording:"'.addcslashes($clean, '"\\').'" AND artist:"'.addcslashes($artist, '"\\').'"', 'limit' => 5]);
+        $key = ArtistNames::compareKey($clean);
+        foreach ($data['recordings'] ?? [] as $rec) {
+            if (str_contains(ArtistNames::compareKey((string) ($rec['title'] ?? '')), $key)) {
+                $names = array_values(array_filter(array_map(fn ($c) => ArtistNames::plainPunctuation(trim((string) ($c['name'] ?? $c['artist']['name'] ?? ''))), $rec['artist-credit'] ?? [])));
+
+                return $names ?: null;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Beteiligte eines Lieds bei Deezer (nur Hauptkünstler, keine Gäste): ein Eintrag „Lexy & K-Paul“ = Act,
+     * mehrere („Mike Candys“, „Jack Holiday“) = Zusammenarbeit.
+     *
+     * @return list<string>|null null = Lied nicht gefunden
+     */
+    public function deezerCredit(string $artist, string $title): ?array
+    {
+        return $this->cached('deezer:credit:'.md5($artist.'|'.$title), function () use ($artist, $title) {
+            $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+            $r = Http::timeout(15)->get('https://api.deezer.com/search/track', ['q' => $artist.' '.$clean, 'limit' => 10]);
+            if (! $r->successful()) {
+                throw new RuntimeException('Deezer antwortet nicht ('.$r->status().')');
+            }
+            $key = ArtistNames::compareKey($clean);
+            $words = array_filter(array_map(fn ($n) => ArtistNames::compareKey($n), ArtistNames::suggestSplit($artist) ?: [$artist]));
+            foreach ($r->json('data') ?? [] as $t) {
+                // Titel passt und mindestens ein Teil des Namens kommt beim Künstler vor
+                if (! str_contains(ArtistNames::compareKey((string) $t['title']), $key)) {
+                    continue;
+                }
+                $track = Http::timeout(15)->get('https://api.deezer.com/track/'.$t['id'])->json() ?? [];
+                $main = array_values(array_map(fn ($c) => ArtistNames::plainPunctuation((string) $c['name']),
+                    array_filter($track['contributors'] ?? [], fn ($c) => ($c['role'] ?? 'Main') === 'Main')));
+                $all = ArtistNames::compareKey(implode(' ', $main));
+                if ($main && array_filter($words, fn ($w) => str_contains($all, $w))) {
+                    return $main;
+                }
+            }
+
+            return null;
+        });
+    }
+
+    // ------------------------------------------------------------ Spotify (Client-Zugang: Bilder, Genres, eingetragene Künstler)
+
+    public function hasSpotify(): bool
+    {
+        return trim((string) $this->settings->get('spotify_client_id')) !== '' && trim((string) $this->settings->get('spotify_client_secret')) !== '';
+    }
+
+    private function spotify(string $path, array $query): array
+    {
+        if (! $this->hasSpotify()) {
+            throw new RuntimeException('Kein Spotify-Zugang in den Einstellungen.');
+        }
+
+        return $this->cached('spotify:'.$path.':'.md5(json_encode($query)), function () use ($path, $query) {
+            $id = trim((string) $this->settings->get('spotify_client_id'));
+            $token = Cache::remember('spotify:token:'.md5($id), now()->addMinutes(50), function () use ($id) {
+                $r = Http::asForm()->timeout(15)->withBasicAuth($id, trim((string) $this->settings->get('spotify_client_secret')))
+                    ->post('https://accounts.spotify.com/api/token', ['grant_type' => 'client_credentials']);
+                if (! $r->successful()) {
+                    throw new RuntimeException('Spotify-Anmeldung fehlgeschlagen ('.$r->status().') – Client-ID/Secret prüfen');
+                }
+
+                return (string) $r->json('access_token');
+            });
+            $r = Http::timeout(15)->withToken($token)->retry(2, 2000, fn ($e) => $e instanceof RequestException && $e->response->status() === 429, throw: false)
+                ->get('https://api.spotify.com/v1/'.$path, $query);
+            if ($r->status() === 401) {
+                Cache::forget('spotify:token:'.md5($id));
+            }
+            if (! $r->successful()) {
+                throw new RuntimeException('Spotify antwortet nicht ('.$r->status().')');
+            }
+
+            return $r->json() ?? [];
+        });
+    }
+
+    /**
+     * Künstler bei Spotify für das Lied: welche Künstler sind eingetragen (Liste der Künstler des Titels)?
+     *
+     * @return list<string>|null null = Lied nicht gefunden
+     */
+    public function spotifyCredit(string $artist, string $title): ?array
+    {
+        $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+        $data = $this->spotify('search', ['q' => $artist.' '.$clean, 'type' => 'track', 'limit' => 10, 'market' => 'DE']);
+        $key = ArtistNames::compareKey($clean);
+        $words = array_filter(array_map(fn ($n) => ArtistNames::compareKey($n), ArtistNames::suggestSplit($artist) ?: [$artist]));
+        foreach ($data['tracks']['items'] ?? [] as $t) {
+            $names = array_map(fn ($a) => ArtistNames::plainPunctuation((string) $a['name']), $t['artists'] ?? []);
+            $all = ArtistNames::compareKey(implode(' ', $names));
+            if (str_contains(ArtistNames::compareKey((string) $t['name']), $key) && $names && array_filter($words, fn ($w) => str_contains($all, $w))) {
+                return $names;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Künstler bei Spotify: über eines eurer Lieder gefunden (gleichnamige Künstler werden so auseinandergehalten –
+     * „Beam“ der Trance-DJ statt des gleichnamigen Sängers); ohne Lied nur, wenn es genau einen mit diesem Namen gibt.
+     *
+     * @param  list<string>  $titles  eigene Liedtitel des Namens
+     * @return array{id: string, name: string, genres: list<string>, popularity: int, images: list<array>, via: string}|null
+     */
+    public function spotifyArtist(string $name, array $titles = []): ?array
+    {
+        $cacheKey = 'spotify:artist:'.md5($name);
+        if (! $this->fresh && Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
+        $result = (function () use ($name, $titles) {
+            $key = ArtistNames::compareKey($name);
+            $id = null;
+            $via = null;
+            foreach (array_slice(array_values(array_filter($titles)), 0, 3) as $title) {
+                $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+                foreach ($this->spotify('search', ['q' => $name.' '.$clean, 'type' => 'track', 'limit' => 10, 'market' => 'DE'])['tracks']['items'] ?? [] as $t) {
+                    if (! str_contains(ArtistNames::compareKey((string) $t['name']), ArtistNames::compareKey($clean))) {
+                        continue;
+                    }
+                    foreach ($t['artists'] ?? [] as $a) {
+                        if (ArtistNames::compareKey((string) $a['name']) === $key) {
+                            [$id, $via] = [$a['id'], 'Lied „'.$t['name'].'“'];
+                            break 3;
+                        }
+                    }
+                }
+            }
+            if (! $id) {
+                $same = array_values(array_filter($this->spotify('search', ['q' => $name, 'type' => 'artist', 'limit' => 10])['artists']['items'] ?? [],
+                    fn ($a) => ArtistNames::compareKey((string) $a['name']) === $key));
+                if (count($same) !== 1) {
+                    return null; // keiner oder mehrere gleichnamige: lieber kein Bild als das falsche
+                }
+                [$id, $via] = [$same[0]['id'], 'Name (einziger Treffer)'];
+            }
+            $a = $this->spotify('artists/'.$id, []);
+            $img = $a['images'] ?? [];
+
+            return ['id' => $id, 'name' => ArtistNames::plainPunctuation((string) ($a['name'] ?? $name)), 'genres' => $a['genres'] ?? [], 'popularity' => (int) ($a['popularity'] ?? 0), 'via' => $via,
+                'images' => $img ? [['url' => $img[0]['url'], 'thumb' => end($img)['url'] ?? $img[0]['url'], 'source' => 'Spotify: '.($a['name'] ?? $name).' ('.$via.')', 'size' => ($img[0]['width'] ?? '?').'×'.($img[0]['height'] ?? '?')]] : []];
+        })();
+        // „nicht gefunden“ nur merken, wenn mit eigenen Liedern gesucht wurde – sonst darf ein späterer Versuch mit Liedern noch
+        if ($result !== null || $titles) {
+            Cache::put($cacheKey, $result, now()->addDays(max(1, (int) config('musicwiz.lookup_cache_days', 10))));
+        }
+
+        return $result;
+    }
+
+    // ------------------------------------------------------------ TheAudioDB (Bilder, Genre/Stil, Biografie)
+
+    /**
+     * Künstler bei TheAudioDB – über die MusicBrainz-ID (sicher der richtige); ohne ID nur, wenn genau einer so heißt.
+     *
+     * @return array{id: string, name: string, mbid: ?string, genre: ?string, style: ?string, mood: ?string, members: ?int,
+     *     country: ?string, biography: ?string, biography_lang: ?string, images: list<array>, logo: ?string}|null
+     */
+    public function audiodbArtist(?string $mbid, string $name = ''): ?array
+    {
+        $key = trim((string) $this->settings->get('audiodb_key')) ?: '123'; // freier Test-Key
+        $get = function (string $path, array $query) use ($key) {
+            return $this->cached('audiodb:'.$path.':'.md5(json_encode($query)), function () use ($key, $path, $query) {
+                $r = Http::timeout(15)->retry(2, 3000, fn ($e) => $e instanceof RequestException && $e->response->status() === 429, throw: false)
+                    ->get('https://www.theaudiodb.com/api/v1/json/'.$key.'/'.$path, $query);
+                if ($r->status() === 404) {
+                    throw new RuntimeException('TheAudioDB: Key unbekannt oder abgelaufen');
+                }
+                if (! $r->successful()) {
+                    throw new RuntimeException('TheAudioDB antwortet nicht ('.$r->status().')');
+                }
+
+                return $r->json() ?? [];
+            });
+        };
+        $hit = null;
+        if ($mbid) {
+            $hit = ($get('artist-mb.php', ['i' => $mbid])['artists'] ?? [])[0] ?? null;
+        }
+        if (! $hit && $name !== '') {
+            $nameKey = ArtistNames::compareKey($name);
+            $same = array_values(array_filter($get('search.php', ['s' => $name])['artists'] ?? [], fn ($a) => ArtistNames::compareKey((string) $a['strArtist']) === $nameKey
+                && (! $mbid || empty($a['strMusicBrainzID']) || $a['strMusicBrainzID'] === $mbid)));
+            $hit = count($same) === 1 ? $same[0] : null; // mehrere Gleichnamige: lieber nichts als das Falsche
+        }
+        if (! $hit) {
+            return null;
+        }
+        $images = [];
+        foreach (['strArtistThumb' => 'Foto', 'strArtistWideThumb' => 'Breitbild', 'strArtistFanart' => 'Fanart', 'strArtistFanart2' => 'Fanart', 'strArtistFanart3' => 'Fanart'] as $field => $kind) {
+            if (! empty($hit[$field])) {
+                $images[] = ['url' => $hit[$field], 'thumb' => $hit[$field].'/preview', 'source' => 'TheAudioDB: '.$kind, 'size' => ''];
+            }
+        }
+        $bio = trim((string) ($hit['strBiographyDE'] ?? '')) ?: null;
+
+        return ['id' => (string) $hit['idArtist'], 'name' => ArtistNames::plainPunctuation((string) $hit['strArtist']), 'mbid' => $hit['strMusicBrainzID'] ?? null,
+            'genre' => ($hit['strGenre'] ?? '') ?: null, 'style' => ($hit['strStyle'] ?? '') ?: null, 'mood' => ($hit['strMood'] ?? '') ?: null,
+            'members' => isset($hit['intMembers']) && $hit['intMembers'] !== '' ? (int) $hit['intMembers'] : null, 'country' => ($hit['strCountry'] ?? '') ?: null,
+            'biography' => $bio ?? (trim((string) ($hit['strBiographyEN'] ?? '')) ?: null), 'biography_lang' => $bio ? 'de' : (! empty($hit['strBiographyEN']) ? 'en' : null),
+            'images' => $images, 'logo' => ($hit['strArtistLogo'] ?? '') ?: null];
+    }
+
+    /** TheAudioDB-Ergebnis nur aus dem Zwischenspeicher (für Seiten, die nicht warten dürfen). */
+    public function audiodbArtistCached(?string $mbid, string $name = ''): ?array
+    {
+        $cache = fn (string $path, array $q) => Cache::get('audiodb:'.$path.':'.md5(json_encode($q)));
+        if (! ($mbid && ($cache('artist-mb.php', ['i' => $mbid])['artists'] ?? null)) && ! ($name !== '' && $cache('search.php', ['s' => $name]) !== null)) {
+            return null;
+        }
+
+        return rescue(fn () => $this->audiodbArtist($mbid, $name), null, report: false); // liest dann nur aus dem Speicher
     }
 
     public function fanartArtistImages(string $mbid): array

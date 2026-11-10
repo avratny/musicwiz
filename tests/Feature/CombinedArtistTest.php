@@ -104,7 +104,7 @@ class CombinedArtistTest extends TestCase
                 return Http::response(['id' => 'mb-sg', 'name' => 'Simon & Garfunkel', 'aliases' => [], 'genres' => [], 'tags' => []]);
             }
             if (str_contains($url, '/ws/2/recording')) {
-                return Http::response(['recordings' => [['title' => 'The Boxer', 'artist-credit' => [['artist' => ['id' => 'mb-sg']]]]]]);
+                return Http::response(['recordings' => [['title' => 'The Boxer', 'artist-credit' => [['name' => 'Simon & Garfunkel', 'artist' => ['id' => 'mb-sg']]]]]]);
             }
 
             return Http::response(['artists' => str_contains($url, 'Garfunkel') ? [['id' => 'mb-sg', 'name' => 'Simon & Garfunkel', 'score' => 100, 'type' => 'Group']] : []]);

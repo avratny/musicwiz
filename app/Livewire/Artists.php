@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Jobs\CheckCombis;
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\ResearchArtistGroup;
@@ -19,6 +20,7 @@ use App\Support\ArtistGroupAnalyzer;
 use App\Support\ArtistImages;
 use App\Support\ArtistNames;
 use App\Support\ArtistQuickMatch;
+use App\Support\CombiCheck;
 use App\Support\Covers;
 use App\Support\FileOps;
 use App\Support\Genres;
@@ -96,7 +98,9 @@ class Artists extends Component
     /** Schnell erfassen: Kombi in die vorgeschlagenen Teile trennen („Gerhard Polt, Gisela Schneeberger“). */
     public function quickSplit(string $name, ArtistQuickMatch $quick): void
     {
-        $parts = ArtistNames::suggestSplit($name);
+        // Teile aus der Kombi-Prüfung (genaue Schreibweise der Dienste), sonst aus dem Namen
+        $combi = app(CombiCheck::class)->cached($name);
+        $parts = ($combi['verdict'] ?? null) === 'collab' ? $combi['parts'] : ArtistNames::suggestSplit($name);
         if (count($parts) < 2 || Artist::where('name', $name)->exists()) {
             return;
         }
@@ -410,6 +414,27 @@ class Artists extends Component
         ArtistSplit::whereKey($id)->delete();
     }
 
+    /** Verzeichnis: nur Einträge zeigen, die laut Kombi-Prüfung eine Zusammenarbeit sind */
+    #[Url(as: 'zusammenarbeit')]
+    public bool $onlyCollab = false;
+
+    /** Kombi-Prüfung für alle Kombi-Einträge im Hintergrund starten */
+    public function startCombiCheck(bool $fresh = false): void
+    {
+        session()->flash('status', CheckCombis::start($fresh)
+            ? 'Kombi-Prüfung gestartet – läuft im Hintergrund (Deezer, Spotify, MusicBrainz, etwa ein Eintrag alle paar Sekunden).'
+            : 'Nichts zu prüfen – alle Kombi-Einträge sind schon geprüft (bzw. es läuft bereits).');
+    }
+
+    /** Kombi-Prüfung für den gewählten Eintrag jetzt (fragt die Dienste, dauert ein paar Sekunden). */
+    public function checkCombiNow(CombiCheck $check): void
+    {
+        $a = Artist::find($this->selected);
+        if ($a && CombiCheck::applies($a->name)) {
+            $check->check($a->name, true);
+        }
+    }
+
     /** „In Einzelkünstler trennen“: Teile (vorbelegt aus dem Namen), Fehlermeldung */
     public ?array $splitInto = null;
 
@@ -424,7 +449,10 @@ class Artists extends Component
         }
         // Mitglieder laut MusicBrainz: oft die Namen, unter denen die Einzelkünstler im Bestand stehen
         $members = $a->mbid ? rescue(fn () => app(Lookup::class)->musicbrainzMembers($a->mbid), [], report: false) : [];
-        $this->splitInto = ['parts' => ArtistNames::suggestSplit($a->name) ?: [$a->name, ''], 'members' => $members, 'error' => null];
+        // Teile: aus der Kombi-Prüfung (Schreibweise der Dienste), sonst aus dem Namen
+        $combi = app(CombiCheck::class)->cached($a->name);
+        $parts = ($combi['verdict'] ?? null) === 'collab' ? $combi['parts'] : (ArtistNames::suggestSplit($a->name) ?: [$a->name, '']);
+        $this->splitInto = ['parts' => $parts, 'members' => $members, 'error' => null];
     }
 
     /**
@@ -683,6 +711,8 @@ class Artists extends Component
         $errors = [];
         $name = $this->form['name'] ?? '';
         $sources = [
+            fn () => ! empty($this->form['mbid']) ? ($lookup->audiodbArtist($this->form['mbid'], $name)['images'] ?? []) : [],
+            fn () => $lookup->hasSpotify() ? ($lookup->spotifyArtist($name, array_values(app(ArtistGroupAnalyzer::class)->profiles()[$name]['titles'] ?? []))['images'] ?? []) : [],
             fn () => $lookup->deezerArtistImages($name),
             fn () => ! empty($this->form['mbid']) && trim((string) app(Settings::class)->get('fanart_key')) !== '' ? $lookup->fanartArtistImages($this->form['mbid']) : [],
             fn () => ! empty($this->form['discogs_id']) && $lookup->hasDiscogs() ? $lookup->discogsArtistImages($this->form['discogs_id']) : [],
@@ -980,6 +1010,17 @@ class Artists extends Component
         if ($this->tab === 'directory') {
             $query = Artist::query()
                 ->when($this->q !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%'))));
+            // Kombi-Prüfung: Ergebnisse aller Kombi-Einträge (nur gespeicherte), Filter „wahrscheinlich Zusammenarbeit“
+            $combiNames = Artist::pluck('name', 'id')->filter(fn ($n) => CombiCheck::applies($n));
+            $combis = array_filter(app(CombiCheck::class)->cachedMany($combiNames->values()->all()));
+            $collabIds = $combiNames->filter(fn ($n) => ($combis[$n]['verdict'] ?? null) === 'collab')->keys()->all();
+            if ($this->onlyCollab) {
+                $query->whereIn('id', $collabIds);
+            }
+            $data['combis'] = $combis;
+            $data['collabCount'] = count($collabIds);
+            $data['combiTotal'] = count(CheckCombis::names());
+            $data['combiJob'] = CheckCombis::status();
             $data['artistTotal'] = (clone $query)->count();
             $data['artists'] = $query->withCount('aliases')->orderByRaw('name COLLATE NOCASE')->limit($this->artistLimit)->get();
             $data['artist'] = $this->selected ? Artist::with(['aliases', 'rejectedAliases'])->find($this->selected) : null;
@@ -988,6 +1029,10 @@ class Artists extends Component
             $data['genreSuggestion'] = $data['artist'] ? $genres->suggestForArtist($data['artist']) : null;
             $data['artistTracks'] = $data['artist'] ? $this->sampleTracks($data['artist']) : [];
             $data['splitIntoHints'] = $this->splitInto ? $this->splitIntoHints($directory) : [];
+            $data['combi'] = $data['artist'] && CombiCheck::applies($data['artist']->name) ? app(CombiCheck::class)->cached($data['artist']->name) : null;
+            $data['combiApplies'] = $data['artist'] && CombiCheck::applies($data['artist']->name);
+            // TheAudioDB (nur Zwischenspeicher): Biografie, Herkunft, Mitglieder – geholt beim Vorladen bzw. „Bilder suchen“
+            $data['audiodb'] = $data['artist']?->mbid ? app(Lookup::class)->audiodbArtistCached($data['artist']->mbid, $data['artist']->name) : null;
             // ohne Lieder im Bestand: Hinweis, ob welche noch in der Inbox liegen (zählen erst nach dem Einordnen)
             $data['inboxTracks'] = $data['artist'] && ! $data['artistTracks']
                 ? Track::where('location', 'inbox')->where(fn ($q) => $q->where('artist', 'like', '%'.$data['artist']->name.'%')

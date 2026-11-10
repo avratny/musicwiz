@@ -50,6 +50,23 @@
                         @endif
                     </div>
                 @endif
+                @if ($combiTotal)
+                    <div class="mx-3 mt-2 text-xs" @if ($combiJob['running'] ?? false) wire:poll.4s @endif>
+                        @if ($combiJob['running'] ?? false)
+                            <span class="text-blue-300">Kombi-Prüfung … {{ $combiJob['done'] ?? 0 }}/{{ $combiJob['total'] ?? 0 }}</span>
+                        @else
+                            <button wire:click="startCombiCheck" class="w-full rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-zinc-500 hover:text-white"
+                                    title="Für {{ $combiTotal }} Kombi-Namen (&, und, Komma … – im Verzeichnis und noch nicht erfasste) bei Deezer, Spotify und MusicBrainz nachsehen, welche Künstler bei euren Liedern eingetragen sind: ein Act oder eine Zusammenarbeit? Schon geprüfte werden übersprungen.">
+                                Kombi-Namen prüfen ({{ $combiTotal }})
+                            </button>
+                        @endif
+                        @if ($collabCount || $onlyCollab)
+                            <button wire:click="$toggle('onlyCollab')" class="mt-1 w-full rounded border px-2 py-1 {{ $onlyCollab ? 'border-amber-500/60 bg-amber-500/10 text-amber-200' : 'border-amber-500/30 text-amber-300 hover:border-amber-500/60' }}">
+                                {{ $onlyCollab ? 'Alle Einträge zeigen' : '⚠ '.$collabCount.' wahrscheinlich Zusammenarbeit' }}
+                            </button>
+                        @endif
+                    </div>
+                @endif
                 @if ($splits->isNotEmpty())
                     <div class="mx-3 mt-2 text-xs" x-data="{ open: false }">
                         <button x-on:click="open = ! open" class="text-zinc-400 hover:text-zinc-200"><span x-text="open ? '▾' : '▸'">▸</span> Getrennte Kombinationen ({{ $splits->count() }})</button>
@@ -73,6 +90,7 @@
                                 <span class="grid size-8 place-items-center rounded-full bg-zinc-800 text-xs text-zinc-400">{{ mb_substr($a->name, 0, 1) }}</span>
                             @endif
                             <span class="flex-1 truncate" title="{{ $a->name }}">{{ $a->name }}</span>
+                            @if (($combis[$a->name]['verdict'] ?? null) === 'collab')<span class="shrink-0 text-xs text-amber-300" title="Kombi-Prüfung: {{ $combis[$a->name]['reason'] }}">⚠</span>@endif
                             @if ($a->aliases_count)<span class="text-xs text-zinc-500">+{{ $a->aliases_count }}</span>@endif
                         </button>
                     @empty
@@ -156,6 +174,41 @@
                                     <p class="mt-1 text-xs text-zinc-500">Im Bestand gibt es noch keine Lieder mit Listen-Genre.</p>
                                 @endif
                             </div>
+                            @if ($audiodb)
+                                <div class="rounded-xl border border-zinc-800 p-3 text-sm" x-data="{ open: false }">
+                                    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">
+                                        <span class="font-medium text-zinc-200">TheAudioDB</span>
+                                        @if ($audiodb['genre'] || $audiodb['style'])<span>{{ collect([$audiodb['genre'], $audiodb['style']])->filter()->unique()->implode(' / ') }}</span>@endif
+                                        @if ($audiodb['members'])<span>{{ $audiodb['members'] === 1 ? 'Solo' : $audiodb['members'].' Mitglieder' }}</span>@endif
+                                        @if ($audiodb['country'])<span>{{ $audiodb['country'] }}</span>@endif
+                                        @if ($audiodb['biography'])<button x-on:click="open = ! open" class="ml-auto text-zinc-400 hover:text-white" x-text="open ? 'Biografie ausblenden' : 'Biografie{{ $audiodb['biography_lang'] === 'en' ? ' (englisch)' : '' }}'"></button>@endif
+                                    </div>
+                                    @if ($audiodb['biography'])<p x-show="open" x-cloak class="mt-2 max-h-64 overflow-y-auto text-xs whitespace-pre-line text-zinc-300">{{ $audiodb['biography'] }}</p>@endif
+                                </div>
+                            @endif
+                            @if ($combiApplies)
+                                <div class="rounded-xl border {{ ($combi['verdict'] ?? null) === 'collab' ? 'border-amber-500/30 bg-amber-500/5' : 'border-zinc-800' }} p-3 text-sm">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-medium text-zinc-200">Kombi-Prüfung</span>
+                                        @if ($combi)<x-combi-verdict :combi="$combi" class="min-w-0 flex-1" />@else<span class="flex-1 text-xs text-zinc-500">noch nicht geprüft</span>@endif
+                                        <button wire:click="checkCombiNow" class="btn-ghost btn-sm shrink-0"><span wire:loading.remove wire:target="checkCombiNow">{{ $combi ? 'neu prüfen' : 'jetzt prüfen' }}</span><span wire:loading wire:target="checkCombiNow">prüft …</span></button>
+                                    </div>
+                                    @if ($combi && $combi['evidence'])
+                                        <table class="mt-2 w-full text-xs">
+                                            @foreach ($combi['evidence'] as $e)
+                                                <tr class="align-top">
+                                                    <td class="w-24 pr-2 text-zinc-500">{{ $e['source'] }}</td>
+                                                    <td class="max-w-56 truncate pr-2 text-zinc-400" title="{{ $e['title'] }}">{{ $e['title'] }}</td>
+                                                    <td class="pr-2 {{ $e['vote'] === 'collab' ? 'text-amber-300' : ($e['vote'] === 'act' ? 'text-emerald-300' : 'text-zinc-500') }}">{{ implode(' + ', $e['credited']) }}</td>
+                                                </tr>
+                                            @endforeach
+                                        </table>
+                                    @endif
+                                    @if ($combi)
+                                        <p class="mt-1 text-xs text-zinc-500">Bestand: {{ $combi['local']['own_albums'] }} eigene(s) Album/Alben unter dem Namen{{ $combi['local']['parts'] ? ' · solo: '.collect($combi['local']['parts'])->map(fn ($n, $p) => $p.' '.$n)->implode(', ') : '' }} · geprüft {{ \Illuminate\Support\Carbon::parse($combi['checked_at'])->diffForHumans() }}</p>
+                                    @endif
+                                </div>
+                            @endif
                             <div class="flex flex-wrap gap-2">
                                 <button wire:click="saveArtist" class="btn-primary">Speichern</button>
                                 <button wire:click="lookupMusicBrainz" class="btn-ghost"><span wire:loading.remove wire:target="lookupMusicBrainz">Bei MusicBrainz nachschlagen</span><span wire:loading wire:target="lookupMusicBrainz">sucht …</span></button>

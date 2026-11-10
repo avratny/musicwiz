@@ -63,8 +63,15 @@
                 </div>
 
                 @if ($wizCombined)
-                    <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
-                        Sieht nach mehreren Künstlern aus („&“, „und“, „,“ …). Getrennt wird nie automatisch – ist es ein Duo bzw. eine Band, einfach speichern; sonst überspringen und unter „Aufräumen › Kombi“ entscheiden.
+                    <div class="rounded-lg border {{ ($wizCombi['verdict'] ?? null) === 'act' ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-100' : 'border-amber-500/30 bg-amber-500/10 text-amber-200' }} px-3 py-2 text-sm">
+                        @if (($wizCombi['verdict'] ?? null) === 'act')
+                            Laut Deezer, Spotify bzw. MusicBrainz ein Act (Duo/Band) – speichern passt.
+                        @elseif (($wizCombi['verdict'] ?? null) === 'collab')
+                            Laut Deezer, Spotify bzw. MusicBrainz eine <strong>Zusammenarbeit</strong> von {{ implode(' + ', $wizCombi['parts']) }} – besser nicht als ein Künstler speichern, sondern trennen (Aufräumen › Kombi bzw. Künstler › Schnell erfassen).
+                        @else
+                            Sieht nach mehreren Künstlern aus („&“, „und“, „,“ …). Getrennt wird nie automatisch – ist es ein Duo bzw. eine Band, einfach speichern; sonst überspringen und unter „Aufräumen › Kombi“ entscheiden.
+                        @endif
+                        @if ($wizCombi)<x-combi-verdict :combi="$wizCombi" class="mt-1" />@endif
                     </div>
                 @endif
 

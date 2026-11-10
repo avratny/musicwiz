@@ -10,6 +10,7 @@ use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistGroupAnalyzer;
 use App\Support\ArtistImages;
 use App\Support\ArtistNames;
+use App\Support\CombiCheck;
 use App\Support\Covers;
 use App\Support\Lookup;
 use App\Support\PendingChanges;
@@ -343,6 +344,8 @@ trait NewArtistWizard
         $this->wizImages = [];
         $name = trim($this->wizFinal) ?: (string) $this->wizName;
         $sources = [
+            'TheAudioDB' => fn () => $this->wizMbid ? ($lookup->audiodbArtist($this->wizMbid, $name)['images'] ?? []) : [],
+            'Spotify' => fn () => $lookup->hasSpotify() ? ($lookup->spotifyArtist($name, $this->wizTitles(app(ArtistGroupAnalyzer::class)))['images'] ?? []) : [],
             'Deezer' => fn () => $lookup->deezerArtistImages($name),
             'Fanart.tv' => fn () => $this->wizMbid && trim((string) app(Settings::class)->get('fanart_key')) !== '' ? $lookup->fanartArtistImages($this->wizMbid) : [],
             'Discogs' => fn () => $this->wizDiscogsId && $lookup->hasDiscogs() ? $lookup->discogsArtistImages($this->wizDiscogsId) : [],
@@ -524,6 +527,7 @@ trait NewArtistWizard
             'wizTracks' => $name !== null ? array_slice($this->wizSampleTracks(), 0, 6) : [],
             'wizRelated' => $related,
             'wizCombined' => $name !== null && ArtistNames::looksCombined($name),
+            'wizCombi' => $name !== null && CombiCheck::applies($name) ? app(CombiCheck::class)->cached($name) : null,
             'wizMbName' => collect($this->wizMb)->firstWhere('mbid', $this->wizMbid)['name'] ?? null,
         ];
     }

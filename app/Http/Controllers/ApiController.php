@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\CheckCombis;
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\RefreshCleanup;
@@ -17,12 +18,14 @@ use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistNames;
 use App\Support\ArtistQuickMatch;
 use App\Support\CleanupChecks;
+use App\Support\CombiCheck;
 use App\Support\CombinedSuggestions;
 use App\Support\InboxWatch;
 use App\Support\Lookup;
 use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
+use App\Support\SettingsBackup;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -76,6 +79,9 @@ class ApiController extends Controller
                 'POST /api/quick' => '{"picks": [{"name", "mb_spelling"?: true, "image"?: url}]} – anlegen',
                 'POST /api/quick/split' => '{"name", "parts"?: [..]} – offenen Kombi-Namen trennen',
                 'GET /api/combined' => 'Kombi-Namen (&, und, Komma) mit Vorschlag',
+                'GET /api/combi?name=' => 'Kombi-Prüfung eines Namens (gespeichertes Ergebnis): Act oder Zusammenarbeit, mit den je Dienst eingetragenen Künstlern',
+                'POST /api/combi' => '{"names": [..], "fresh"?: true} – jetzt prüfen (fragt Deezer, Spotify, MusicBrainz; max. 10 Namen)',
+                'POST /api/combi/start' => '{"fresh"?: true} – alle Kombi-Einträge im Verzeichnis im Hintergrund prüfen',
                 'POST /api/combined' => '{"names": [..]} oder {"all": true} – Vorschläge übernehmen',
                 'GET /api/history?limit=20' => 'letzte Aktionen im Verlauf',
                 'GET /api/history/{id}?errors=1&limit=2000' => 'eine Aktion mit allen Einträgen (errors=1: nur Fehler/Hinweise)',
@@ -286,6 +292,8 @@ class ApiController extends Controller
             'looks_collaboration' => ArtistNames::looksCollaboration($artist->name),
             'split_suggestion' => ArtistNames::suggestSplit($artist->name),
             'musicbrainz_members' => $artist->mbid ? rescue(fn () => $lookup->musicbrainzMembers($artist->mbid), [], report: false) : [],
+            'combi' => CombiCheck::applies($artist->name) ? app(CombiCheck::class)->cached($artist->name) : null,
+            'audiodb' => $artist->mbid ? rescue(fn () => $lookup->audiodbArtist($artist->mbid, $artist->name), null, report: false) : null,
         ]);
     }
 
@@ -392,6 +400,30 @@ class ApiController extends Controller
         return $this->change(fn () => $actions->applyCombined($names), 'Kombi-Vorschläge übernehmen', ['names' => $request->boolean('all') ? 'alle' : $names]);
     }
 
+    public function combi(Request $request, CombiCheck $check): JsonResponse
+    {
+        $name = trim((string) $request->input('name'));
+        abort_if($name === '', 422, 'Parameter name fehlt');
+
+        return $this->json(['name' => $name, 'applies' => CombiCheck::applies($name), 'result' => $check->cached($name)]);
+    }
+
+    public function combiCheck(Request $request, CombiCheck $check): JsonResponse
+    {
+        $names = array_slice(array_values(array_filter(array_map('trim', (array) $request->input('names', [])))), 0, 10);
+        $out = [];
+        foreach ($names as $n) {
+            $out[$n] = CombiCheck::applies($n) ? $check->check($n, $request->boolean('fresh')) : null;
+        }
+
+        return $this->json(['results' => $out]);
+    }
+
+    public function combiStart(Request $request): JsonResponse
+    {
+        return $this->json(['started' => CheckCombis::start($request->boolean('fresh')), 'status' => CheckCombis::status()]);
+    }
+
     /** Änderung ausführen und protokollieren (wer über die Schnittstelle was geändert hat, steht im Protokoll). */
     private function change(callable $fn, string $what, array $context): JsonResponse
     {
@@ -454,6 +486,7 @@ class ApiController extends Controller
             'failed_jobs' => ['count' => DB::table('failed_jobs')->count(), 'latest' => $failed],
             'cleanup' => ['fresh' => $checks->isFresh(), 'focus' => Cache::get(CleanupChecks::FOCUS), 'progress' => CleanupChecks::progress()],
             'artist_prefetch' => PrefetchUnknownArtists::status(),
+            'combi_check' => CheckCombis::status(),
             'musicbrainz_aliases' => Cache::get(ImportMusicBrainzAliases::STATUS_KEY),
             'inbox_watch' => ['enabled' => $watch->enabled(), 'interval' => $watch->interval(), 'alive' => Cache::get('inbox-watch:alive')],
             'pending_tracks' => PendingChange::count(),
@@ -504,7 +537,7 @@ class ApiController extends Controller
     /** Zugangsdaten aus den Einstellungen nie über die Schnittstelle zeigen */
     private function redact(string $text): string
     {
-        foreach (['discogs_token', 'fanart_key', 'acoustid_key'] as $k) {
+        foreach (SettingsBackup::SECRETS as $k) {
             $secret = trim((string) $this->settings->get($k));
             if (strlen($secret) >= 6) {
                 $text = str_replace($secret, '***', $text);

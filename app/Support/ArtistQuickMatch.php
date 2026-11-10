@@ -47,6 +47,8 @@ class ArtistQuickMatch
         // gleicher Vergleichsschlüssel wie ein anderer offener Name: erst entscheiden, welche Schreibweise gilt
         $byKey = array_count_values(array_map(fn ($n) => ArtistNames::compareKey((string) $n), array_keys($open)));
         $results = PrefetchArtistLookup::results(array_map('strval', array_keys($open)));
+        // Kombi-Prüfung (eingetragene Künstler bei Deezer, Spotify, MusicBrainz) – nur gespeicherte Ergebnisse
+        $combis = app(CombiCheck::class)->cachedMany(array_values(array_filter(array_map('strval', array_keys($open)), fn ($n) => CombiCheck::applies($n))));
 
         $rows = [];
         foreach ($open as $name => $o) {
@@ -56,13 +58,23 @@ class ArtistQuickMatch
                 [$kind, $reason] = ['unsure', 'ähnlicher Eintrag im Verzeichnis – im Assistenten zuordnen'];
             } elseif ($kind !== 'pending' && ($byKey[ArtistNames::compareKey($name)] ?? 0) > 1) {
                 [$kind, $reason] = ['unsure', 'mehrere Schreibweisen im Bestand – im Assistenten entscheiden'];
-            } elseif ($kind !== 'pending' && ArtistNames::looksCombined($name)) {
-                [$kind, $reason] = ['unsure', 'sieht nach mehreren Künstlern aus – im Assistenten trennen oder bestätigen'];
+            } elseif ($kind !== 'pending' && CombiCheck::applies($name)) {
+                // Kombi-Name: eindeutig nur, wenn die Dienste ihn als einen Act eintragen
+                $combi = $combis[$name] ?? null;
+                if (($combi['verdict'] ?? null) === 'collab') {
+                    [$kind, $reason] = ['unsure', 'Zusammenarbeit laut Diensten ('.implode(' + ', $combi['parts']).') – trennen'];
+                } elseif (($combi['verdict'] ?? null) !== 'act' || $kind !== 'sure') {
+                    [$kind, $reason] = ['unsure', ($combi ? 'Kombi-Prüfung: '.$combi['reason'] : 'sieht nach mehreren Künstlern aus').' – im Assistenten trennen oder bestätigen'];
+                } else {
+                    $reason .= ' · Act laut Diensten';
+                }
             }
-            // Kombi („Gerhard Polt, Gisela Schneeberger“): Trennen gleich in der Liste anbieten
-            $split = in_array($kind, ['unsure', 'pending'], true) && ArtistNames::looksCombined($name) ? ArtistNames::suggestSplit($name) : [];
+            $combi = $combis[$name] ?? null;
+            // Kombi („Gerhard Polt, Gisela Schneeberger“): Trennen gleich in der Liste anbieten – mit den Namen, wie die Dienste sie eintragen
+            $split = in_array($kind, ['unsure', 'pending'], true) && ArtistNames::looksCombined($name) && ($combi['verdict'] ?? null) !== 'act'
+                ? (($combi['verdict'] ?? null) === 'collab' ? $combi['parts'] : ArtistNames::suggestSplit($name)) : [];
             $rows[] = ['name' => $name, 'key' => md5($name), 'count' => (int) $o['n'], 'kind' => $kind, 'reason' => $reason, 'hit' => $hit,
-                'split' => count($split) >= 2 ? $split : []];
+                'split' => count($split) >= 2 ? array_values($split) : [], 'combi' => $combi ? ['verdict' => $combi['verdict'], 'reason' => $combi['reason']] : null];
         }
 
         return $rows;

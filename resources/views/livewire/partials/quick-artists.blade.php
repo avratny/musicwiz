@@ -67,7 +67,12 @@
                                     <span class="text-zinc-600">–</span>
                                 @endif
                             </td>
-                            <td class="py-2 pr-3 text-xs {{ $r['kind'] === 'sure' ? 'text-emerald-300' : 'text-zinc-400' }}">{{ $r['reason'] }}</td>
+                            <td class="py-2 pr-3 text-xs {{ $r['kind'] === 'sure' ? 'text-emerald-300' : 'text-zinc-400' }}">
+                                {{ $r['reason'] }}
+                                @if ($r['combi'] ?? null)
+                                    <x-combi-verdict :combi="$r['combi']" class="mt-0.5" />
+                                @endif
+                            </td>
                             @if ($selectable)
                                 <td class="py-2 pr-3">
                                     <div class="flex gap-1.5">
