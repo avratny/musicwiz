@@ -6,10 +6,14 @@ use App\Models\Artist;
 
 /**
  * Sortiernamen für ARTISTSORT/ALBUMARTISTSORT: „The Beatles“ → „Beatles, The“ (Artikel laut Einstellung), oder der eigene
- * Sortiername aus dem Künstlerverzeichnis („Udo Jürgens“ → „Jürgens, Udo“). Die Ordner bleiben davon unberührt.
+ * Sortiername aus dem Künstlerverzeichnis. Personen werden nie umgedreht („Udo Jürgens“ bleibt). Die Ordner bleiben davon
+ * unberührt.
  */
 class SortNames
 {
+    /** Artikel zum Anklicken in den Einstellungen (weitere lassen sich ins Feld schreiben) */
+    public const SUGGESTED_ARTICLES = ['The', 'Die', 'A', 'An', 'Der', 'Das', 'Les', 'Le', 'La', 'Los', 'Las', 'El', 'Il'];
+
     /** @var array<string, string>|null Name im Anzeigetext => eigener Sortiername */
     private ?array $overrides = null;
 
@@ -45,19 +49,14 @@ class SortNames
 
     /**
      * Wert für ARTISTSORT bzw. ALBUMARTISTSORT zu einem Anzeigetext („The Beatles feat. Liz“ → „Beatles, The feat. Liz“).
-     * Leer, wenn er dem Anzeigetext gleicht – dann braucht es das Feld nicht (ein vorhandenes wird entfernt).
-     * $current: Wert in der Datei – ist er der umgedrehte Name („Jürgens, Udo“ zu „Udo Jürgens“, z. B. von Picard oder
-     * MediaMonkey) und gibt es keinen eigenen Eintrag im Verzeichnis, bleibt er stehen.
+     * Leer, wenn er dem Anzeigetext gleicht – dann braucht es das Feld nicht (ein vorhandenes, z. B. „Jürgens, Udo“ von
+     * Picard oder MediaMonkey, wird entfernt).
      */
-    public function forText(?string $text, ?string $current = null): string
+    public function forText(?string $text): string
     {
         $text = trim((string) $text);
         if ($text === '') {
             return '';
-        }
-        $current = trim((string) $current);
-        if ($current !== '' && ! isset($this->overrides()[$text]) && ArtistNames::uninvert($current, true) === $text) {
-            return $current;
         }
         $out = $text;
         foreach (ArtistNames::split($text) as $name) {
@@ -70,11 +69,10 @@ class SortNames
         return $out === $text ? '' : $out;
     }
 
-    /** Sortiernamen zu Tags (mit den bisherigen Werten aus artistsort/albumartistsort) @return array{artistsort: string, albumartistsort: string} */
+    /** @return array{artistsort: string, albumartistsort: string} */
     public function tags(array $tags): array
     {
-        return ['artistsort' => $this->forText($tags['artist'] ?? '', $tags['artistsort'] ?? null),
-            'albumartistsort' => $this->forText($tags['albumartist'] ?? '', $tags['albumartistsort'] ?? null)];
+        return ['artistsort' => $this->forText($tags['artist'] ?? ''), 'albumartistsort' => $this->forText($tags['albumartist'] ?? '')];
     }
 
     /** @return array<string, string> */

@@ -45,8 +45,15 @@
                     </select>
                 </div>
                 <div><label class="label">Artikel für Sortiernamen (ARTISTSORT)</label>
-                    <input wire:model="s.sort_articles" class="input" placeholder="The, Die, Der, Das">
-                    <p class="mt-1 text-xs text-zinc-500">Kommagetrennt – „The Beatles“ → „Beatles, The“. Die Ordner bleiben, wie sie sind.</p>
+                    <input wire:model.live.debounce.400ms="s.sort_articles" class="input" placeholder="The, Die">
+                    @php $chosenArticles = array_map('mb_strtolower', preg_split('/\s*,\s*/u', trim((string) ($s['sort_articles'] ?? '')))); @endphp
+                    <div class="mt-1.5 flex flex-wrap gap-1">
+                        @foreach (\App\Support\SortNames::SUGGESTED_ARTICLES as $article)
+                            @php $on = in_array(mb_strtolower($article), $chosenArticles, true); @endphp
+                            <button type="button" wire:click="toggleArticle(@js($article))" class="rounded-full border px-2 py-0.5 text-xs {{ $on ? 'border-blue-500 bg-blue-500/15 text-blue-100' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200' }}">{{ $article }}</button>
+                        @endforeach
+                    </div>
+                    <p class="mt-1 text-xs text-zinc-500">Kommagetrennt bzw. anklicken – „The Beatles“ → „Beatles, The“. Personen werden nie umgedreht, die Ordner bleiben, wie sie sind. Vorsicht bei La, Le, De: „La Bouche“ bzw. „De La Soul“ würden auch umgestellt – Ausnahmen beim Künstler als eigenen Sortiernamen eintragen.</p>
                 </div>
                 <div><label class="label">Qobuz-Shop (FLAC-Kandidaten)</label>
                     <select wire:model="s.qobuz_store" class="input">

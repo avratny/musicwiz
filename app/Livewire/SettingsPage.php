@@ -71,6 +71,15 @@ class SettingsPage extends Component
         $this->s['categories'] = $settings->categories();
     }
 
+    /** Artikel für Sortiernamen an- bzw. abwählen (gespeichert mit „Speichern“). */
+    public function toggleArticle(string $article): void
+    {
+        $list = array_values(array_filter(preg_split('/\s*,\s*/u', trim((string) ($this->s['sort_articles'] ?? ''))), fn ($a) => $a !== ''));
+        $has = array_filter($list, fn ($a) => mb_strtolower($a) === mb_strtolower($article));
+        $list = $has ? array_values(array_diff_key($list, $has)) : [...$list, $article];
+        $this->s['sort_articles'] = implode(', ', $list);
+    }
+
     public function save(Settings $settings): void
     {
         $this->validate([

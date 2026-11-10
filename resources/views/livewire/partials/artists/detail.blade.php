@@ -49,7 +49,7 @@
                 </label>
                 <div class="mt-2 flex flex-wrap items-center gap-2 px-1 text-sm">
                     <span class="text-zinc-400" title="ARTISTSORT / ALBUMARTISTSORT – Sortierung im Player (Navidrome, Musik-App, MediaMonkey). Die Ordner bleiben, wie sie sind.">Sortiername</span>
-                    <input wire:model.live.debounce.400ms="form.sort_name" placeholder="{{ $sortRule ?? '' }}" class="input-sm w-56" title="Leer = nach den Artikel-Regeln aus den Einstellungen; z. B. „Jürgens, Udo“ für Personen">
+                    <input wire:model.live.debounce.400ms="form.sort_name" placeholder="{{ $sortRule ?? '' }}" class="input-sm w-56" title="Leer = nach den Artikel-Regeln aus den Einstellungen; nur für Ausnahmen">
                     @if (($sortWritten ?? '') === $artist->baseName())
                         <span class="text-xs text-zinc-500">kein Sortierfeld nötig – sortiert wie der Name</span>
                     @else

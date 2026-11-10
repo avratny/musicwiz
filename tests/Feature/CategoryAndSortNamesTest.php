@@ -90,13 +90,12 @@ class CategoryAndSortNamesTest extends TestCase
         $this->assertSame('Beatles, The feat. Liz', $sort->forText('The Beatles feat. Liz'));
         $this->assertSame('', $sort->forText('ABBA'), 'gleich dem Namen: kein Feld');
         $this->assertSame('', $sort->forText('Various Artists'));
-        // vorhandener umgedrehter Personenname (z. B. von Picard) bleibt
-        $this->assertSame('Jürgens, Udo', $sort->forText('Udo Jürgens', 'Jürgens, Udo'));
-        $this->assertSame('', $sort->forText('Udo Jürgens', 'Irgendwas'));
+        // Personen nie umdrehen, Standard-Artikel nur The und Die
+        $this->assertSame('', $sort->forText('Udo Jürgens'));
+        $this->assertSame('Der Plan', $sort->byRule('Der Plan'));
 
-        Artist::create(['name' => 'Udo Jürgens', 'sort_name' => 'Juergens, Udo']);
-        $sort = app(SortNames::class);
-        $this->assertSame('Juergens, Udo', $sort->forText('Udo Jürgens', 'Jürgens, Udo'), 'eigener Eintrag geht vor');
+        Artist::create(['name' => 'Der Plan', 'sort_name' => 'Plan, Der']);
+        $this->assertSame('Plan, Der', app(SortNames::class)->forText('Der Plan'), 'eigener Eintrag für Ausnahmen');
 
         app(Settings::class)->set(['sort_articles' => 'The']);
         $this->assertSame('Die Toten Hosen', app(SortNames::class)->byRule('Die Toten Hosen'));
@@ -146,6 +145,13 @@ class CategoryAndSortNamesTest extends TestCase
         $sort = collect($checks->findings('sortnames'))->sole();
         $this->assertSame(['artistsort' => 'Beatles, The', 'albumartistsort' => 'Beatles, The'], $sort['actions'][0]['tags']);
         $this->assertSame('LIB', Track::where('artist', 'ABBA')->value('category'));
+
+        // vorhandenes „Jürgens, Udo“ (z. B. von Picard) wird entfernt
+        $udo = $this->file('library/artists/U/Udo Jürgens/Hits (1980)/01 - Lied', ['title' => 'Lied', 'artist' => 'Udo Jürgens', 'albumartist' => 'Udo Jürgens',
+            'album' => 'Hits', 'year' => '1980', 'track' => '1', 'comment' => 'LIB', 'category' => 'LIB', 'artistsort' => 'Jürgens, Udo']);
+        app(Scanner::class)->scan('library');
+        $found = collect(app(CleanupChecks::class)->findings('sortnames'))->flatMap(fn ($f) => $f['actions'])->firstWhere('path', $udo);
+        $this->assertSame(['artistsort' => ''], $found['tags']);
     }
 
     public function test_artist_page_shows_and_saves_the_sort_name(): void
@@ -164,6 +170,15 @@ class CategoryAndSortNamesTest extends TestCase
 
         $abba = Artist::create(['name' => 'ABBA']);
         Livewire::test(Artists::class)->call('select', $abba->id)->assertSee('kein Sortierfeld nötig');
+    }
+
+    public function test_settings_toggle_articles(): void
+    {
+        Livewire::test(\App\Livewire\SettingsPage::class)
+            ->assertSet('s.sort_articles', 'The, Die')
+            ->call('toggleArticle', 'Der')->assertSet('s.sort_articles', 'The, Die, Der')
+            ->call('toggleArticle', 'die')->assertSet('s.sort_articles', 'The, Der')
+            ->assertSee('Los');
     }
 
     public function test_quick_standard_image_choice(): void
