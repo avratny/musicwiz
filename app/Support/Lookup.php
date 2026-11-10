@@ -3,6 +3,8 @@
 namespace App\Support;
 
 use Illuminate\Http\Client\RequestException;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -805,8 +807,7 @@ class Lookup
 
                 return (string) $r->json('access_token');
             });
-            $r = Http::timeout(15)->withToken($token)->retry(2, 2000, fn ($e) => $e instanceof RequestException && $e->response->status() === 429, throw: false)
-                ->get('https://api.spotify.com/v1/'.$path, $query);
+            $r = $this->spotifyRequest($token, $path, $query);
             if ($r->status() === 401) {
                 Cache::forget('spotify:token:'.md5($id));
             }
@@ -816,6 +817,49 @@ class Lookup
 
             return $r->json() ?? [];
         });
+    }
+
+    /** Spotify sperrt nach zu vielen Abfragen für die Dauer aus „Retry-After“ – so lange wird gar nicht gefragt */
+    private const SPOTIFY_BLOCKED = 'spotify:blocked-until';
+
+    /** Bis wann Spotify gesperrt ist (null = frei). */
+    public static function spotifyBlockedUntil(): ?Carbon
+    {
+        $until = Cache::get(self::SPOTIFY_BLOCKED);
+
+        return $until && $until > time() ? Carbon::createFromTimestamp($until, config('app.timezone')) : null;
+    }
+
+    /**
+     * Eine Abfrage mit Abstand (gemeinsam für Oberfläche und Worker, wie bei MusicBrainz). Bei 429 hält sich die App an
+     * „Retry-After“: kurze Wartezeit abwarten und einmal neu fragen, längere als Sperre merken – jede weitere Abfrage
+     * würde die Sperre bei Spotify nur verlängern.
+     */
+    private function spotifyRequest(string $token, string $path, array $query): Response
+    {
+        for ($attempt = 0; ; $attempt++) {
+            if ($until = self::spotifyBlockedUntil()) {
+                throw new ServiceThrottled('Spotify bremst (zu viele Abfragen) – wieder ab '.$until->format('H:i').' Uhr');
+            }
+            Cache::lock('spotify:pace', 10)->block(20, function () {
+                $wait = (float) config('musicwiz.spotify_pause', 0.5) - (microtime(true) - (float) Cache::get('spotify:last', 0));
+                if ($wait > 0) {
+                    usleep((int) ($wait * 1_000_000));
+                }
+                Cache::put('spotify:last', microtime(true));
+            });
+            $r = Http::timeout(15)->withToken($token)->get('https://api.spotify.com/v1/'.$path, $query);
+            if ($r->status() !== 429) {
+                return $r;
+            }
+            $after = max(1, (int) ($r->header('Retry-After') ?: 30));
+            if ($attempt === 0 && $after <= 5) {
+                sleep($after);
+
+                continue;
+            }
+            Cache::put(self::SPOTIFY_BLOCKED, time() + $after, $after);
+        }
     }
 
     /**

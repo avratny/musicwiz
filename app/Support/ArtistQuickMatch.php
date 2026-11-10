@@ -57,7 +57,7 @@ class ArtistQuickMatch
             return $this->rows;
         }
         $base = DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory();
-        $key = 'artist-quick-rows:v1:'.$base.':'.(int) Cache::get(self::RESULTS_BUMP, 0);
+        $key = 'artist-quick-rows:v2:'.$base.':'.(int) Cache::get(self::RESULTS_BUMP, 0);
         if (($rows = Cache::get($key)) !== null) {
             return $this->rows = $rows;
         }
@@ -108,7 +108,7 @@ class ArtistQuickMatch
                 ? (($combi['verdict'] ?? null) === 'collab' ? $combi['parts'] : ArtistNames::suggestSplit($name)) : [];
             $services = $results[$name]['services'] ?? null;
             $rows[] = ['name' => $name, 'key' => md5($name), 'count' => (int) $o['n'], 'kind' => $kind, 'reason' => $reason, 'hit' => $hit,
-                'suggest' => $kind === 'typo' ? $suggest : null, 'services' => $services, 'checked' => is_array($services),
+                'suggest' => $kind === 'typo' ? $suggest : null, 'services' => $services, 'checked' => is_array($services) && empty($results[$name]['stale']),
                 'split' => count($split) >= 2 ? array_values($split) : [], 'combi' => $combi ? ['verdict' => $combi['verdict'], 'reason' => $combi['reason']] : null];
         }
 

@@ -14,6 +14,9 @@
             </button>
         @endforeach
         <div class="ml-auto text-xs text-zinc-500">
+            @if ($spotifyUntil = \App\Support\Lookup::spotifyBlockedUntil())
+                <span class="mr-3 text-amber-300" title="Zu viele Abfragen – die App fragt Spotify bis dahin gar nicht und holt die betroffenen Namen danach beim nächsten Nachschlagen nach">Spotify bremst – wieder ab {{ $spotifyUntil->format('H:i') }} Uhr</span>
+            @endif
             @if ($pf['running'] ?? false)
                 @php $left = max(0, ($pf['total'] ?? 0) - ($pf['done'] ?? 0)); @endphp
                 <span class="text-violet-300" title="MusicBrainz, Deezer, Spotify … über eure Lieder">Vorladen läuft: {{ $pf['done'] ?? 0 }} / {{ $pf['total'] ?? 0 }} · noch ca. {{ max(1, (int) ceil($left * 2 / 60)) }} Min.</span>

@@ -23,7 +23,7 @@ class CombiCheckTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        config(['musicwiz.mb_pause' => 0]);
+        config(['musicwiz.mb_pause' => 0, 'musicwiz.spotify_pause' => 0]);
         app(Settings::class)->set(['spotify_client_id' => 'id', 'spotify_client_secret' => 'secret']);
         $album = Album::create(['location' => 'library', 'dir' => '/m/X', 'title' => 'Mix', 'category' => 'LIB']);
         foreach (['Dr. Motte & WestBam' => 'Sunshine', 'Simon and Garfunkel' => 'The Boxer'] as $artist => $title) {
