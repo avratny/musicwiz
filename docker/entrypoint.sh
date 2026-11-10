@@ -36,4 +36,18 @@ if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
 fi
 php artisan config:cache
 php artisan view:cache
+
+# Worker: Laravel beendet queue:work nach einem Job, sobald er mehr als 128 MB belegt (Vorgabe ohne --memory) – bei einer
+# großen Lib nach fast jeder Aufräumen-Berechnung, danach Neustart des Containers. Grenze an PHP_MEMORY_LIMIT anlehnen
+# (7/8 davon, Rest als Puffer); -1 bzw. unbekannt: 1 GB.
+if [ "${1:-}" = "php" ] && [ "${2:-}" = "artisan" ] && [ "${3:-}" = "queue:work" ] && ! printf '%s\n' "$@" | grep -q '^--memory'; then
+    LIMIT="${PHP_MEMORY_LIMIT:-512M}"
+    case "$LIMIT" in
+        *[Gg]) MB=$(( ${LIMIT%?} * 1024 )) ;;
+        *[Mm]) MB=${LIMIT%?} ;;
+        *) MB=1024 ;;
+    esac
+    [ "$MB" -gt 0 ] 2>/dev/null || MB=1024
+    set -- "$@" "--memory=$(( MB * 7 / 8 ))"
+fi
 exec "$@"
