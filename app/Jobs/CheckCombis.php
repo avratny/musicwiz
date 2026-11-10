@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\Artist;
 use App\Support\ArtistDirectory;
 use App\Support\CombiCheck;
+use App\Support\NameConfirmation;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
@@ -88,6 +89,7 @@ class CheckCombis implements ShouldQueue
             self::dispatch();
         } else {
             Cache::put(self::STATUS, array_merge(Cache::get(self::STATUS, []), ['running' => false, 'current' => null, 'finished_at' => now()->toIso8601String()]), now()->addDays(2));
+            rescue(fn () => app(NameConfirmation::class)->evaluateAll(), report: false);
         }
     }
 }

@@ -26,6 +26,7 @@ use App\Support\FileOps;
 use App\Support\Genres;
 use App\Support\Homonyms;
 use App\Support\Lookup;
+use App\Support\NameConfirmation;
 use App\Support\OperationRunner;
 use App\Support\PendingChanges;
 use App\Support\Settings;
@@ -419,6 +420,18 @@ class Artists extends Component
     /** Verzeichnis: nur Einträge zeigen, die laut Kombi-Prüfung eine Zusammenarbeit sind */
     #[Url(as: 'zusammenarbeit')]
     public bool $onlyCollab = false;
+
+    /** Verzeichnis: nur Einträge ohne „Name passt“ zeigen */
+    #[Url(as: 'offen')]
+    public bool $onlyUnconfirmed = false;
+
+    /** „Name passt“ von Hand setzen bzw. entfernen */
+    public function setConfirmed(bool $confirmed, NameConfirmation $confirmation): void
+    {
+        if ($a = Artist::find($this->selected)) {
+            $confirmation->setManual($a, $confirmed);
+        }
+    }
 
     /** Kombi-Prüfung für alle Kombi-Einträge im Hintergrund starten */
     public function startCombiCheck(bool $fresh = false): void
@@ -1012,13 +1025,23 @@ class Artists extends Component
         if ($this->tab === 'directory') {
             $query = Artist::query()
                 ->when($this->q !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%'))));
-            // Kombi-Prüfung: Ergebnisse aller Kombi-Einträge (nur gespeicherte), Filter „wahrscheinlich Zusammenarbeit“
-            $combiNames = Artist::pluck('name', 'id')->filter(fn ($n) => CombiCheck::applies($n));
+            // „Name passt“: beim ersten Öffnen nach dem Update einmal alle eindeutigen Einträge bewerten
+            if (! Cache::has('name-confirm:v1')) {
+                app(NameConfirmation::class)->evaluateAll();
+                Cache::forever('name-confirm:v1', true);
+            }
+            // Kombi-Prüfung: Ergebnisse aller Kombi-Einträge (nur gespeicherte), Filter „wahrscheinlich Zusammenarbeit“ –
+            // von Hand bestätigte Einträge zählen nicht (die Entscheidung ist gefallen)
+            $combiNames = Artist::whereNull('name_confirmed')->orWhere('name_confirmed', '!=', 'manual')->pluck('name', 'id')->filter(fn ($n) => CombiCheck::applies($n));
             $combis = array_filter(app(CombiCheck::class)->cachedMany($combiNames->values()->all()));
             $collabIds = $combiNames->filter(fn ($n) => ($combis[$n]['verdict'] ?? null) === 'collab')->keys()->all();
             if ($this->onlyCollab) {
                 $query->whereIn('id', $collabIds);
             }
+            if ($this->onlyUnconfirmed) {
+                NameConfirmation::scopeOpen($query);
+            }
+            $data['unconfirmedCount'] = NameConfirmation::scopeOpen(Artist::query())->count();
             $data['combis'] = $combis;
             $data['collabCount'] = count($collabIds);
             $data['combiTotal'] = count(CheckCombis::names());

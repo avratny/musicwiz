@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\Album;
+use App\Models\Artist;
 use App\Models\Track;
 use Illuminate\Support\Facades\Cache;
 
@@ -72,6 +73,10 @@ class CombiCheck
         }
         $result = $this->verdict($name, $evidence, $this->local($name));
         Cache::put(self::KEY.md5($name), $result, now()->addDays(max(1, (int) config('musicwiz.lookup_cache_days', 10)) * 3));
+        // steht der Name im Verzeichnis: „Name passt“ neu bewerten (automatisch bestätigen bzw. zurücknehmen)
+        if ($artist = Artist::where('name', $name)->first()) {
+            app(NameConfirmation::class)->evaluate($artist, null, $result, true);
+        }
 
         return $result;
     }

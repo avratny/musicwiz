@@ -183,6 +183,7 @@ class ArtistQuickMatch
             if (! empty($p['image']) && ! $artist->image) {
                 StoreArtistImage::dispatch($artist->id, $p['image']);
             }
+            app(NameConfirmation::class)->evaluate($artist->fresh());
             if (! $artist->default_genre) {
                 $genre = ArtistGenreSuggestions::best($genres->for($final, $artist->mbid, null, $artist->fresh('aliases'))['proposals']);
                 $genre && $artist->update(['default_genre' => $genre]);

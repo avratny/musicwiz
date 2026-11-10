@@ -50,6 +50,7 @@ class ArtistActions
         }
         $this->directory->flush();
         $staged = $this->pending->stageForNames([$name, ...$added], $label);
+        app(NameConfirmation::class)->evaluate($artist->fresh());
 
         return ['artist' => $artist->fresh(), 'created' => $created, 'aliases' => $added, 'staged' => $staged];
     }

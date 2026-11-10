@@ -10,6 +10,8 @@ class Artist extends Model
 {
     protected $guarded = [];
 
+    protected $casts = ['name_confirmed_at' => 'datetime'];
+
     protected static function booted(): void
     {
         static::saved(fn () => ArtistNames::flushProtected());

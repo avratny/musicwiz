@@ -50,6 +50,12 @@
                         @endif
                     </div>
                 @endif
+                <div class="mx-3 mt-2 text-xs">
+                    <button wire:click="$toggle('onlyUnconfirmed')" class="w-full rounded border px-2 py-1 {{ $onlyUnconfirmed ? 'border-blue-500/60 bg-blue-500/10 text-blue-200' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500' }}"
+                            title="Einträge, bei denen „Name passt“ noch nicht angehakt ist – von dir oder automatisch in eindeutigen Fällen">
+                        {{ $onlyUnconfirmed ? 'Alle Einträge zeigen' : 'Noch nicht geprüft ('.$unconfirmedCount.')' }}
+                    </button>
+                </div>
                 @if ($combiTotal)
                     <div class="mx-3 mt-2 text-xs" @if ($combiJob['running'] ?? false) wire:poll.4s @endif>
                         @if ($combiJob['running'] ?? false)
@@ -90,7 +96,12 @@
                                 <span class="grid size-8 place-items-center rounded-full bg-zinc-800 text-xs text-zinc-400">{{ mb_substr($a->name, 0, 1) }}</span>
                             @endif
                             <span class="flex-1 truncate" title="{{ $a->name }}">{{ $a->name }}</span>
-                            @if (($combis[$a->name]['verdict'] ?? null) === 'collab')<span class="shrink-0 text-xs text-amber-300" title="Kombi-Prüfung: {{ $combis[$a->name]['reason'] }}">⚠</span>@endif
+                            @if ($a->name_confirmed === 'manual')
+                                <span class="shrink-0 text-xs text-emerald-400" title="Name passt – von dir bestätigt">✓</span>
+                            @elseif ($a->name_confirmed === 'auto')
+                                <span class="shrink-0 text-xs text-sky-400/70" title="Name passt – automatisch: {{ $a->name_confirmed_reason }}">✓</span>
+                            @endif
+                            @if ($a->name_confirmed !== 'manual' && ($combis[$a->name]['verdict'] ?? null) === 'collab')<span class="shrink-0 text-xs text-amber-300" title="Kombi-Prüfung: {{ $combis[$a->name]['reason'] }}">⚠</span>@endif
                             @if ($a->aliases_count)<span class="text-xs text-zinc-500">+{{ $a->aliases_count }}</span>@endif
                         </button>
                     @empty
@@ -174,6 +185,25 @@
                                     <p class="mt-1 text-xs text-zinc-500">Im Bestand gibt es noch keine Lieder mit Listen-Genre.</p>
                                 @endif
                             </div>
+                            <label class="flex items-start gap-2 rounded-xl border {{ in_array($artist->name_confirmed, ['manual', 'auto'], true) ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-zinc-800' }} p-3 text-sm">
+                                <input type="checkbox" class="mt-0.5 rounded border-zinc-600 bg-zinc-800" @checked(in_array($artist->name_confirmed, ['manual', 'auto'], true)) wire:change="setConfirmed($event.target.checked)">
+                                <span>
+                                    <span class="font-medium text-zinc-200">Name passt</span>
+                                    <span class="text-zinc-400">– Schreibweise stimmt{{ \App\Support\CombiCheck::applies($artist->name) ? ', und es ist ein Act (nicht trennen)' : '' }}</span>
+                                    <span class="block text-xs {{ $artist->name_confirmed === 'auto' ? 'text-sky-300/80' : 'text-zinc-500' }}">
+                                        @if ($artist->name_confirmed === 'manual')
+                                            von dir bestätigt {{ $artist->name_confirmed_at?->diffForHumans() }} – keine Hinweise oder Trenn-Vorschläge mehr für diesen Eintrag
+                                        @elseif ($artist->name_confirmed === 'auto')
+                                            automatisch bestätigt: {{ $artist->name_confirmed_reason }} ·
+                                            <button type="button" wire:click="setConfirmed(true)" class="underline hover:text-white">als meine Entscheidung übernehmen</button>
+                                        @elseif ($artist->name_confirmed === 'rejected')
+                                            von dir zurückgenommen – die App bestätigt diesen Eintrag nicht mehr von selbst
+                                        @else
+                                            noch nicht geprüft – anhaken, wenn Name {{ \App\Support\CombiCheck::applies($artist->name) ? 'und Kombi' : '' }} so passen
+                                        @endif
+                                    </span>
+                                </span>
+                            </label>
                             @if ($audiodb)
                                 <div class="rounded-xl border border-zinc-800 p-3 text-sm" x-data="{ open: false }">
                                     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-400">

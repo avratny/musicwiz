@@ -6,6 +6,7 @@ use App\Models\Track;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
 use App\Support\Lookup;
+use App\Support\NameConfirmation;
 use App\Support\Settings;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -82,6 +83,7 @@ class PrefetchUnknownArtists implements ShouldQueue
             self::dispatch(); // nächstes Häppchen – Dateiaktionen (Warteschlange default) kommen vorher dran
         } else {
             self::setStatus(['running' => false, 'current' => null, 'finished_at' => now()->toIso8601String()]);
+            rescue(fn () => app(NameConfirmation::class)->evaluateAll(), report: false);
         }
     }
 

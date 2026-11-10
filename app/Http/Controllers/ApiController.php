@@ -23,6 +23,7 @@ use App\Support\CombiCheck;
 use App\Support\CombinedSuggestions;
 use App\Support\InboxWatch;
 use App\Support\Lookup;
+use App\Support\NameConfirmation;
 use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -70,7 +71,7 @@ class ApiController extends Controller
                 'GET /api/artists?q=&limit=100' => 'Künstlerverzeichnis mit Schreibweisen',
                 'GET /api/artists/{id}' => 'ein Eintrag mit Schreibweisen, Titeln im Bestand und Mitgliedern laut MusicBrainz',
                 'POST /api/artists' => '{"name", "mbid"?, "genre"?, "aliases"?: [..], "image_url"?} – anlegen bzw. ergänzen',
-                'POST /api/artists/{id}' => '{"mbid"?, "discogs_id"?, "genre"?} – Felder setzen',
+                'POST /api/artists/{id}' => '{"mbid"?, "discogs_id"?, "genre"?, "confirmed"?: true|false} – Felder setzen, „Name passt“ bestätigen/zurücknehmen',
                 'POST /api/artists/{id}/rename' => '{"name"} – umbenennen (alter Name wird Schreibweise)',
                 'POST /api/artists/{id}/merge' => '{"ids": [..]} – „Ist derselbe wie …“',
                 'POST /api/artists/{id}/aliases' => '{"alias"} – Schreibweise hinzufügen',
@@ -268,6 +269,7 @@ class ApiController extends Controller
         return $this->json(['artists' => $artists->map(fn (Artist $a) => [
             'id' => $a->id, 'name' => $a->name, 'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre,
             'disambiguation' => $a->disambiguation, 'image' => (bool) $a->image, 'aliases' => $a->aliases->pluck('alias')->all(),
+            'name_confirmed' => $a->name_confirmed,
         ])->all()]);
     }
 
@@ -291,6 +293,7 @@ class ApiController extends Controller
         return $this->json([
             'id' => $artist->id, 'name' => $artist->name, 'mbid' => $artist->mbid, 'discogs_id' => $artist->discogs_id, 'default_genre' => $artist->default_genre,
             'image' => (bool) $artist->image, 'aliases' => $artist->aliases()->pluck('alias')->all(),
+            'name_confirmed' => $artist->name_confirmed, 'name_confirmed_reason' => $artist->name_confirmed_reason,
             'tracks' => collect([$artist->name, ...$artist->aliases()->pluck('alias')->all()])->mapWithKeys(fn ($n) => [$n => $counts[$n] ?? 0])->filter()->all(),
             'looks_collaboration' => ArtistNames::looksCollaboration($artist->name),
             'split_suggestion' => ArtistNames::suggestSplit($artist->name),
@@ -314,7 +317,13 @@ class ApiController extends Controller
                     $artist->{$col} = trim((string) $request->input($in)) ?: null;
                 }
             }
-            $artist->save();
+            if ($artist->isDirty()) {
+                $artist->save();
+            }
+            // „Name passt“ (true = von Hand bestätigt, false = zurückgenommen)
+            if ($request->has('confirmed')) {
+                app(NameConfirmation::class)->setManual($artist, $request->boolean('confirmed'));
+            }
 
             return ['artist' => $artist];
         }, 'Künstler ändern', ['id' => $artist->id] + $request->all());
