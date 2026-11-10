@@ -445,6 +445,107 @@ class Lookup
         ], $data['results'] ?? []);
     }
 
+    /**
+     * Künstlerprofil bei Discogs: echter Name, Profiltext, Mitglieder (bei Gruppen), Gruppen (bei Einzelkünstlern),
+     * Aliasse. Über die Discogs-ID, sonst nur, wenn genau ein Künstler so heißt.
+     */
+    public function discogsArtistProfile(string $name, ?string $discogsId = null): ?array
+    {
+        if (! $discogsId) {
+            $key = ArtistNames::compareKey($name);
+            $same = array_values(array_filter($this->discogsArtists($name), fn ($a) => ArtistNames::compareKey($a['name']) === $key));
+            if (count($same) !== 1) {
+                return $same ? ['ambiguous' => array_map(fn ($a) => ['name' => $a['raw'], 'discogs_id' => $a['discogs_id']], $same)] : null;
+            }
+            $discogsId = $same[0]['discogs_id'];
+        }
+        $a = $this->discogs('artists/'.$discogsId, []);
+        $names = fn ($list) => array_values(array_map(fn ($m) => ArtistNames::stripDiscogsSuffix((string) $m['name']).(isset($m['active']) && ! $m['active'] ? ' (früher)' : ''), (array) $list));
+
+        return array_filter([
+            'discogs_id' => (string) ($a['id'] ?? $discogsId), 'name' => ArtistNames::stripDiscogsSuffix((string) ($a['name'] ?? $name)),
+            'real_name' => $a['realname'] ?? null,
+            // Discogs-Auszeichnung ([a=…], [l=…]) lesbar machen, Länge begrenzen
+            'profile' => mb_substr(trim(preg_replace('/\[[alrm]=?([^\]]*)\]/u', '$1', (string) ($a['profile'] ?? ''))), 0, 2500) ?: null,
+            'members' => $names($a['members'] ?? []), 'groups' => $names($a['groups'] ?? []),
+            'aliases' => $names($a['aliases'] ?? []), 'name_variations' => array_slice((array) ($a['namevariations'] ?? []), 0, 15),
+            'url' => $a['uri'] ?? null,
+        ], fn ($v) => $v !== null && $v !== []);
+    }
+
+    // ------------------------------------------------------------ Wikipedia (frei, ohne Key)
+
+    /** Artikel suchen (Titel + Ausschnitt), zuerst in der angegebenen Sprache. */
+    public function wikipediaSearch(string $query, string $lang = 'de'): array
+    {
+        $lang = in_array($lang, ['de', 'en'], true) ? $lang : 'de';
+        $data = $this->wiki($lang, ['action' => 'query', 'list' => 'search', 'srsearch' => $query, 'srlimit' => 6]);
+
+        return array_map(fn ($r) => ['title' => $r['title'], 'lang' => $lang, 'snippet' => html_entity_decode(strip_tags((string) ($r['snippet'] ?? '')))], $data['query']['search'] ?? []);
+    }
+
+    /**
+     * Artikeltext (reiner Text, gekürzt): Einleitung und erste Abschnitte – bei Bands steht dort meist, wer dazugehört.
+     *
+     * @return array{title: string, lang: string, url: string, text: string}|null
+     */
+    public function wikipediaArticle(string $title, string $lang = 'de', int $maxChars = 6000): ?array
+    {
+        $lang = in_array($lang, ['de', 'en'], true) ? $lang : 'de';
+        $data = $this->wiki($lang, ['action' => 'query', 'prop' => 'extracts|info', 'explaintext' => 1, 'redirects' => 1, 'inprop' => 'url', 'titles' => $title]);
+        $page = collect($data['query']['pages'] ?? [])->first();
+        if (! $page || isset($page['missing']) || trim((string) ($page['extract'] ?? '')) === '') {
+            return null;
+        }
+        $text = trim((string) $page['extract']);
+
+        return ['title' => $page['title'], 'lang' => $lang, 'url' => $page['fullurl'] ?? 'https://'.$lang.'.wikipedia.org/wiki/'.rawurlencode($page['title']),
+            'text' => mb_strlen($text) > $maxChars ? mb_substr($text, 0, $maxChars).' …' : $text];
+    }
+
+    /**
+     * Wikipedia-Artikel zur MusicBrainz-ID – über die bei MusicBrainz hinterlegte Verknüpfung (Wikidata), also sicher der
+     * richtige Künstler. Deutsch bevorzugt, sonst Englisch.
+     *
+     * @return array{title: string, lang: string}|null
+     */
+    public function wikipediaForMbid(string $mbid): ?array
+    {
+        $rels = $this->mb('artist/'.$mbid, ['inc' => 'url-rels'])['relations'] ?? [];
+        foreach ($rels as $r) {
+            if (($r['type'] ?? '') === 'wikipedia' && preg_match('#https?://(de|en)\.wikipedia\.org/wiki/(.+)$#', (string) ($r['url']['resource'] ?? ''), $m)) {
+                return ['title' => rawurldecode(str_replace('_', ' ', $m[2])), 'lang' => $m[1]];
+            }
+        }
+        foreach ($rels as $r) {
+            if (($r['type'] ?? '') === 'wikidata' && preg_match('#(Q\d+)$#', (string) ($r['url']['resource'] ?? ''), $m)) {
+                $entity = $this->cached('wikidata:'.$m[1], fn () => Http::timeout(15)->withHeaders(['User-Agent' => self::userAgent()])
+                    ->get('https://www.wikidata.org/wiki/Special:EntityData/'.$m[1].'.json')->json() ?? []);
+                $links = $entity['entities'][$m[1]]['sitelinks'] ?? [];
+                foreach (['de', 'en'] as $lang) {
+                    if (! empty($links[$lang.'wiki']['title'])) {
+                        return ['title' => $links[$lang.'wiki']['title'], 'lang' => $lang];
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function wiki(string $lang, array $query): array
+    {
+        return $this->cached('wiki:'.$lang.':'.md5(json_encode($query)), function () use ($lang, $query) {
+            $r = Http::timeout(15)->withHeaders(['User-Agent' => self::userAgent()])
+                ->get('https://'.$lang.'.wikipedia.org/w/api.php', $query + ['format' => 'json', 'formatversion' => 2]);
+            if (! $r->successful()) {
+                throw new RuntimeException('Wikipedia antwortet nicht ('.$r->status().')');
+            }
+
+            return $r->json() ?? [];
+        });
+    }
+
     public function discogsAlbumGenres(string $artist, string $album): array
     {
         $data = $this->discogs('database/search', ['artist' => $artist, 'release_title' => $album, 'type' => 'master', 'per_page' => 3]);

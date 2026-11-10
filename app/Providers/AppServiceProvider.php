@@ -7,6 +7,8 @@ use App\Models\ArtistAlias;
 use App\Models\ArtistSplit;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistNames;
+use App\Support\Chat\AnthropicChatModel;
+use App\Support\Chat\ChatModel;
 use App\Support\DataVersion;
 use App\Support\Lookup;
 use App\Support\Settings;
@@ -28,6 +30,8 @@ class AppServiceProvider extends ServiceProvider
         // Einstellungen ebenso: app(Compilations::class) u. Ä. in Schleifen lasen sonst pro Aufruf die Tabelle neu
         // (Namensliste/Profile über die ganze Lib: zwei Abfragen pro Titel); set() leert den Zwischenspeicher
         $this->app->scoped(Settings::class);
+        // Assistent: Claude über das Anthropic-SDK (in Tests durch eine Attrappe ersetzt)
+        $this->app->bind(ChatModel::class, AnthropicChatModel::class);
     }
 
     /**

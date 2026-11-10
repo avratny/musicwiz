@@ -41,6 +41,8 @@ return [
     'spotify_client_id' => env('SPOTIFY_CLIENT_ID', ''),
     'spotify_client_secret' => env('SPOTIFY_CLIENT_SECRET', ''),
     'audiodb_key' => env('AUDIODB_KEY', ''),
+    'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
+    'chat_model' => env('MUSICWIZ_CHAT_MODEL', 'claude-opus-5-5'),
     'fanart_key' => env('FANART_KEY', ''),
     // AcoustID (Titel per Fingerabdruck erkennen): kostenloser Anwendungs-Schlüssel von https://acoustid.org/new-application
     'acoustid_key' => env('ACOUSTID_KEY', ''),

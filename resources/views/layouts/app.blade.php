@@ -79,6 +79,10 @@
 @persist('player')
     <x-player />
 @endpersist
+{{-- Assistent: runder Knopf + Chat-Overlay auf jeder Seite (bleibt beim Seitenwechsel bestehen) --}}
+@persist('chat')
+    <livewire:chat-panel />
+@endpersist
 </div>
 @include('partials.confirm-modal')
 @livewireScripts

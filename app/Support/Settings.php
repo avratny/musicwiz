@@ -12,7 +12,7 @@ class Settings
 {
     public const KEYS = ['base', 'inbox', 'trash', 'artist_images', 'categories', 'no_album', 'non_letter_folder',
         'compilation_artist', 'replace_colon', 'replace_slash', 'id3_version', 'scan_throttle_ms', 'small_cover_px',
-        'discogs_token', 'fanart_key', 'acoustid_key', 'spotify_client_id', 'spotify_client_secret', 'audiodb_key', 'auto_cleanup', 'inbox_watch', 'qobuz_store', 'invert_names',
+        'discogs_token', 'fanart_key', 'acoustid_key', 'spotify_client_id', 'spotify_client_secret', 'audiodb_key', 'anthropic_api_key', 'chat_model', 'auto_cleanup', 'inbox_watch', 'qobuz_store', 'invert_names',
         'yt_sleep_min', 'yt_sleep_max', 'yt_sleep_requests', 'yt_rate_mb', 'yt_daily_limit'];
 
     private ?array $cache = null;

@@ -277,6 +277,18 @@
                     <p class="mt-1 text-xs text-zinc-500">Kostenlos auf developer.spotify.com › Dashboard › „Create app“ (Redirect-URI beliebig, z. B. http://localhost). Liefert Künstlerfotos, Genres und – zusammen mit Deezer und MusicBrainz – ob ein Kombi-Name ein Act oder eine Zusammenarbeit ist.</p></div>
                 <div><label class="label">TheAudioDB-API-Key</label><div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.audiodb_key" placeholder="leer = freier Test-Key (30 Abfragen/min)" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
                     <p class="mt-1 text-xs text-zinc-500">Premium-Key aus dem Profil auf theaudiodb.com (100 Abfragen/min). Liefert Künstlerfotos, Fanart, Logo, Genre/Stil und Biografie – gesucht über die MusicBrainz-ID, also immer der richtige Künstler.</p></div>
+                <div class="rounded-xl border border-zinc-800 p-4">
+                    <label class="label">Assistent (Chat) – Anthropic-API-Key</label>
+                    <div class="flex gap-2" x-data="{ show: false }"><input x-bind:type="show ? 'text' : 'password'" type="password" wire:model="s.anthropic_api_key" placeholder="sk-ant-…" class="input font-mono" autocomplete="off" spellcheck="false"><button type="button" x-on:click="show = ! show" class="btn-ghost shrink-0" x-text="show ? 'Verbergen' : 'Anzeigen'">Anzeigen</button></div>
+                    <p class="mt-1 text-xs text-zinc-500">Von console.anthropic.com (Abrechnung nach Verbrauch; ein Ausgabenlimit legst du dort beim Key fest). Ohne Key ist der Chat-Knopf unten rechts aus.</p>
+                    <label class="label mt-3">Modell</label>
+                    <select wire:model="s.chat_model" class="input w-auto">
+                        @foreach (\App\Support\Chat\ChatAgent::MODELS as $id => $m)
+                            <option value="{{ $id }}">{{ $m['label'] }}</option>
+                        @endforeach
+                    </select>
+                    <p class="mt-1 text-xs text-zinc-500">Der Assistent liest Bestand, Prüfungen und Vorgemerktes und kann Tags vormerken bzw. das Künstlerverzeichnis pflegen – Änderungen nur nach deiner Freigabe, in die Dateien schreibt er nie. Gesendet werden Namen, Titel, Pfade und Tags, keine Musikdateien.</p>
+                </div>
                 <p class="text-xs text-zinc-500">MusicBrainz, Deezer und LRCLIB (Songtexte) brauchen keine Anmeldung. Der Container braucht für das Nachschlagen Internetzugang.</p>
             </div>
         @endif

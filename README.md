@@ -109,6 +109,14 @@ Artisan-Befehle als Share-Benutzer ausführen (sonst entstehen Dateien, die root
 docker compose exec -u 1000:1000 app php artisan musicwiz:scan inbox
 ```
 
+## Assistent (Chat)
+
+Runder Knopf unten rechts auf jeder Seite: Chat mit Claude über die Werkzeuge der Schnittstelle (lesen, vormerken,
+Künstlerverzeichnis). Lesen läuft sofort, **Änderungen erscheinen als Karte mit „Ausführen“ / „Ablehnen“**; in die
+Dateien schreibt der Assistent nie. Unter jeder Antwort stehen die geschätzten Kosten, oben die Summe der Unterhaltung.
+Einrichten: Einstellungen › Zugangsdaten › Anthropic-API-Key (console.anthropic.com, Ausgabenlimit dort beim Key) und
+Modell (Standard Claude Opus 5.5). Gesendet werden Namen, Titel, Pfade und Tags – keine Musikdateien.
+
 ## Schnittstelle (API)
 
 Unter `/api` (z. B. `http://10.1.1.5:8000/api`) lässt sich der Bestand als JSON abfragen und Änderungen vormerken – etwa
