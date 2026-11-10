@@ -6,6 +6,7 @@ use App\Jobs\CheckCombis;
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\ResearchArtistGroup;
+use App\Jobs\TakeStandardArtists;
 use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
 use App\Models\Artist;
@@ -57,7 +58,7 @@ class Artists extends Component
 
     /** Schnell erfassen: angezeigte Art (sure, name, unsure, pending) */
     #[Url(as: 'art')]
-    public string $quickKind = 'sure';
+    public string $quickKind = 'standard';
 
     /** Schnell erfassen: Häkchen je Name (md5 => bool) */
     public array $quickTake = [];
@@ -85,8 +86,8 @@ class Artists extends Component
     {
         $picks = [];
         foreach ($quick->rows() as $r) {
-            if (in_array($r['kind'], ['sure', 'name'], true) && $r['hit'] && ($this->quickTake[$r['key']] ?? false)) {
-                $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit']['name'] !== $r['name'] && ($this->quickMb[$r['key']] ?? false),
+            if (in_array($r['kind'], ArtistQuickMatch::SELECTABLE, true) && ($r['hit'] || $r['kind'] === 'service') && ($this->quickTake[$r['key']] ?? false)) {
+                $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit'] && $r['hit']['name'] !== $r['name'] && ($this->quickMb[$r['key']] ?? false),
                     'image' => $this->quickImage[$r['key']] ?? null];
             }
         }
@@ -96,8 +97,27 @@ class Artists extends Component
         $result = $quick->save($picks, $lookup, $genres);
         $images = count(array_filter(array_column($picks, 'image')));
         $this->quickTake = $this->quickMb = $this->quickImage = [];
-        session()->flash('status', count($picks).' Künstler übernommen ('.$result['created'].' neu angelegt) – mit MusicBrainz-ID, Standard-Genre und Schreibweisen.'
+        session()->flash('status', count($picks).' Künstler übernommen ('.$result['created'].' neu angelegt) – mit MusicBrainz-ID (wo vorhanden), Standard-Genre und Schreibweisen.'
             .($images ? ' '.$images.' Bild(er) werden im Hintergrund geladen.' : '').PendingChanges::note($result['staged']));
+    }
+
+    /** Schnell erfassen › Standard: alle im Hintergrund übernehmen (Fortschritt oben in der Liste). */
+    public function takeStandard(): void
+    {
+        $n = TakeStandardArtists::start();
+        session()->flash('status', $n ? $n.' Künstler werden im Hintergrund übernommen – mit MusicBrainz-ID, Genre, Schreibweisen und sicherem Bild.'
+            : 'Nichts zu übernehmen (oder läuft schon).');
+    }
+
+    /** Schnell erfassen › Tippfehler: Bestandsname wird Schreibweise des Namens, unter dem die Dienste eure Lieder führen. */
+    public function quickTypo(string $key, ArtistQuickMatch $quick): void
+    {
+        $row = collect($quick->rows())->first(fn ($r) => $r['key'] === $key && $r['kind'] === 'typo');
+        if (! $row) {
+            return;
+        }
+        $r = $quick->typo($row['name'], $row['suggest']);
+        session()->flash('status', '„'.$row['name'].'“ ist jetzt Schreibweise von „'.$r['artist'].'“'.($r['created'] ? ' (neu angelegt)' : '').'.'.PendingChanges::note($r['staged']));
     }
 
     /** Schnell erfassen: Kombi in die vorgeschlagenen Teile trennen („Gerhard Polt, Gisela Schneeberger“). */
@@ -1243,16 +1263,21 @@ class Artists extends Component
         } elseif ($this->tab === 'quick') {
             $all = app(ArtistQuickMatch::class)->rows();
             $data['quickCounts'] = array_count_values(array_column($all, 'kind'));
+            $data['quickUnchecked'] = count(array_filter($all, fn ($r) => $r['kind'] !== 'pending' && ! $r['checked']));
+            $data['takeStatus'] = TakeStandardArtists::status();
             $q = mb_strtolower(trim($this->quickQ));
             $rows = array_values(array_filter($all, fn ($r) => $r['kind'] === $this->quickKind
                 && ($q === '' || str_contains(mb_strtolower($r['name'].' '.($r['hit']['name'] ?? '')), $q))));
             $data['quickTotal'] = count($rows);
             $data['quickRows'] = array_slice($rows, 0, $this->quickLimit);
-            $data['quickImages'] = in_array($this->quickKind, ['sure', 'name'], true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];
+            $data['quickImages'] = in_array($this->quickKind, ArtistQuickMatch::SELECTABLE, true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];
+            // Standard: das Bild, das ohne Rückfrage übernommen wird (nur sicher der richtige Künstler)
+            $data['quickSafe'] = $this->quickKind === 'standard'
+                ? collect($data['quickRows'])->mapWithKeys(fn ($r) => [$r['key'] => app(ArtistQuickMatch::class)->safeImageEntry($r, app(Lookup::class))])->all() : [];
             // nichts vorab angehakt (ein Bild wählen hakt an); MusicBrainz-Schreibweise (nur Groß/klein, Satzzeichen, Akzente) an
             foreach ($data['quickRows'] as $r) {
                 $this->quickTake[$r['key']] ??= false;
-                if ($r['hit'] && $r['hit']['name'] !== $r['name']) {
+                if ($r['hit'] && $r['hit']['name'] !== $r['name'] && $r['kind'] !== 'service') {
                     $this->quickMb[$r['key']] ??= true;
                 }
             }

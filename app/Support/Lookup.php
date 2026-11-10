@@ -626,6 +626,103 @@ class Lookup
         return array_slice(array_values([...$audiodb, ...$fanart, ...$spotify, ...$deezer]), 0, $limit);
     }
 
+    // ------------------------------------------------------------ Künstler über eure Lieder (Deezer, Spotify)
+
+    /**
+     * Unter welchem Künstler führt Deezer eines eurer Lieder? Genau dieser Name = Bestätigung (samt Bild des richtigen
+     * Künstlers statt eines Namensvetters); ein ähnlicher Name = wohl Tippfehler im Bestand („Blutionium Boy“ → „Blutonium Boy“).
+     *
+     * @param  list<string>  $titles
+     * @return array{id: string, name: string, exact: bool, via: string, images: list<array>}|null
+     */
+    public function deezerArtistBySongs(string $name, array $titles): ?array
+    {
+        $titles = array_slice(array_values(array_filter($titles)), 0, 2);
+        if (! $titles) {
+            return null;
+        }
+
+        return $this->cached('deezer:bysong:'.md5($name.'|'.implode('|', $titles)), function () use ($name, $titles) {
+            $similar = null;
+            foreach ($titles as $title) {
+                $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+                $r = Http::timeout(15)->get('https://api.deezer.com/search/track', ['q' => $name.' '.$clean, 'limit' => 10]);
+                if (! $r->successful()) {
+                    throw new RuntimeException('Deezer antwortet nicht ('.$r->status().')');
+                }
+                foreach ($r->json('data') ?? [] as $t) {
+                    if (! str_contains(ArtistNames::compareKey((string) ($t['title'] ?? '')), ArtistNames::compareKey($clean))) {
+                        continue;
+                    }
+                    $a = $t['artist'] ?? [];
+                    $found = ArtistNames::plainPunctuation((string) ($a['name'] ?? ''));
+                    $img = empty($a['picture_xl']) || str_contains((string) $a['picture_xl'], '/artist//') ? [] : [[
+                        'url' => $a['picture_xl'], 'thumb' => $a['picture_medium'] ?? $a['picture_xl'], 'source' => 'Deezer: '.$found.' (Lied „'.$t['title'].'“)', 'size' => '1000×1000']];
+                    $hit = ['id' => (string) ($a['id'] ?? ''), 'name' => $found, 'via' => 'Lied „'.$t['title'].'“', 'images' => $img];
+                    if (self::sameName($found, $name)) {
+                        return $hit + ['exact' => true];
+                    }
+                    if (! $similar && self::similarName($name, $found)) {
+                        $similar = $hit + ['exact' => false];
+                    }
+                }
+            }
+
+            return $similar;
+        });
+    }
+
+    /**
+     * Wie deezerArtistBySongs, für Spotify (nur Name und ID – Bild und Genres liefert spotifyArtist).
+     *
+     * @param  list<string>  $titles
+     * @return array{id: string, name: string, exact: bool, via: string}|null
+     */
+    public function spotifyArtistBySongs(string $name, array $titles): ?array
+    {
+        $similar = null;
+        foreach (array_slice(array_values(array_filter($titles)), 0, 2) as $title) {
+            $clean = trim(preg_replace('/[\(\[].*?[\)\]]/u', '', $title)) ?: $title;
+            // dieselbe Abfrage wie spotifyArtist – kommt meist aus dem Zwischenspeicher
+            foreach ($this->spotify('search', ['q' => $name.' '.$clean, 'type' => 'track', 'limit' => 10, 'market' => 'DE'])['tracks']['items'] ?? [] as $t) {
+                if (! str_contains(ArtistNames::compareKey((string) $t['name']), ArtistNames::compareKey($clean))) {
+                    continue;
+                }
+                foreach ($t['artists'] ?? [] as $a) {
+                    $found = ArtistNames::plainPunctuation((string) $a['name']);
+                    $hit = ['id' => (string) $a['id'], 'name' => $found, 'via' => 'Lied „'.$t['name'].'“'];
+                    if (self::sameName($found, $name)) {
+                        return $hit + ['exact' => true];
+                    }
+                    if (! $similar && self::similarName($name, $found)) {
+                        $similar = $hit + ['exact' => false];
+                    }
+                }
+            }
+        }
+
+        return $similar;
+    }
+
+    /** Gleicher Name bis auf Groß/klein, Satzzeichen, Akzente (Namen ohne lateinische Zeichen: wörtlich) */
+    public static function sameName(string $a, string $b): bool
+    {
+        $ka = ArtistNames::compareKey($a);
+
+        return $ka !== '' ? $ka === ArtistNames::compareKey($b) : mb_strtolower(trim($a)) === mb_strtolower(trim($b));
+    }
+
+    /** Tippfehler-Abstand: höchstens etwa ein Fünftel der Zeichen anders („Blutionium Boy“ ~ „Blutonium Boy“) */
+    public static function similarName(string $a, string $b): bool
+    {
+        [$a, $b] = [ArtistNames::compareKey($a), ArtistNames::compareKey($b)];
+        if ($a === $b || min(strlen($a), strlen($b)) < 4) {
+            return false;
+        }
+
+        return levenshtein($a, $b) <= max(1, intdiv(max(strlen($a), strlen($b)), 5));
+    }
+
     // ------------------------------------------------------------ eingetragene Künstler eines Lieds (Kombi-Prüfung)
 
     /**

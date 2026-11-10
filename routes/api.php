@@ -27,6 +27,8 @@ Route::post('/artists/{artist}/split', [ApiController::class, 'splitArtist']);
 Route::get('/quick', [ApiController::class, 'quick']);
 Route::post('/quick', [ApiController::class, 'quickSave']);
 Route::post('/quick/split', [ApiController::class, 'quickSplit']);
+Route::post('/quick/standard', [ApiController::class, 'quickStandard']);
+Route::post('/quick/typo', [ApiController::class, 'quickTypo']);
 Route::get('/combined', [ApiController::class, 'combined']);
 Route::post('/combined', [ApiController::class, 'combinedApply']);
 Route::get('/splits', [ApiController::class, 'splits']);

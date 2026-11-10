@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Jobs\PrefetchArtistLookup;
+use App\Jobs\TakeStandardArtists;
 use App\Livewire\Artists;
 use App\Livewire\NewArtistModal;
 use App\Models\Artist;
@@ -98,7 +99,7 @@ class ArtistQuickMatchTest extends TestCase
             PrefetchArtistLookup::prefetch(app(Lookup::class), $name, $t);
         }
 
-        $page = Livewire::test(Artists::class, ['tab' => 'quick'])
+        $page = Livewire::test(Artists::class, ['tab' => 'quick'])->set('quickKind', 'sure') // ohne Deezer/Spotify-Bestätigung
             ->assertSee('Lied „King of My Castle“ gefunden')
             ->assertSee('Schreibweise „AC/DC“ übernehmen')
             ->assertDontSee('Madonna');
@@ -167,5 +168,76 @@ class ArtistQuickMatchTest extends TestCase
         $artist->refresh();
         $this->assertSame('Lexy & K-Paul', $artist->name);
         $this->assertSame(["Lexy & K\u{2010}Paul"], $artist->aliases()->pluck('alias')->all());
+    }
+
+    public function test_deezer_confirms_standard_names_finds_typos_and_safe_images(): void
+    {
+        $this->mp3('U/Underworld/Second Toughest (1996)/01 - Born Slippy.mp3', ['artist' => 'Underworld', 'albumartist' => 'Underworld', 'album' => 'Second Toughest', 'year' => '1996', 'track' => '1', 'title' => 'Born Slippy']);
+        $this->mp3('R/Remix Kingz/Wellerman (2021)/01 - Wellerman.mp3', ['artist' => 'Remix Kingz', 'albumartist' => 'Remix Kingz', 'album' => 'Wellerman', 'year' => '2021', 'track' => '1', 'title' => 'Wellerman']);
+        $this->mp3('B/Blutionium Boy/Higher (2003)/01 - Higher Level.mp3', ['artist' => 'Blutionium Boy', 'albumartist' => 'Blutionium Boy', 'album' => 'Higher', 'year' => '2003', 'track' => '1', 'title' => 'Higher Level']);
+        app(Scanner::class)->scan('library');
+
+        $img = imagecreatetruecolor(40, 40);
+        ob_start();
+        imagejpeg($img);
+        $jpeg = ob_get_clean();
+        Http::fake(function ($request) use ($jpeg) {
+            $url = urldecode($request->url());
+            if (str_contains($url, 'cdn.test/')) {
+                return Http::response($jpeg, 200, ['Content-Type' => 'image/jpeg']);
+            }
+            if (str_contains($url, 'api.deezer.com/search/track')) {
+                $track = fn ($title, $artist, $pic) => ['id' => 1, 'title' => $title, 'artist' => ['id' => 7, 'name' => $artist, 'picture_xl' => "https://cdn.test/$pic-xl.jpg", 'picture_medium' => "https://cdn.test/$pic-m.jpg"]];
+
+                return Http::response(['data' => match (true) {
+                    str_contains($url, 'Underworld') => [$track('Born Slippy .NUXX', 'Underworld', 'uw')],
+                    str_contains($url, 'Remix Kingz') => [$track('Wellerman (EDM Remix)', 'Remix Kingz', 'rk')],
+                    str_contains($url, 'Blutionium') => [$track('Higher Level', 'Blutonium Boy', 'bb')],
+                    default => [],
+                }]);
+            }
+            if (str_contains($url, 'api.deezer.com')) {
+                // Namenssuche: gleichnamiger Namensvetter mit anderem Bild – darf nicht als sicheres Bild gelten
+                return Http::response(['data' => [['name' => 'Underworld', 'picture_xl' => 'https://cdn.test/vetter-xl.jpg', 'picture_medium' => 'https://cdn.test/vetter-m.jpg']]]);
+            }
+            if (str_contains($url, '/ws/2/artist/')) {
+                return Http::response(['id' => 'mb-uw', 'name' => 'Underworld', 'aliases' => [], 'genres' => [['name' => 'techno', 'count' => 3]], 'tags' => []]);
+            }
+            if (str_contains($url, '/ws/2/recording')) {
+                return Http::response(['recordings' => str_contains($url, 'Born Slippy') ? [['title' => 'Born Slippy', 'artist-credit' => [['artist' => ['id' => 'mb-uw']]]]] : []]);
+            }
+
+            return Http::response(['artists' => match (true) {
+                str_contains($url, 'Underworld') => [['id' => 'mb-uw', 'name' => 'Underworld', 'score' => 100, 'type' => 'Group']],
+                str_contains($url, 'Remix Kingz') => [['id' => 'mb-rk1', 'name' => 'Remix Kingz', 'score' => 100], ['id' => 'mb-rk2', 'name' => 'Remix Kingz', 'score' => 100]],
+                default => [],
+            }]);
+        });
+        foreach (['Underworld' => ['Born Slippy'], 'Remix Kingz' => ['Wellerman'], 'Blutionium Boy' => ['Higher Level']] as $name => $t) {
+            PrefetchArtistLookup::prefetch(app(Lookup::class), $name, $t);
+        }
+
+        $page = Livewire::test(Artists::class, ['tab' => 'quick']);
+        $this->assertEquals(['standard' => 1, 'service' => 1, 'typo' => 1], array_intersect_key($page->viewData('quickCounts'), array_flip(['standard', 'service', 'typo'])));
+        $page->assertSee('Deezer: Lied „Born Slippy .NUXX“', false)->assertSee('https://cdn.test/uw-m.jpg')->assertDontSee('https://cdn.test/vetter-m.jpg')
+            ->assertSee('Alle 1 übernehmen');
+
+        // Deezer bestätigt, bei MusicBrainz zwei gleichnamige: ohne MusicBrainz-ID anlegen
+        $page->set('quickKind', 'service')->assertSee('2 gleichnamige bei MusicBrainz – ohne MusicBrainz-ID')
+            ->call('quickPickImage', md5('Remix Kingz'), 'https://cdn.test/rk-xl.jpg')->call('quickSave');
+        $this->assertNull(Artist::where('name', 'Remix Kingz')->sole()->mbid);
+
+        // Tippfehler: richtiger Name wird angelegt, Bestandsname ist seine Schreibweise, Tags vorgemerkt
+        $page->set('quickKind', 'typo')->assertSee('Schreibweise von „Blutonium Boy“')->call('quickTypo', md5('Blutionium Boy'));
+        $this->assertSame('Blutonium Boy', ArtistAlias::where('alias', 'Blutionium Boy')->sole()->artist->name);
+        $this->assertSame('Blutonium Boy', Track::where('title', 'Higher Level')->value('artist'));
+
+        // Standard gesammelt (Warteschlange sync): mit MusicBrainz-ID und dem über das Lied gefundenen Bild
+        $page->set('quickKind', 'standard')->call('takeStandard');
+        $uw = Artist::where('name', 'Underworld')->sole();
+        $this->assertSame('mb-uw', $uw->mbid);
+        $this->assertFileExists($this->base.'/_artists/'.$uw->image);
+        $this->assertSame(1, TakeStandardArtists::status()['created']);
+        $this->assertFalse(TakeStandardArtists::status()['running']);
     }
 }

@@ -35,7 +35,7 @@ return [
     // Pause zwischen MusicBrainz-Abfragen in Sekunden (MusicBrainz erlaubt etwa eine pro Sekunde)
     'mb_pause' => 1.1,
     // so lange werden Antworten von MusicBrainz, Discogs, Deezer und Fanart.tv zwischengespeichert (Tage)
-    'lookup_cache_days' => (int) env('MUSIC_LOOKUP_CACHE_DAYS', 10),
+    'lookup_cache_days' => (int) env('MUSIC_LOOKUP_CACHE_DAYS', 90),
 
     'discogs_token' => env('DISCOGS_TOKEN', ''),
     'spotify_client_id' => env('SPOTIFY_CLIENT_ID', ''),

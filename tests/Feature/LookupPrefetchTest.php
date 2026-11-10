@@ -47,25 +47,25 @@ class LookupPrefetchTest extends TestCase
         return collect(Http::recorded())->filter(fn ($r) => str_contains($r[0]->url(), 'musicbrainz.org'))->count();
     }
 
-    public function test_answers_are_kept_ten_days_unless_fresh_data_is_requested(): void
+    public function test_answers_are_kept_ninety_days_unless_fresh_data_is_requested(): void
     {
         $lookup = app(Lookup::class);
         $lookup->musicbrainzArtists('Taucher');
         $lookup->musicbrainzArtists('Taucher');
         $this->assertSame(1, $this->mbRequests(), 'zweites Mal aus dem Zwischenspeicher');
 
-        $this->travel(9)->days();
+        $this->travel(89)->days();
         $lookup->musicbrainzArtists('Taucher');
-        $this->assertSame(1, $this->mbRequests(), 'nach 9 Tagen noch gespeichert');
+        $this->assertSame(1, $this->mbRequests(), 'nach 89 Tagen noch gespeichert');
 
         $lookup->fresh = true;
         $lookup->musicbrainzArtists('Taucher');
         $this->assertSame(2, $this->mbRequests(), 'aktuelle Daten auf Wunsch');
 
-        $this->travel(11)->days();
+        $this->travel(91)->days();
         $lookup->fresh = false;
         $lookup->musicbrainzArtists('Taucher');
-        $this->assertSame(3, $this->mbRequests(), 'nach 10 Tagen abgelaufen');
+        $this->assertSame(3, $this->mbRequests(), 'nach 90 Tagen abgelaufen');
     }
 
     public function test_wizard_reload_bypasses_the_cache(): void

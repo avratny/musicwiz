@@ -31,17 +31,18 @@ class PrefetchArtistLookup implements ShouldQueue
         self::prefetch($lookup, $this->name, $this->titles);
     }
 
-    /** Wurde der Name in den letzten Tagen schon vorgeladen? (dann liegt alles im Zwischenspeicher) */
+    /** Wurde der Name schon vorgeladen – samt Prüfung bei Deezer und Spotify? (dann liegt alles im Zwischenspeicher) */
     public static function isFresh(string $name): bool
     {
-        return Cache::has(self::marker($name));
+        return isset(Cache::get(self::marker($name))['services']);
     }
 
     /**
-     * Ergebnis des Vorladens (für „Schnell erfassen“): MusicBrainz-Treffer samt Liedprüfung.
+     * Ergebnis des Vorladens (für „Schnell erfassen“): MusicBrainz-Treffer samt Liedprüfung, dazu der Künstler, unter dem
+     * Deezer und Spotify eure Lieder führen (services; fehlt bei älteren Ergebnissen).
      *
      * @param  list<string>  $names
-     * @return array<string, array{hits: list<array>}|null> Name => Ergebnis (null = noch nicht nachgeschlagen)
+     * @return array<string, array{hits: list<array>, services?: array{deezer: ?array, spotify: ?array}}|null> Name => Ergebnis (null = noch nicht nachgeschlagen)
      */
     public static function results(array $names): array
     {
@@ -74,6 +75,15 @@ class PrefetchArtistLookup implements ShouldQueue
                         rescue(fn () => $lookup->fanartArtistImages($pick['mbid']), report: false);
                     }
                     rescue(fn () => $lookup->audiodbArtist($pick['mbid'], $name), report: false);
+                }
+            },
+            // Unter welchem Künstler führen Deezer und Spotify eure Lieder? (Bestätigung, richtiges Bild, Tippfehler)
+            function () use ($lookup, $name, $titles, &$result) {
+                if ($result !== null) {
+                    $result['services'] = [
+                        'deezer' => rescue(fn () => $lookup->deezerArtistBySongs($name, $titles), null, report: false),
+                        'spotify' => $lookup->hasSpotify() ? rescue(fn () => $lookup->spotifyArtistBySongs($name, $titles), null, report: false) : null,
+                    ];
                 }
             },
             fn () => $lookup->hasDiscogs() ? $lookup->discogsArtists($name) : null,

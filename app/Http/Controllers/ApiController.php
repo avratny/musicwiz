@@ -6,6 +6,7 @@ use App\Jobs\CheckCombis;
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\RefreshCleanup;
+use App\Jobs\TakeStandardArtists;
 use App\Models\Album;
 use App\Models\Artist;
 use App\Models\ArtistSplit;
@@ -77,9 +78,11 @@ class ApiController extends Controller
                 'POST /api/artists/{id}/aliases' => '{"alias"} – Schreibweise hinzufügen',
                 'DELETE /api/artists/{id}/aliases' => '{"alias"} – Schreibweise entfernen (wird gemerkt)',
                 'POST /api/artists/{id}/split' => '{"parts"?: [..]} – in Einzelkünstler trennen',
-                'GET /api/quick?kind=sure&limit=100' => 'Schnell erfassen: offene Namen mit Treffer und Bildvorschlägen (kind: sure|name|unsure|pending)',
+                'GET /api/quick?kind=sure&limit=100' => 'Schnell erfassen: offene Namen mit Treffer und Bildvorschlägen (kind: standard|sure|service|typo|name|unsure|pending; services = Künstler, unter dem Deezer/Spotify eure Lieder führen)',
                 'POST /api/quick' => '{"picks": [{"name", "mb_spelling"?: true, "image"?: url}]} – anlegen',
                 'POST /api/quick/split' => '{"name", "parts"?: [..]} – offenen Kombi-Namen trennen',
+                'POST /api/quick/standard' => 'alle „Standard“ im Hintergrund übernehmen (Fortschritt: take_standard in /api/status)',
+                'POST /api/quick/typo' => '{"name", "target"?} – Tippfehler: Name wird Schreibweise von target (Vorschlag aus der Liste)',
                 'GET /api/combined' => 'Kombi-Namen (&, und, Komma) mit Vorschlag',
                 'GET /api/splits?q=' => 'gemerkte Trennungen („Beam & Yanou“ → Beam · Yanou)',
                 'DELETE /api/splits/{id}' => 'Trennung aufheben – der Kombi-Name gilt wieder als ein Name (geschriebene Tags bleiben)',
@@ -362,7 +365,7 @@ class ApiController extends Controller
 
     public function quick(Request $request, ArtistQuickMatch $quick, Lookup $lookup): JsonResponse
     {
-        $kind = (string) $request->input('kind', 'sure');
+        $kind = (string) $request->input('kind', 'standard');
         $rows = array_values(array_filter($quick->rows(), fn ($r) => $r['kind'] === $kind));
         $page = array_slice($rows, max(0, $request->integer('offset')), min(500, $request->integer('limit', 100)));
         $images = $quick->images($page, $lookup);
@@ -375,14 +378,36 @@ class ApiController extends Controller
         $wanted = collect((array) $request->input('picks', []))->keyBy('name');
         $picks = [];
         foreach ($quick->rows() as $r) {
-            if (($p = $wanted[$r['name']] ?? null) && in_array($r['kind'], ['sure', 'name'], true) && $r['hit']) {
-                $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit']['name'] !== $r['name'] && ($p['mb_spelling'] ?? true), 'image' => $p['image'] ?? null];
+            if (($p = $wanted[$r['name']] ?? null) && in_array($r['kind'], [...ArtistQuickMatch::SELECTABLE, 'standard'], true) && ($r['hit'] || $r['kind'] === 'service')) {
+                $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit'] && $r['hit']['name'] !== $r['name'] && ($p['mb_spelling'] ?? true), 'image' => $p['image'] ?? null];
             }
         }
         $missing = array_values(array_diff($wanted->keys()->all(), array_column($picks, 'name')));
 
         return $this->change(fn () => ($picks ? $quick->save($picks, $lookup, $genres) : ['created' => 0, 'staged' => 0]) + ['taken' => array_column($picks, 'name'), 'not_offered' => $missing],
             'Schnell erfassen', ['names' => $wanted->keys()->all()]);
+    }
+
+    /** „Standard“ (MusicBrainz + Deezer/Spotify bestätigen) gesammelt im Hintergrund übernehmen – Fortschritt in /api/status */
+    public function quickStandard(): JsonResponse
+    {
+        return $this->change(fn () => ['started' => TakeStandardArtists::start(), 'status' => TakeStandardArtists::status()], 'Standard übernehmen', []);
+    }
+
+    /** „Tippfehler?“: Name wird Schreibweise des vorgeschlagenen (bzw. angegebenen) Namens */
+    public function quickTypo(Request $request, ArtistQuickMatch $quick): JsonResponse
+    {
+        $name = (string) $request->input('name');
+        $row = collect($quick->rows())->first(fn ($r) => $r['name'] === $name);
+        $target = trim((string) ($request->input('target') ?: ($row['suggest'] ?? '')));
+
+        return $this->change(function () use ($quick, $name, $row, $target) {
+            if (! $row || $target === '') {
+                throw new InvalidArgumentException('„'.$name.'“ ist kein offener Name mit Vorschlag – target angeben.');
+            }
+
+            return $quick->typo($name, $target);
+        }, 'Tippfehler', ['name' => $name, 'target' => $target]);
     }
 
     public function quickSplit(Request $request, ArtistQuickMatch $quick): JsonResponse
@@ -515,6 +540,7 @@ class ApiController extends Controller
             'failed_jobs' => ['count' => DB::table('failed_jobs')->count(), 'latest' => $failed],
             'cleanup' => ['fresh' => $checks->isFresh(), 'focus' => Cache::get(CleanupChecks::FOCUS), 'progress' => CleanupChecks::progress()],
             'artist_prefetch' => PrefetchUnknownArtists::status(),
+            'take_standard' => TakeStandardArtists::status(),
             'combi_check' => CheckCombis::status(),
             'musicbrainz_aliases' => Cache::get(ImportMusicBrainzAliases::STATUS_KEY),
             'inbox_watch' => ['enabled' => $watch->enabled(), 'interval' => $watch->interval(), 'alive' => Cache::get('inbox-watch:alive')],
