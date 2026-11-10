@@ -23,7 +23,7 @@ class Track extends Model
     ];
 
     public const TAG_KEYS = ['title', 'artist', 'artists', 'album', 'albumartist', 'albumartists', 'track', 'tracktotal',
-        'disc', 'disctotal', 'year', 'genres', 'comment', 'compilation'];
+        'disc', 'disctotal', 'year', 'genres', 'comment', 'category', 'compilation', 'artistsort', 'albumartistsort'];
 
     /** Vorgemerkte Änderung (Aufräumen/Verzeichnis, noch nicht in der Datei) */
     public function pendingChange(): HasOne

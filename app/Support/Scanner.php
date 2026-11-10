@@ -802,7 +802,7 @@ class Scanner
         $location = $tracks[0]->location;
         $category = $location !== 'inbox'
             ? ($this->settings->categoryForPath($dir.'/')['name'] ?? null)
-            : ($this->settings->category($mode($pluck('comment')))['name'] ?? null);
+            : ($this->settings->category($mode($pluck('category')) ?? $mode($pluck('comment')))['name'] ?? null);
         $isCompilation = (bool) ($this->settings->category($category)['compilation'] ?? false)
             || count(array_filter($tracks, fn ($t) => $t->compilation)) > count($tracks) / 2;
 

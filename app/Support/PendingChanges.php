@@ -284,7 +284,7 @@ class PendingChanges
                 'track_id' => $t->id,
                 'path' => $rel($t->path),
                 // gewünschter Stand der wichtigsten Felder (zum Prüfen, z. B. Interpreten je Album, Jahr je Titel)
-                'tags' => array_intersect_key($after, array_flip(['artist', 'artists', 'albumartist', 'album', 'year', 'disc', 'track', 'title', 'compilation', 'comment'])),
+                'tags' => array_intersect_key($after, array_flip(['artist', 'artists', 'albumartist', 'album', 'year', 'disc', 'track', 'title', 'compilation', 'comment', 'category'])),
                 'changes' => collect((array) $pc->tags_before)->map(fn ($from, $k) => ['from' => $from, 'to' => $after[$k] ?? null])->all() ?: null,
                 'move' => $target ? ['from' => $rel($t->path), 'to' => $rel($target)] : null,
                 'cover' => $pc->cover ? 'neues Cover' : ($pc->remove_cover ? 'entfernen' : ($pc->embed_cover && ! $t->cover_embedded ? 'fehlendes einbetten' : null)),

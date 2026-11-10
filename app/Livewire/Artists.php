@@ -32,6 +32,7 @@ use App\Support\NameConfirmation;
 use App\Support\OperationRunner;
 use App\Support\PendingChanges;
 use App\Support\Settings;
+use App\Support\SortNames;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Livewire\Attributes\Layout;
@@ -79,6 +80,15 @@ class Artists extends Component
     {
         $this->quickImage[$key] = ($this->quickImage[$key] ?? null) === $url ? null : $url;
         $this->quickTake[$key] = true;
+    }
+
+    /**
+     * Schnell erfassen › Standard: Bild für die Übernahme wählen. Gemerkt für den Hintergrund-Job; nochmal auf das gewählte
+     * Bild klicken = ohne Bild, $url null = wieder der Vorschlag.
+     */
+    public function quickStandardImage(string $key, ?string $url, bool $current = false): void
+    {
+        TakeStandardArtists::chooseImage($key, $url === null ? null : ($current ? '' : $url));
     }
 
     /** Schnell erfassen: angehakte Namen gesammelt anlegen. */
@@ -301,7 +311,7 @@ class Artists extends Component
     private function fillForm(): void
     {
         $a = Artist::find($this->selected);
-        $this->form = $a ? $a->only(['name', 'mbid', 'discogs_id']) + ['genres' => $a->genres()] : [];
+        $this->form = $a ? $a->only(['name', 'mbid', 'discogs_id']) + ['sort_name' => (string) $a->sort_name, 'genres' => $a->genres()] : [];
     }
 
     private function resetLookup(): void
@@ -349,6 +359,7 @@ class Artists extends Component
         $a->fill([
             'mbid' => trim($this->form['mbid'] ?? '') ?: null,
             'discogs_id' => trim($this->form['discogs_id'] ?? '') ?: null,
+            'sort_name' => $this->sortNameInput($a->baseName()),
         ])->setGenres((array) ($this->form['genres'] ?? []));
         $a->save();
         $msg = 'Gespeichert.';
@@ -357,6 +368,14 @@ class Artists extends Component
         }
         $this->fillForm();
         session()->flash('status', $msg.PendingChanges::note($staged));
+    }
+
+    /** Eigener Sortiername aus dem Formular; null, wenn leer oder gleich dem Wert nach den Artikel-Regeln (dann gilt die Regel). */
+    private function sortNameInput(string $name): ?string
+    {
+        $sort = trim((string) ($this->form['sort_name'] ?? ''));
+
+        return $sort === '' || $sort === app(SortNames::class)->byRule($name) ? null : $sort;
     }
 
     /** Standard-Genre online ermitteln (mit der gespeicherten MusicBrainz- bzw. Discogs-ID). */
@@ -1223,8 +1242,13 @@ class Artists extends Component
             $data['dirty'] = $data['artist'] && $this->form && (trim((string) ($this->form['name'] ?? '')) !== $data['artist']->name
                 || (trim((string) ($this->form['mbid'] ?? '')) ?: null) !== $data['artist']->mbid
                 || (trim((string) ($this->form['discogs_id'] ?? '')) ?: null) !== $data['artist']->discogs_id
+                || trim((string) ($this->form['sort_name'] ?? '')) !== (string) $data['artist']->sort_name
                 || array_values((array) ($this->form['genres'] ?? [])) !== $data['artist']->genres());
             if ($data['artist']) {
+                // Sortiername, wie er geschrieben würde: eigener Eintrag aus dem Formular, sonst nach den Artikel-Regeln
+                $ruleSort = app(SortNames::class)->byRule($data['artist']->baseName());
+                $data['sortRule'] = $ruleSort;
+                $data['sortWritten'] = trim((string) ($this->form['sort_name'] ?? '')) ?: $ruleSort;
                 $names = [$data['artist']->name, ...$data['artist']->aliases->pluck('alias')->all()];
                 $counts = $directory->namesInCollection();
                 $data['trackCount'] = array_sum(array_map(fn ($n) => $counts[$n] ?? 0, $names));
@@ -1270,10 +1294,17 @@ class Artists extends Component
                 && ($q === '' || str_contains(mb_strtolower($r['name'].' '.($r['hit']['name'] ?? '')), $q))));
             $data['quickTotal'] = count($rows);
             $data['quickRows'] = array_slice($rows, 0, $this->quickLimit);
-            $data['quickImages'] = in_array($this->quickKind, ArtistQuickMatch::SELECTABLE, true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];
-            // Standard: das Bild, das ohne Rückfrage übernommen wird (nur sicher der richtige Künstler)
+            $data['quickImages'] = in_array($this->quickKind, [...ArtistQuickMatch::SELECTABLE, 'standard'], true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];
+            // Standard: das Bild, das ohne Rückfrage übernommen wird (nur sicher der richtige Künstler) – vorn in den Vorschlägen;
+            // von Hand gewählt (bzw. „ohne Bild“) gilt die Wahl
             $data['quickSafe'] = $this->quickKind === 'standard'
                 ? collect($data['quickRows'])->mapWithKeys(fn ($r) => [$r['key'] => app(ArtistQuickMatch::class)->safeImageEntry($r, app(Lookup::class))])->all() : [];
+            foreach ($data['quickSafe'] as $key => $safe) {
+                if ($safe) {
+                    $data['quickImages'][$key] = array_values(collect([$safe, ...($data['quickImages'][$key] ?? [])])->unique('url')->take(4)->all());
+                }
+            }
+            $data['quickChoice'] = $this->quickKind === 'standard' ? TakeStandardArtists::imageChoices() : [];
             // nichts vorab angehakt (ein Bild wählen hakt an); MusicBrainz-Schreibweise (nur Groß/klein, Satzzeichen, Akzente) an
             foreach ($data['quickRows'] as $r) {
                 $this->quickTake[$r['key']] ??= false;

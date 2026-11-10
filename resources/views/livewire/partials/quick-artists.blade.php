@@ -29,7 +29,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <p class="mb-3 max-w-4xl text-sm text-zinc-400">
             @switch($quickKind)
-                @case('standard') MusicBrainz <strong>und</strong> Deezer bzw. Spotify finden eure Lieder unter genau diesem Namen – unstrittig. Übernommen mit MusicBrainz-ID, Standard-Genre und Schreibweisen; Bild nur, wenn es sicher der richtige Künstler ist (über die MusicBrainz-ID oder eines eurer Lieder), sonst ohne – die findest du danach im Verzeichnis unter „ohne Bild“. @break
+                @case('standard') MusicBrainz <strong>und</strong> Deezer bzw. Spotify finden eure Lieder unter genau diesem Namen – unstrittig. Übernommen mit MusicBrainz-ID, Standard-Genre und Schreibweisen; Bild nur, wenn es sicher der richtige Künstler ist (über die MusicBrainz-ID oder eines eurer Lieder), sonst ohne – die findest du danach im Verzeichnis unter „ohne Bild“. Ein anderes Bild (oder keins) wählst du per Klick in der Zeile. @break
                 @case('sure') Genau ein MusicBrainz-Künstler hat eure Lieder und heißt so – Deezer und Spotify bestätigen es (noch) nicht. Bild anklicken hakt die Zeile an – ohne Bild von Hand anhaken. Angelegt wird mit MusicBrainz-ID, Standard-Genre und den Schreibweisen von MusicBrainz. @break
                 @case('service') Deezer bzw. Spotify führen eure Lieder unter genau diesem Namen, MusicBrainz hilft nicht weiter (nicht gefunden oder mehrere gleichnamige). Angelegt wird ohne MusicBrainz-ID (außer es gibt dort genau einen gleichnamigen) – Bild anklicken hakt an. @break
                 @case('typo') Ein Dienst führt eure Lieder unter einem sehr ähnlichen Namen – wohl ein Tippfehler im Bestand. „Schreibweise von …“ legt den richtigen Namen an (bzw. nimmt den vorhandenen) und merkt die Tags vor. @break
@@ -69,7 +69,7 @@
                         <th class="pb-2">MusicBrainz</th>
                         <th class="pb-2">Begründung</th>
                         @if ($selectable)<th class="pb-2">Bild</th>@endif
-                        @if ($quickKind === 'standard')<th class="pb-2">Bild (wird übernommen)</th>@endif
+                        @if ($quickKind === 'standard')<th class="pb-2">Bild (grün = wird übernommen)</th>@endif
                         <th class="pb-2"></th>
                     </tr>
                 </thead>
@@ -105,12 +105,31 @@
                                 @endif
                             </td>
                             @if ($quickKind === 'standard')
+                                @php
+                                    $chosen = array_key_exists($r['key'], $quickChoice);
+                                    // übernommen wird: die eigene Wahl ('' = ohne Bild), sonst das sichere Bild
+                                    $useUrl = $chosen ? $quickChoice[$r['key']] : ($quickSafe[$r['key']]['url'] ?? '');
+                                @endphp
                                 <td class="py-2 pr-3">
-                                    @if ($img = $quickSafe[$r['key']] ?? null)
-                                        <img src="{{ $img['thumb'] }}" alt="" loading="lazy" title="{{ $img['source'] }}" class="size-14 rounded-md object-cover">
-                                    @else
-                                        <span class="text-xs text-zinc-600">ohne Bild</span>
-                                    @endif
+                                    <div class="flex items-center gap-1.5">
+                                        @forelse ($quickImages[$r['key']] ?? [] as $img)
+                                            @php $picked = $useUrl === $img['url']; @endphp
+                                            <button wire:click="quickStandardImage(@js($r['key']), @js($img['url']), {{ $picked ? 'true' : 'false' }})"
+                                                    title="{{ $img['source'] }}{{ $img['size'] ? ' · '.$img['size'] : '' }}{{ $picked ? ' – wird übernommen (nochmal klicken: ohne Bild)' : ' – stattdessen dieses Bild nehmen' }}"
+                                                    class="relative size-14 shrink-0 overflow-hidden rounded-md ring-2 transition {{ $picked ? 'ring-emerald-500' : 'ring-transparent opacity-60 hover:opacity-100 hover:ring-zinc-500' }}">
+                                                <img src="{{ $img['thumb'] }}" alt="" loading="lazy" class="size-full object-cover">
+                                                @if ($picked)<span class="absolute right-0.5 bottom-0.5 rounded bg-emerald-500 px-1 text-[10px] text-white">✓</span>@endif
+                                            </button>
+                                        @empty
+                                            <span class="text-xs text-zinc-600">keine Vorschläge</span>
+                                        @endforelse
+                                        <div class="flex flex-col items-start gap-0.5 text-xs">
+                                            @if ($useUrl === '' && ($quickImages[$r['key']] ?? []))<span class="text-zinc-500">ohne Bild</span>@endif
+                                            @if ($chosen)
+                                                <button wire:click="quickStandardImage(@js($r['key']), null)" class="text-zinc-500 underline hover:text-white" title="Wieder das vorgeschlagene (sichere) Bild bzw. ohne Bild, wenn es keins gibt">↺ Vorschlag</button>
+                                            @endif
+                                        </div>
+                                    </div>
                                 </td>
                             @endif
                             @if ($selectable)

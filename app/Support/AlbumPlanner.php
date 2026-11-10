@@ -15,6 +15,7 @@ class AlbumPlanner
         private PathBuilder $paths,
         private Genres $genres,
         private ArtistDirectory $directory,
+        private SortNames $sortNames,
     ) {}
 
     /**
@@ -62,6 +63,7 @@ class AlbumPlanner
             }
             if ($category) {
                 $new['comment'] = $category['name'];
+                $new['category'] = $category['name'];
                 $new['compilation'] = $category['compilation'];
                 if ($category['compilation']) {
                     $new['albumartist'] = $compilationArtist;
@@ -72,6 +74,7 @@ class AlbumPlanner
             $aa = $this->directory->resolveNames($new['albumartist'], (array) ($t->albumartists ?? []), $persons);
             $new['artists'] = $a['names'];
             $new['albumartists'] = $aa['names'];
+            $new = $this->sortNames->tags($new) + $new;
             $unresolved[$t->id] = array_values(array_unique([...$a['unresolved'], ...$aa['unresolved']]));
             $newTagSets[$t->id] = self::clearNumbersWithoutAlbum($new);
         }

@@ -75,8 +75,8 @@ class ToInbox
 
             $target = $dir.'/'.$relative;
 
-            return $t->comment !== null && $t->comment !== ''
-                ? ['type' => 'apply', 'path' => $t->path, 'tags' => ['comment' => ''], 'target' => $target]
+            return ($t->comment ?? '') !== '' || ($t->category ?? '') !== ''
+                ? ['type' => 'apply', 'path' => $t->path, 'tags' => ['comment' => '', 'category' => ''], 'target' => $target]
                 : ['type' => 'move', 'path' => $t->path, 'target' => $target];
         })->values()->all();
     }

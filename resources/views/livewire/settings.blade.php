@@ -44,6 +44,10 @@
                         <option value="persons">Artikel und Personen – auch „Berry, Chuck“ → „Chuck Berry“</option>
                     </select>
                 </div>
+                <div><label class="label">Artikel für Sortiernamen (ARTISTSORT)</label>
+                    <input wire:model="s.sort_articles" class="input" placeholder="The, Die, Der, Das">
+                    <p class="mt-1 text-xs text-zinc-500">Kommagetrennt – „The Beatles“ → „Beatles, The“. Die Ordner bleiben, wie sie sind.</p>
+                </div>
                 <div><label class="label">Qobuz-Shop (FLAC-Kandidaten)</label>
                     <select wire:model="s.qobuz_store" class="input">
                         @foreach (['de-de' => 'Deutschland', 'at-de' => 'Österreich', 'ch-de' => 'Schweiz (Deutsch)', 'fr-fr' => 'Frankreich', 'gb-en' => 'Großbritannien', 'us-en' => 'USA'] as $v => $label)<option value="{{ $v }}">{{ $label }}</option>@endforeach

@@ -42,6 +42,7 @@ class CleanupChecks
         private ArtistDirectory $directory,
         private Genres $genres,
         private Compilations $compilations,
+        private SortNames $sortNames,
     ) {}
 
     /** Prüfungen in sinnvoller Arbeitsreihenfolge (Schritt 1 → 5). */
@@ -62,7 +63,8 @@ class CleanupChecks
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
             'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten und mit nur einem Interpreten (bzw. „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'year_date' => ['Jahr als Datum', 'Im Jahr-Tag steht ein Datum („2003-05-12“) oder mehr als die Jahreszahl – nur das Jahr behalten.', 'Nur das Jahr schreiben'],
-            'comment' => ['Kategorie-Kommentar fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag ≠ Kategorie des Ordners.', 'Kommentar setzen'],
+            'comment' => ['Kategorie fehlt oder passt nicht zum Ablageort', 'Kommentar-Tag oder Feld MUSICWIZ_CATEGORY ≠ Kategorie des Ordners.', 'Kategorie setzen'],
+            'sortnames' => ['Sortiernamen fehlen oder weichen ab', 'ARTISTSORT/ALBUMARTISTSORT für die Sortierung im Player („Beatles, The“) – nach den Artikeln aus den Einstellungen bzw. dem Sortiernamen im Künstlerverzeichnis. Die Ordner bleiben, wie sie sind.', 'Sortiernamen schreiben'],
             'missing_tags' => ['Fehlende Tags', 'Interpret, Album oder Tracknummer fehlt; Platzhalter wie „Unknown Artist“ als Album-Interpret. Album nur, wo eins sein sollte (andere Titel im Ordner haben eins oder Tracknummer vorhanden) – nicht in „Kein Album“.', null],
             'genre_unlisted' => ['Genres nicht auf der Liste', 'Behebung über die Genre-Zuordnung.', 'Zugeordnetes Genre schreiben'],
             'genre_mixed' => ['Alben mit gemischten Genres', 'Tracks eines Albums (kein Sampler) haben verschiedene Genres.', 'Häufigstes Genre fürs ganze Album'],
@@ -82,7 +84,7 @@ class CleanupChecks
     /** Schritte: Reihenfolge, in der aufgeräumt werden sollte. */
     public const STEPS = [
         1 => ['Dateien', 'Defektes und Doppeltes zuerst aussortieren', ['broken', 'integrity', 'duplicates', 'extension']],
-        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'inverted', 'spelling', 'combined', 'album_mixed', 'year_date', 'sampler_flags', 'compilation_in_artists', 'comment', 'missing_tags']],
+        2 => ['Künstler & Tags', 'Schreibweisen und Tags vereinheitlichen – die Ordner richten sich danach', ['encoding', 'ambiguous', 'combined_manual', 'inverted', 'spelling', 'combined', 'album_mixed', 'year_date', 'sampler_flags', 'compilation_in_artists', 'comment', 'sortnames', 'missing_tags']],
         3 => ['Genres', 'Genre-Liste anwenden', ['genre_unlisted', 'genre_mixed', 'genre_missing', 'electronic_sub']],
         4 => ['Ablage', 'Erst jetzt an den Regelort verschieben', ['misplaced']],
         5 => ['Abschluss', 'Reste, Vollständigkeit, Cover, Künstlerbilder, ReplayGain, Songtexte', ['leftovers', 'incomplete', 'cover', 'cover_embed', 'artist_image', 'replaygain', 'lyrics']],
@@ -306,7 +308,7 @@ class CleanupChecks
 
     /** Felder der Titel, die Prüfungen verwenden (ohne Bewertung, Änderungszeit und Größe) */
     private const TRACK_FIELDS = ['id', 'album_id', 'path', 'ext', 'format', 'duration', 'bitrate', 'title', 'artist', 'artists', 'album', 'albumartist', 'albumartists',
-        'track', 'tracktotal', 'disc', 'disctotal', 'year', 'genres', 'comment', 'compilation', 'cover_embedded', 'cover_size', 'writable', 'error', 'replaygain', 'has_lyrics'];
+        'track', 'tracktotal', 'disc', 'disctotal', 'year', 'genres', 'comment', 'category', 'compilation', 'artistsort', 'albumartistsort', 'cover_embedded', 'cover_size', 'writable', 'error', 'replaygain', 'has_lyrics'];
 
     private const ALBUM_FIELDS = ['id', 'dir', 'dirs', 'category', 'title', 'albumartist', 'folder_artist', 'is_compilation', 'cover_file', 'cover_embedded', 'cover_size', 'track_count'];
 
@@ -454,7 +456,7 @@ class CleanupChecks
      * ganze Lib (Duplikate, Namen, Genres, Reste, Bilder, Audiodaten) und rechnen immer ganz.
      */
     public const ALBUM_LOCAL = ['encoding', 'misplaced', 'inverted', 'spelling', 'combined', 'ambiguous', 'album_mixed', 'year_date', 'sampler_flags', 'compilation_in_artists',
-        'comment', 'missing_tags', 'cover', 'cover_embed', 'incomplete', 'replaygain', 'lyrics', 'genre_mixed', 'electronic_sub'];
+        'comment', 'sortnames', 'missing_tags', 'cover', 'cover_embed', 'incomplete', 'replaygain', 'lyrics', 'genre_mixed', 'electronic_sub'];
 
     /** Höchstens so viele geänderte Alben schrittweise – darüber lohnt das ganze Neurechnen eher */
     private const INCREMENTAL_MAX = 300;
@@ -1095,13 +1097,44 @@ class CleanupChecks
             if (! $category || $this->compilationInArtists($album, $tracks)) {
                 continue;
             }
-            $wrong = $tracks->filter(fn ($t) => (string) $t->comment !== $category['name']);
+            $wrong = $tracks->filter(fn ($t) => (string) $t->comment !== $category['name'] || (string) $t->category !== $category['name']);
             if ($wrong->isEmpty()) {
                 continue;
             }
-            $actions = $this->applyActions($wrong, fn ($t) => ['comment' => $category['name']] + ((bool) $t->compilation !== $category['compilation'] ? ['compilation' => $category['compilation']] : []));
-            $values = $wrong->pluck('comment')->map(fn ($c) => $c ?: '∅')->unique()->implode(', ');
+            $actions = $this->applyActions($wrong, fn ($t) => ['comment' => $category['name'], 'category' => $category['name']]
+                + ((bool) $t->compilation !== $category['compilation'] ? ['compilation' => $category['compilation']] : []));
+            // Wert, der abweicht: der Kommentar, sonst das eigene Feld (Kommentar stimmt schon, Feld fehlt noch)
+            $values = $wrong->map(fn ($t) => (string) $t->comment !== $category['name'] ? ($t->comment ?: '∅') : 'Feld fehlt')->unique()->implode(', ');
             $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => $wrong->count().' Track(s): '.$values.' → '.$category['name'], 'link' => $this->link($album), 'actions' => $actions];
+        }
+
+        return $out;
+    }
+
+    /** Sortiernamen (ARTISTSORT/ALBUMARTISTSORT) nach den Artikel-Regeln bzw. dem Sortiernamen im Künstlerverzeichnis. */
+    private function checkSortnames(): array
+    {
+        $out = [];
+        foreach ($this->byAlbum() as $albumId => $tracks) {
+            $examples = [];
+            $actions = $this->applyActions($tracks, function (Track $t) use (&$examples) {
+                $tags = [];
+                foreach ($this->sortNames->tags($t->tags()) as $field => $wanted) {
+                    if ((string) $t->{$field} !== $wanted) {
+                        $tags[$field] = $wanted;
+                        $text = (string) $t->{$field === 'artistsort' ? 'artist' : 'albumartist'};
+                        $examples[$text] = $wanted === '' ? 'entfernen' : '„'.$wanted.'“';
+                    }
+                }
+
+                return $tags;
+            });
+            if ($actions) {
+                $album = $this->albums()[$albumId] ?? null;
+                $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album),
+                    'detail' => count($actions).' Titel: '.implode(', ', array_slice(array_map(fn ($a, $b) => '„'.$a.'“ → '.$b, array_keys($examples), $examples), 0, 3)).(count($examples) > 3 ? ' …' : ''),
+                    'link' => $this->link($album), 'actions' => $actions];
+            }
         }
 
         return $out;

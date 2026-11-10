@@ -124,6 +124,9 @@ class TagReader
             'year' => $str($tags['year'] ?? ''),
             'genres' => $list($tags['genres'] ?? []),
             'comment' => $str($tags['comment'] ?? ''),
+            'category' => $str($tags['category'] ?? ''),
+            'artistsort' => $str($tags['artistsort'] ?? ''),
+            'albumartistsort' => $str($tags['albumartistsort'] ?? ''),
             'compilation' => (bool) ($tags['compilation'] ?? false),
             // Herkunft (z. B. „YouTube“ bei Downloads) – nur gelesen, nie geschrieben
             'source' => $str($tags['source'] ?? ''),

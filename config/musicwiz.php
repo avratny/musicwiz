@@ -53,6 +53,8 @@ return [
     'qobuz_store' => env('QOBUZ_STORE', 'de-de'),
     // Umgedrehte Namen richtig herum: off | articles („Crystals, The“ → „The Crystals“) | persons (auch „Berry, Chuck“ → „Chuck Berry“)
     'invert_names' => 'articles',
+    // Artikel, die im Sortiernamen (ARTISTSORT/ALBUMARTISTSORT) nach hinten wandern: „The Beatles“ → „Beatles, The“
+    'sort_articles' => 'The, Die, Der, Das',
 
     'tagtool' => env('MUSIC_TAGTOOL', base_path('tools/tagtool.py')),
     // YouTube-Download (yt-dlp, braucht ffmpeg)

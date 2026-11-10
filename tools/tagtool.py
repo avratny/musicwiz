@@ -10,6 +10,8 @@ write erwartet {"files": [{"path": ..., "tags": {...}, "cover": "/pfad.jpg"|null
 Nur Schlüssel, die in "tags" vorkommen, werden geändert. Leere Werte ("" / [] / null) löschen das Feld.
 Schlüssel: title artist artists album albumartist albumartists track tracktotal
            disc disctotal year genres comment compilation rating (0–5 Sterne, 0 = keine)
+           category (Kategorie der App; FLAC: MUSICWIZ_CATEGORY, MP3: TXXX:MUSICWIZ_CATEGORY)
+           artistsort albumartistsort (Sortiernamen; FLAC: ARTISTSORT/ALBUMARTISTSORT, MP3: TSOP/TSO2)
            rg_track_gain rg_track_peak rg_album_gain rg_album_peak (ReplayGain, z. B. "-6.62 dB" / "0.988")
            lyrics (Songtext, auch synchronisiert im LRC-Format "[00:12.34] …"; FLAC: LYRICS, MP3: USLT)
 Gelesen werden zusätzlich: source (Herkunft, z. B. YouTube) und rating.
@@ -28,7 +30,7 @@ from mutagen.mp3 import MP3, HeaderNotFoundError
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (ID3, ID3NoHeaderError, APIC, COMM, POPM, TALB, TCMP, TCON,
-                         TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TXXX, USLT)
+                         TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSO2, TSOP, TXXX, USLT)
 
 LIST_KEYS = {"artists", "albumartists", "genres"}
 
@@ -141,6 +143,9 @@ FLAC_SIMPLE = {
     "disctotal": ["DISCTOTAL", "TOTALDISCS"],
     "year": ["DATE"],
     "comment": ["COMMENT"],
+    "category": ["MUSICWIZ_CATEGORY"],
+    "artistsort": ["ARTISTSORT"],
+    "albumartistsort": ["ALBUMARTISTSORT"],
     "lyrics": ["LYRICS", "UNSYNCEDLYRICS"],
     **{k: [v] for k, v in REPLAYGAIN.items()},
 }
@@ -155,7 +160,8 @@ def flac_read(f):
         "albumartist": g("ALBUMARTIST") or g("ALBUM ARTIST"),
         "track": g("TRACKNUMBER"), "tracktotal": g("TRACKTOTAL") or g("TOTALTRACKS"),
         "disc": g("DISCNUMBER"), "disctotal": g("DISCTOTAL") or g("TOTALDISCS"),
-        "year": g("DATE"), "comment": g("COMMENT") or g("DESCRIPTION"),
+        "year": g("DATE"), "comment": g("COMMENT") or g("DESCRIPTION"), "category": g("MUSICWIZ_CATEGORY"),
+        "artistsort": g("ARTISTSORT"), "albumartistsort": g("ALBUMARTISTSORT"),
         "artists": list(t.get("ARTISTS", [])), "albumartists": list(t.get("ALBUMARTISTS", [])),
         "genres": list(t.get("GENRE", [])), "compilation": g("COMPILATION") == "1",
         "source": g("SOURCE"), "rating": flac_rating_to_stars(g("RATING")),
@@ -270,6 +276,8 @@ def mp3_read(t):
         "title": id3_text(t, "TIT2"), "artist": id3_text(t, "TPE1"), "album": id3_text(t, "TALB"),
         "albumartist": id3_text(t, "TPE2"), "track": track, "tracktotal": tracktotal,
         "disc": disc, "disctotal": disctotal, "year": year, "comment": id3_comment(t),
+        "category": (txxx("MUSICWIZ_CATEGORY") or [""])[0],
+        "artistsort": id3_text(t, "TSOP"), "albumartistsort": id3_text(t, "TSO2"),
         "artists": txxx("ARTISTS"), "albumartists": txxx("ALBUMARTISTS"),
         "genres": [str(x) for x in (t.get("TCON").text if t.get("TCON") else [])],
         "compilation": id3_text(t, "TCMP") == "1",
@@ -299,7 +307,8 @@ def mp3_write(path, tags, cover, remove_cover, version):
             t.add(cls(encoding=3, text=[val] if isinstance(val, str) else val))
 
     simple = {"title": ("TIT2", TIT2), "artist": ("TPE1", TPE1),
-              "album": ("TALB", TALB), "albumartist": ("TPE2", TPE2)}
+              "album": ("TALB", TALB), "albumartist": ("TPE2", TPE2),
+              "artistsort": ("TSOP", TSOP), "albumartistsort": ("TSO2", TSO2)}
     for key, (fid, cls) in simple.items():
         if key in tags:
             set_text(fid, cls, as_str(tags[key]))
@@ -314,6 +323,11 @@ def mp3_write(path, tags, cover, remove_cover, version):
         set_text("TDRC", TDRC, as_str(tags["year"]))
     if "genres" in tags:
         set_text("TCON", TCON, multi(as_list(tags["genres"])))
+    if "category" in tags:
+        t.delall("TXXX:MUSICWIZ_CATEGORY")
+        val = as_str(tags["category"])
+        if val:
+            t.add(TXXX(encoding=3, desc="MUSICWIZ_CATEGORY", text=[val]))
     for key, desc in (("artists", "ARTISTS"), ("albumartists", "ALBUMARTISTS")):
         if key in tags:
             t.delall("TXXX:" + desc)

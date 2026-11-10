@@ -13,7 +13,8 @@ use Illuminate\Support\Facades\Cache;
 /**
  * „Schnell erfassen › Standard“ gesammelt übernehmen: MusicBrainz und Deezer bzw. Spotify finden eure Lieder unter genau
  * diesem Namen. Angelegt mit MusicBrainz-ID, Genre, Schreibweisen und einem Bild nur, wenn es sicher der richtige Künstler
- * ist (über die MusicBrainz-ID oder eines eurer Lieder) – sonst ohne Bild (Verzeichnis › Filter „ohne Bild“).
+ * ist (über die MusicBrainz-ID oder eines eurer Lieder) – sonst ohne Bild (Verzeichnis › Filter „ohne Bild“). Ein in der
+ * Liste von Hand gewähltes Bild (bzw. „ohne Bild“) geht vor.
  * In Häppchen, die sich selbst weiterreichen; Tags werden wie immer nur vorgemerkt.
  */
 class TakeStandardArtists implements ShouldQueue
@@ -25,6 +26,9 @@ class TakeStandardArtists implements ShouldQueue
     private const STATUS = 'take-standard.status';
 
     private const LIST = 'take-standard.list';
+
+    /** Von Hand gewähltes Bild je Name (md5 => URL, '' = ohne Bild); ohne Eintrag gilt das sichere Bild */
+    private const IMAGES = 'take-standard.images';
 
     public int $tries = 1;
 
@@ -69,17 +73,37 @@ class TakeStandardArtists implements ShouldQueue
         Cache::put(self::STATUS, array_merge(Cache::get(self::STATUS, []), $merge, ['touched_at' => now()->toIso8601String()]), now()->addDays(7));
     }
 
+    /** @return array<string, string> */
+    public static function imageChoices(): array
+    {
+        return Cache::get(self::IMAGES, []);
+    }
+
+    /** Bild für einen Namen wählen ('' = ohne Bild, null = wieder das vorgeschlagene). */
+    public static function chooseImage(string $key, ?string $url): void
+    {
+        $choices = self::imageChoices();
+        if ($url === null) {
+            unset($choices[$key]);
+        } else {
+            $choices[$key] = $url;
+        }
+        Cache::forever(self::IMAGES, $choices);
+    }
+
     public function handle(ArtistQuickMatch $quick, Lookup $lookup, ArtistGenreSuggestions $genres, ArtistDirectory $directory): void
     {
         $list = Cache::get(self::LIST, []);
         $chunk = array_splice($list, 0, self::CHUNK);
         $picks = [];
+        $choices = self::imageChoices();
         foreach ($chunk as $r) {
             // inzwischen von Hand erfasst bzw. zugeordnet: auslassen
             if ($directory->check($r['name'])['status'] !== 'new') {
                 continue;
             }
-            $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit']['name'] !== $r['name'], 'image' => $quick->safeImage($r, $lookup)];
+            $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit']['name'] !== $r['name'],
+                'image' => array_key_exists($r['key'], $choices) ? ($choices[$r['key']] ?: null) : $quick->safeImage($r, $lookup)];
         }
         self::setStatus(['current' => $chunk ? end($chunk)['name'] : null]);
         $result = $picks ? rescue(fn () => $quick->save($picks, $lookup, $genres), ['created' => 0, 'staged' => 0]) : ['created' => 0, 'staged' => 0];
