@@ -22,6 +22,7 @@ use App\Support\ArtistNames;
 use App\Support\ArtistQuickMatch;
 use App\Support\CombiCheck;
 use App\Support\Covers;
+use App\Support\DataVersion;
 use App\Support\FileOps;
 use App\Support\Genres;
 use App\Support\Homonyms;
@@ -65,6 +66,9 @@ class Artists extends Component
     public array $quickMb = [];
 
     public int $quickLimit = 100;
+
+    /** Schnell erfassen: Suche im Namen (Bestand und MusicBrainz) */
+    public string $quickQ = '';
 
     /** Schnell erfassen: gewähltes Bild je Name (md5 => URL) */
     public array $quickImage = [];
@@ -122,6 +126,11 @@ class Artists extends Component
         $this->quickLimit = 100;
     }
 
+    public function updatedQuickQ(): void
+    {
+        $this->quickLimit = 100;
+    }
+
     /** Verzeichnis: so viele Einträge, dann „Mehr anzeigen“ */
     public int $artistLimit = 500;
 
@@ -136,6 +145,11 @@ class Artists extends Component
         session()->flash('status', PrefetchUnknownArtists::start()
             ? 'Vorladen gestartet – läuft im Hintergrund, etwa eine Abfrage pro Sekunde (Grenze von MusicBrainz).'
             : 'Nichts vorzuladen – alle unbekannten Künstler sind schon nachgeschlagen (bzw. es läuft bereits).');
+    }
+
+    public function updatedGenreFilter(): void
+    {
+        $this->artistLimit = 500;
     }
 
     public function updatedQ(): void
@@ -213,6 +227,7 @@ class Artists extends Component
     {
         $this->selected = $id;
         $this->splitInto = null;
+        $this->imagesOpen = false;
         $this->splitOpen = $this->mergeOpen = false;
         $this->mergeQ = '';
         $this->mergeIds = [];
@@ -266,7 +281,7 @@ class Artists extends Component
     private function fillForm(): void
     {
         $a = Artist::find($this->selected);
-        $this->form = $a ? $a->only(['name', 'mbid', 'discogs_id', 'default_genre']) : [];
+        $this->form = $a ? $a->only(['name', 'mbid', 'discogs_id']) + ['genres' => $a->genres()] : [];
     }
 
     private function resetLookup(): void
@@ -283,6 +298,7 @@ class Artists extends Component
         }
         $a = Artist::firstOrCreate(['name' => $name]);
         $this->newName = '';
+        $this->newOpen = false;
         $this->select($a->id);
     }
 
@@ -309,21 +325,18 @@ class Artists extends Component
                 return;
             }
         }
+        $mbidBefore = $a->mbid;
         $a->fill([
             'mbid' => trim($this->form['mbid'] ?? '') ?: null,
             'discogs_id' => trim($this->form['discogs_id'] ?? '') ?: null,
-            'default_genre' => ($this->form['default_genre'] ?? '') ?: null,
-        ]);
+        ])->setGenres((array) ($this->form['genres'] ?? []));
         $a->save();
-        session()->flash('status', 'Gespeichert.'.PendingChanges::note($staged));
-    }
-
-    /** Standard-Genre sofort speichern (ohne „Speichern“). */
-    public function updatedFormDefaultGenre($value): void
-    {
-        if ($this->selected) {
-            Artist::whereKey($this->selected)->update(['default_genre' => $value ?: null]);
+        $msg = 'Gespeichert.';
+        if ($a->mbid && $a->mbid !== $mbidBefore && ($added = $this->importAliases($a))) {
+            $msg .= ' '.count($added).' Schreibweise(n) von MusicBrainz übernommen.';
         }
+        $this->fillForm();
+        session()->flash('status', $msg.PendingChanges::note($staged));
     }
 
     /** Standard-Genre online ermitteln (mit der gespeicherten MusicBrainz- bzw. Discogs-ID). */
@@ -344,9 +357,25 @@ class Artists extends Component
         $artist = Artist::find($this->selected);
         $s = $artist ? $genres->suggestForArtist($artist) : null;
         if ($s) {
-            $this->form['default_genre'] = $s['genre'];
-            $artist->update(['default_genre' => $s['genre']]);
+            $this->addGenre($s['genre']);
         }
+    }
+
+    /** Standard-Genre hinzufügen (bis zu zwei; ein drittes ersetzt das zweite) – gespeichert mit „Speichern“ */
+    public function addGenre(string $genre): void
+    {
+        $genre = trim($genre);
+        $list = (array) ($this->form['genres'] ?? []);
+        if ($genre === '' || in_array($genre, $list, true)) {
+            return;
+        }
+        $list = count($list) >= Artist::MAX_GENRES ? [...array_slice($list, 0, Artist::MAX_GENRES - 1), $genre] : [...$list, $genre];
+        $this->form['genres'] = array_values($list);
+    }
+
+    public function removeGenre(string $genre): void
+    {
+        $this->form['genres'] = array_values(array_diff((array) ($this->form['genres'] ?? []), [$genre]));
     }
 
     /** Für alle Künstler ohne Standard-Genre den Vorschlag aus dem Bestand übernehmen. */
@@ -355,7 +384,7 @@ class Artists extends Component
         $n = 0;
         foreach (Artist::whereNull('default_genre')->get() as $artist) {
             if ($s = $genres->suggestForArtist($artist)) {
-                $artist->update(['default_genre' => $s['genre']]);
+                $artist->setGenres([$s['genre']])->save();
                 $n++;
             }
         }
@@ -417,13 +446,133 @@ class Artists extends Component
         }
     }
 
-    /** Verzeichnis: nur Einträge zeigen, die laut Kombi-Prüfung eine Zusammenarbeit sind */
-    #[Url(as: 'zusammenarbeit')]
-    public bool $onlyCollab = false;
+    /** Verzeichnis: aktive Filter (Schlüssel aus FILTERS, kombinierbar) */
+    #[Url(as: 'filter')]
+    public array $filters = [];
 
-    /** Verzeichnis: nur Einträge ohne „Name passt“ zeigen */
-    #[Url(as: 'offen')]
-    public bool $onlyUnconfirmed = false;
+    /** Verzeichnis: nur Einträge mit diesem Standard-Genre */
+    #[Url(as: 'genre')]
+    public string $genreFilter = '';
+
+    /** Verzeichnis: Sortierung name | tracks | updated */
+    #[Url(as: 'sortierung')]
+    public string $listSort = 'name';
+
+    /** Dialoge: Neuer Künstler, Bildauswahl */
+    public bool $newOpen = false;
+
+    public bool $imagesOpen = false;
+
+    /** Filter des Verzeichnisses: Schlüssel => [Gruppe, Beschriftung] */
+    public const FILTERS = [
+        'unconfirmed' => ['Prüfstatus', 'Noch nicht geprüft'],
+        'collab' => ['Prüfstatus', '⚠ Wahrscheinlich Zusammenarbeit'],
+        'combo' => ['Prüfstatus', 'Kombi-Namen'],
+        'splits' => ['Prüfstatus', 'Getrennte Kombis'],
+        'no_image' => ['Fehlende Daten', 'Ohne Bild'],
+        'no_genre' => ['Fehlende Daten', 'Ohne Genre'],
+        'no_mbid' => ['Fehlende Daten', 'Ohne MusicBrainz-ID'],
+        'homonym' => ['Sonstiges', 'Gleichnamige'],
+        'aliases' => ['Sonstiges', 'Mit Schreibweisen'],
+        'in_lib' => ['Sonstiges', 'Mit Titeln im Bestand'],
+        'inbox_only' => ['Sonstiges', 'Nur in der Inbox'],
+    ];
+
+    public function toggleFilter(string $key): void
+    {
+        if (! isset(self::FILTERS[$key])) {
+            return;
+        }
+        $this->filters = in_array($key, $this->filters, true) ? array_values(array_diff($this->filters, [$key])) : [...$this->filters, $key];
+        $this->artistLimit = 500;
+    }
+
+    public function clearFilters(): void
+    {
+        $this->filters = [];
+        $this->genreFilter = '';
+        $this->q = '';
+    }
+
+    /**
+     * Liste des Verzeichnisses: Suche, Filter (kombinierbar), Genre, Sortierung – mit Anzahl je Filter.
+     *
+     * @return array<string, mixed>
+     */
+    private function directoryList(ArtistDirectory $directory): array
+    {
+        $all = Artist::withCount('aliases')->with('aliases:id,artist_id,alias')->get();
+        $counts = $directory->namesInCollection();
+        $inbox = $this->inboxNameCounts();
+        $tracks = $all->mapWithKeys(fn (Artist $a) => [$a->id => array_sum(array_map(fn ($n) => $counts[$n] ?? 0, [$a->name, ...$a->aliases->pluck('alias')->all()]))]);
+        $inboxTracks = $all->mapWithKeys(fn (Artist $a) => [$a->id => array_sum(array_map(fn ($n) => $inbox[$n] ?? 0, [$a->name, ...$a->aliases->pluck('alias')->all()]))]);
+        // Kombi-Prüfung: von Hand bestätigte Einträge zählen nicht als „wahrscheinlich Zusammenarbeit“
+        $combiNames = $all->filter(fn (Artist $a) => CombiCheck::applies($a->name))->pluck('name')->values()->all();
+        $combis = array_filter(app(CombiCheck::class)->cachedMany($combiNames));
+        $tests = [
+            'unconfirmed' => fn (Artist $a) => in_array($a->name_confirmed, NameConfirmation::OPEN, true),
+            'collab' => fn (Artist $a) => $a->name_confirmed !== 'manual' && ($combis[$a->name]['verdict'] ?? null) === 'collab',
+            'combo' => fn (Artist $a) => CombiCheck::applies($a->name),
+            'splits' => fn () => true, // eigene Liste (gemerkte Trennungen), siehe unten
+            'no_image' => fn (Artist $a) => ! $a->image,
+            'no_genre' => fn (Artist $a) => ! $a->genres(),
+            'no_mbid' => fn (Artist $a) => ! $a->mbid,
+            'homonym' => fn (Artist $a) => (bool) $a->base_name,
+            'aliases' => fn (Artist $a) => $a->aliases_count > 0,
+            'in_lib' => fn (Artist $a) => $tracks[$a->id] > 0,
+            'inbox_only' => fn (Artist $a) => $tracks[$a->id] === 0 && $inboxTracks[$a->id] > 0,
+        ];
+        $filterCounts = array_map(fn ($t) => $all->filter($t)->count(), $tests);
+        $filterCounts['splits'] = ArtistSplit::count();
+
+        $list = $all;
+        $q = mb_strtolower(trim($this->q));
+        if ($q !== '') {
+            $list = $list->filter(fn (Artist $a) => str_contains(mb_strtolower($a->name), $q) || $a->aliases->contains(fn ($al) => str_contains(mb_strtolower($al->alias), $q)));
+        }
+        foreach (array_diff($this->filters, ['splits']) as $f) {
+            $list = isset($tests[$f]) ? $list->filter($tests[$f]) : $list;
+        }
+        if ($this->genreFilter !== '') {
+            $list = $list->filter(fn (Artist $a) => $this->genreFilter === '-' ? ! $a->genres() : in_array($this->genreFilter, $a->genres(), true));
+        }
+        $list = match ($this->listSort) {
+            'tracks' => $list->sortByDesc(fn (Artist $a) => $tracks[$a->id]),
+            'updated' => $list->sortByDesc('updated_at'),
+            default => $list->sortBy(fn (Artist $a) => mb_strtolower($a->name)),
+        };
+
+        return [
+            'artists' => $list->values()->take($this->artistLimit),
+            'artistTotal' => $list->count(),
+            'allTotal' => $all->count(),
+            'tracksById' => $tracks->all(),
+            'inboxById' => $inboxTracks->all(),
+            'filterCounts' => $filterCounts,
+            'genreFilterOptions' => $all->flatMap(fn (Artist $a) => $a->genres())->countBy()->sortKeys()->all(),
+            'combis' => $combis,
+            'splits' => in_array('splits', $this->filters, true)
+                ? ArtistSplit::orderBy('name')->when($q !== '', fn ($w) => $w->where('name', 'like', '%'.$this->q.'%'))->get() : collect(),
+            'combiTotal' => count(CheckCombis::names()),
+            'combiJob' => CheckCombis::status(),
+        ];
+    }
+
+    /** Namen aus der Inbox mit Anzahl Titel (für „Nur in der Inbox“) */
+    private function inboxNameCounts(): array
+    {
+        return Cache::remember('artist-inbox-names:'.DataVersion::tracks(), now()->addHour(), function () {
+            $out = [];
+            foreach (Track::where('location', 'inbox')->toBase()->select(['artist', 'artists', 'albumartist', 'albumartists'])->get() as $t) {
+                $names = array_merge(json_decode((string) $t->artists, true) ?: ArtistNames::split((string) $t->artist), json_decode((string) $t->albumartists, true) ?: ArtistNames::split((string) $t->albumartist));
+                foreach (array_unique(array_filter($names)) as $n) {
+                    $out[$n] = ($out[$n] ?? 0) + 1;
+                }
+            }
+
+            return $out;
+        });
+    }
 
     /** „Name passt“ von Hand setzen bzw. entfernen */
     public function setConfirmed(bool $confirmed, NameConfirmation $confirmation): void
@@ -647,28 +796,14 @@ class Artists extends Component
         if (! $artist) {
             return;
         }
-        $artist->update([$field => $id]);
         $this->form[$field] = $id;
-        $msg = $source.'-ID gespeichert.';
-        if ($field === 'mbid') {
-            $added = $this->importAliases($artist);
-            $msg .= $added ? ' '.count($added).' Schreibweise(n) von MusicBrainz übernommen.' : '';
-        }
+        $msg = $source.'-ID übernommen – mit „Speichern“ sichern.';
         $clean = ArtistNames::stripDiscogsSuffix($name);
         if ($clean !== '' && $clean !== $artist->name && ! $artist->base_name) {
             $this->form['name'] = $clean;
-            $msg .= ' '.$source.' schreibt „'.$clean.'“ – ins Namensfeld übernommen, mit „Speichern“ bestätigen (benennt auch das Bild um).';
+            $msg .= ' '.$source.' schreibt „'.$clean.'“ – ins Namensfeld übernommen (Speichern benennt auch das Bild um).';
         }
         session()->flash('status', $msg);
-    }
-
-    /** IDs von Hand: beim Verlassen des Feldes speichern. */
-    public function updatedFormMbid($value): void
-    {
-        Artist::whereKey($this->selected)->update(['mbid' => trim((string) $value) ?: null]);
-        if (trim((string) $value) !== '' && ($artist = Artist::find($this->selected))) {
-            $this->importAliases($artist);
-        }
     }
 
     /** Schreibweisen von MusicBrainz für den gewählten Künstler holen (Knopf im Verzeichnis). */
@@ -706,9 +841,27 @@ class Artists extends Component
         }
     }
 
-    public function updatedFormDiscogsId($value): void
+    /** IDs suchen: bei MusicBrainz und/oder Discogs – je nachdem, welche ID noch fehlt. */
+    public function searchIds(Lookup $lookup): void
     {
-        Artist::whereKey($this->selected)->update(['discogs_id' => trim((string) $value) ?: null]);
+        $this->resetLookup();
+        $name = $this->form['name'] ?? '';
+        $errors = [];
+        if (trim((string) ($this->form['mbid'] ?? '')) === '') {
+            try {
+                $this->mbResults = $lookup->musicbrainzArtists($name);
+            } catch (\Throwable $e) {
+                $errors[] = 'MusicBrainz: '.$e->getMessage();
+            }
+        }
+        if (trim((string) ($this->form['discogs_id'] ?? '')) === '' && $lookup->hasDiscogs()) {
+            try {
+                $this->discogsResults = $lookup->discogsArtists($name);
+            } catch (\Throwable $e) {
+                $errors[] = 'Discogs: '.$e->getMessage();
+            }
+        }
+        $this->lookupError = $errors ? implode(' · ', $errors) : (! $this->mbResults && ! $this->discogsResults ? 'Kein Treffer.' : null);
     }
 
     public function useDiscogs(int $i): void
@@ -754,6 +907,7 @@ class Artists extends Component
             $tmp = $covers->download($c['url']);
             $this->storeImage($tmp);
             $this->imageCandidates = [];
+            $this->imagesOpen = false;
         } catch (\Throwable $e) {
             $this->lookupError = $e->getMessage();
         }
@@ -766,6 +920,7 @@ class Artists extends Component
             $this->storeImage($covers->download($this->imageUrl, 'tmp'));
             $this->imageUrl = '';
             $this->imageCandidates = [];
+            $this->imagesOpen = false;
         } catch (\Throwable $e) {
             $this->addError('imageUrl', $e->getMessage());
         }
@@ -789,6 +944,7 @@ class Artists extends Component
         $this->validate(['imageUpload' => 'image|max:20480']);
         $this->storeImage($covers->normalizeUpload($this->imageUpload->getRealPath(), 'tmp', 1200));
         $this->imageUpload = null;
+        $this->imagesOpen = false;
     }
 
     private function storeImage(string $tmp): void
@@ -1023,31 +1179,12 @@ class Artists extends Component
     {
         $data = ['genreOptions' => $genres->options()];
         if ($this->tab === 'directory') {
-            $query = Artist::query()
-                ->when($this->q !== '', fn ($q) => $q->where(fn ($w) => $w->where('name', 'like', '%'.$this->q.'%')->orWhereHas('aliases', fn ($a) => $a->where('alias', 'like', '%'.$this->q.'%'))));
             // „Name passt“: beim ersten Öffnen nach dem Update einmal alle eindeutigen Einträge bewerten
             if (! Cache::has('name-confirm:v1')) {
                 app(NameConfirmation::class)->evaluateAll();
                 Cache::forever('name-confirm:v1', true);
             }
-            // Kombi-Prüfung: Ergebnisse aller Kombi-Einträge (nur gespeicherte), Filter „wahrscheinlich Zusammenarbeit“ –
-            // von Hand bestätigte Einträge zählen nicht (die Entscheidung ist gefallen)
-            $combiNames = Artist::whereNull('name_confirmed')->orWhere('name_confirmed', '!=', 'manual')->pluck('name', 'id')->filter(fn ($n) => CombiCheck::applies($n));
-            $combis = array_filter(app(CombiCheck::class)->cachedMany($combiNames->values()->all()));
-            $collabIds = $combiNames->filter(fn ($n) => ($combis[$n]['verdict'] ?? null) === 'collab')->keys()->all();
-            if ($this->onlyCollab) {
-                $query->whereIn('id', $collabIds);
-            }
-            if ($this->onlyUnconfirmed) {
-                NameConfirmation::scopeOpen($query);
-            }
-            $data['unconfirmedCount'] = NameConfirmation::scopeOpen(Artist::query())->count();
-            $data['combis'] = $combis;
-            $data['collabCount'] = count($collabIds);
-            $data['combiTotal'] = count(CheckCombis::names());
-            $data['combiJob'] = CheckCombis::status();
-            $data['artistTotal'] = (clone $query)->count();
-            $data['artists'] = $query->withCount('aliases')->orderByRaw('name COLLATE NOCASE')->limit($this->artistLimit)->get();
+            $data += $this->directoryList($directory);
             $data['artist'] = $this->selected ? Artist::with(['aliases', 'rejectedAliases'])->find($this->selected) : null;
             $data['mergeCandidates'] = $data['artist'] && $this->mergeOpen ? $this->mergeCandidates($data['artist']) : collect();
             $data['splits'] = ArtistSplit::orderBy('name')->get();
@@ -1063,6 +1200,17 @@ class Artists extends Component
                 ? Track::where('location', 'inbox')->where(fn ($q) => $q->where('artist', 'like', '%'.$data['artist']->name.'%')
                     ->orWhere('albumartist', 'like', '%'.$data['artist']->name.'%'))->count()
                 : 0;
+            $data['dirty'] = $data['artist'] && $this->form && (trim((string) ($this->form['name'] ?? '')) !== $data['artist']->name
+                || (trim((string) ($this->form['mbid'] ?? '')) ?: null) !== $data['artist']->mbid
+                || (trim((string) ($this->form['discogs_id'] ?? '')) ?: null) !== $data['artist']->discogs_id
+                || array_values((array) ($this->form['genres'] ?? [])) !== $data['artist']->genres());
+            if ($data['artist']) {
+                $names = [$data['artist']->name, ...$data['artist']->aliases->pluck('alias')->all()];
+                $counts = $directory->namesInCollection();
+                $data['trackCount'] = array_sum(array_map(fn ($n) => $counts[$n] ?? 0, $names));
+                $data['albumCount'] = Album::where('location', 'library')->whereIn('albumartist', $names)->count();
+                $data['spotifyId'] = (Cache::get('spotify:artist:'.md5($data['artist']->name)) ?? [])['id'] ?? null;
+            }
             $data['withoutGenre'] = Artist::whereNull('default_genre')->count();
             $data['aliasJob'] = Cache::get(ImportMusicBrainzAliases::STATUS_KEY);
             $data['withMbid'] = Artist::whereNotNull('mbid')->count();
@@ -1095,7 +1243,9 @@ class Artists extends Component
         } elseif ($this->tab === 'quick') {
             $all = app(ArtistQuickMatch::class)->rows();
             $data['quickCounts'] = array_count_values(array_column($all, 'kind'));
-            $rows = array_values(array_filter($all, fn ($r) => $r['kind'] === $this->quickKind));
+            $q = mb_strtolower(trim($this->quickQ));
+            $rows = array_values(array_filter($all, fn ($r) => $r['kind'] === $this->quickKind
+                && ($q === '' || str_contains(mb_strtolower($r['name'].' '.($r['hit']['name'] ?? '')), $q))));
             $data['quickTotal'] = count($rows);
             $data['quickRows'] = array_slice($rows, 0, $this->quickLimit);
             $data['quickImages'] = in_array($this->quickKind, ['sure', 'name'], true) ? app(ArtistQuickMatch::class)->images($data['quickRows'], app(Lookup::class)) : [];

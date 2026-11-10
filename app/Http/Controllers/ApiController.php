@@ -70,8 +70,8 @@ class ApiController extends Controller
                 'GET /api/tracks?q=&limit=100' => 'Titel suchen (Interpret, Titel, Album, Pfad)',
                 'GET /api/artists?q=&limit=100' => 'Künstlerverzeichnis mit Schreibweisen',
                 'GET /api/artists/{id}' => 'ein Eintrag mit Schreibweisen, Titeln im Bestand und Mitgliedern laut MusicBrainz',
-                'POST /api/artists' => '{"name", "mbid"?, "genre"?, "aliases"?: [..], "image_url"?} – anlegen bzw. ergänzen',
-                'POST /api/artists/{id}' => '{"mbid"?, "discogs_id"?, "genre"?, "confirmed"?: true|false} – Felder setzen, „Name passt“ bestätigen/zurücknehmen',
+                'POST /api/artists' => '{"name", "mbid"?, "genre"? (eins oder Liste), "aliases"?: [..], "image_url"?} – anlegen bzw. ergänzen',
+                'POST /api/artists/{id}' => '{"mbid"?, "discogs_id"?, "genres"?: [..] (bis zu zwei) | "genre"?, "confirmed"?: true|false} – Felder setzen, „Name passt“ bestätigen/zurücknehmen',
                 'POST /api/artists/{id}/rename' => '{"name"} – umbenennen (alter Name wird Schreibweise)',
                 'POST /api/artists/{id}/merge' => '{"ids": [..]} – „Ist derselbe wie …“',
                 'POST /api/artists/{id}/aliases' => '{"alias"} – Schreibweise hinzufügen',
@@ -267,7 +267,7 @@ class ApiController extends Controller
             ->orderBy('name')->limit(min(2000, $request->integer('limit', 100)))->get();
 
         return $this->json(['artists' => $artists->map(fn (Artist $a) => [
-            'id' => $a->id, 'name' => $a->name, 'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre,
+            'id' => $a->id, 'name' => $a->name, 'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre, 'default_genres' => $a->genres(),
             'disambiguation' => $a->disambiguation, 'image' => (bool) $a->image, 'aliases' => $a->aliases->pluck('alias')->all(),
             'name_confirmed' => $a->name_confirmed,
         ])->all()]);
@@ -291,7 +291,7 @@ class ApiController extends Controller
         $counts = app(ArtistDirectory::class)->namesInCollection();
 
         return $this->json([
-            'id' => $artist->id, 'name' => $artist->name, 'mbid' => $artist->mbid, 'discogs_id' => $artist->discogs_id, 'default_genre' => $artist->default_genre,
+            'id' => $artist->id, 'name' => $artist->name, 'mbid' => $artist->mbid, 'discogs_id' => $artist->discogs_id, 'default_genre' => $artist->default_genre, 'default_genres' => $artist->genres(),
             'image' => (bool) $artist->image, 'aliases' => $artist->aliases()->pluck('alias')->all(),
             'name_confirmed' => $artist->name_confirmed, 'name_confirmed_reason' => $artist->name_confirmed_reason,
             'tracks' => collect([$artist->name, ...$artist->aliases()->pluck('alias')->all()])->mapWithKeys(fn ($n) => [$n => $counts[$n] ?? 0])->filter()->all(),
@@ -312,10 +312,14 @@ class ApiController extends Controller
     public function updateArtist(Request $request, Artist $artist): JsonResponse
     {
         return $this->change(function () use ($request, $artist) {
-            foreach (['mbid' => 'mbid', 'discogs_id' => 'discogs_id', 'genre' => 'default_genre'] as $in => $col) {
+            foreach (['mbid' => 'mbid', 'discogs_id' => 'discogs_id'] as $in => $col) {
                 if ($request->has($in)) {
                     $artist->{$col} = trim((string) $request->input($in)) ?: null;
                 }
+            }
+            // Standard-Genres: "genres" (Liste, bis zu zwei) oder "genre" (eins)
+            if ($request->has('genres') || $request->has('genre')) {
+                $artist->setGenres($request->has('genres') ? (array) $request->input('genres') : array_filter([(string) $request->input('genre')]));
             }
             if ($artist->isDirty()) {
                 $artist->save();

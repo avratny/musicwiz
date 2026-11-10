@@ -89,10 +89,10 @@ class CombiCheckTest extends TestCase
 
         // Verzeichnis: Eintrag, der eine Zusammenarbeit ist, wird markiert; Trennen ist mit den Namen vorbelegt
         $entry = Artist::create(['name' => 'Dr. Motte & WestBam']);
-        Livewire::test(Artists::class)->assertSee('1 wahrscheinlich Zusammenarbeit')
+        Livewire::test(Artists::class)->assertViewHas('filterCounts', fn ($c) => $c['collab'] === 1)
             ->call('select', $entry->id)->assertSee('Kombi-Prüfung')->assertSee('Laut Diensten: Zusammenarbeit')
             ->call('openSplitInto')->assertSet('splitInto.parts', ['Dr. Motte', 'WestBam'])
-            ->set('onlyCollab', true)->assertViewHas('artistTotal', 1);
+            ->call('toggleFilter', 'collab')->assertViewHas('artistTotal', 1);
     }
 
     public function test_votes_handle_typos_and_guests(): void

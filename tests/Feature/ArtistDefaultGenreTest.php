@@ -37,16 +37,18 @@ class ArtistDefaultGenreTest extends TestCase
         $this->assertSame(['genre' => 'Eurodance', 'count' => 2, 'total' => 3], app(Genres::class)->suggestForArtist($atc));
 
         $page = Livewire::test(Artists::class)->call('select', $atc->id)
-            ->assertSee('Vorschlag aus Bestand: Eurodance (2 von 3 Liedern)')
-            ->call('useSuggestedGenre');
-        $this->assertSame('Eurodance', $atc->fresh()->default_genre);
-
-        // sofort speichern beim Ändern
-        $page->set('form.default_genre', 'Pop');
-        $this->assertSame('Pop', $atc->fresh()->default_genre);
+            ->assertSee('Eurodance')->assertSee('(2 von 3)')
+            ->call('useSuggestedGenre')->assertSet('form.genres', ['Eurodance'])->assertSee('ungespeicherte Änderungen');
+        $this->assertNull($atc->fresh()->default_genre, 'erst mit „Speichern“');
+        // zwei Genres, ein drittes ersetzt das zweite; ein „Speichern“ für alles
+        $page->call('addGenre', 'Pop')->call('addGenre', 'Dance / Pop-Dance')->assertSet('form.genres', ['Eurodance', 'Dance / Pop-Dance'])->call('saveArtist');
+        $this->assertSame(['Eurodance', 'Dance / Pop-Dance'], $atc->fresh()->genres());
+        $this->assertSame('Eurodance', $atc->fresh()->default_genre, 'erstes Genre bleibt im alten Feld');
+        $page->call('removeGenre', 'Dance / Pop-Dance')->call('saveArtist');
+        $this->assertSame(['Eurodance'], $atc->fresh()->genres());
 
         // alle ohne Genre füllen – vorhandene bleiben
-        $atc->update(['default_genre' => null]);
+        $atc->setGenres([])->save();
         $page->call('fillDefaultGenres')->assertSee('1 Künstler haben jetzt ein Standard-Genre');
         $this->assertSame('Eurodance', $atc->fresh()->default_genre);
         $this->assertSame('Schlager', $abba->fresh()->default_genre, 'vorhandenes Standard-Genre bleibt');

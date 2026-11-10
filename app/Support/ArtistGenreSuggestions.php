@@ -34,10 +34,12 @@ class ArtistGenreSuggestions
         if ($mbid) {
             try {
                 // TheAudioDB: Genre und Stil („Techno“ / „Electronic“), Genre zählt doppelt
+                // Genre und Stil einzeln (z. B. „Techno“ und „Electronic“) – beide lassen sich übernehmen
                 $a = $this->lookup->audiodbArtist($mbid, $name);
-                $w = array_filter([(string) ($a['genre'] ?? '') => 2, (string) ($a['style'] ?? '') => 1], fn ($v, $k) => $k !== '', ARRAY_FILTER_USE_BOTH);
-                if ($w) {
-                    $proposals[] = ['source' => 'TheAudioDB'] + $this->describe($w);
+                foreach (['genre' => 'TheAudioDB', 'style' => 'TheAudioDB (Stil)'] as $field => $source) {
+                    if (trim((string) ($a[$field] ?? '')) !== '') {
+                        $proposals[] = ['source' => $source] + $this->describe([(string) $a[$field] => 1]);
+                    }
                 }
             } catch (\Throwable $e) {
                 $errors[] = 'TheAudioDB: '.$e->getMessage();

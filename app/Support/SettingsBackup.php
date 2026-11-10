@@ -63,7 +63,7 @@ class SettingsBackup
             'genre_mappings' => GenreMapping::orderBy('source')->get(['source', 'target'])->toArray(),
             'artists' => Artist::with(['aliases', 'rejectedAliases'])->orderBy('name')->get()->map(fn ($a) => [
                 'name' => $a->name, 'base_name' => $a->base_name, 'suffix' => $a->suffix, 'disambiguation' => $a->disambiguation,
-                'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre, 'image' => $a->image,
+                'mbid' => $a->mbid, 'discogs_id' => $a->discogs_id, 'default_genre' => $a->default_genre, 'default_genres' => $a->default_genres, 'image' => $a->image,
                 // von Hand: nur der Name; von MusicBrainz: mit Herkunft
                 'aliases' => $a->aliases->map(fn ($al) => $al->source ? ['alias' => $al->alias, 'source' => $al->source] : $al->alias)->all(),
                 'rejected_aliases' => $a->rejectedAliases->pluck('alias')->all(),
@@ -228,7 +228,7 @@ class SettingsBackup
                 ArtistAlias::query()->delete();
                 Artist::query()->delete();
                 foreach ($data['artists'] ?? [] as $a) {
-                    $artist = Artist::create(collect($a)->only(['name', 'base_name', 'suffix', 'disambiguation', 'mbid', 'discogs_id', 'default_genre', 'image'])->all());
+                    $artist = Artist::create(collect($a)->only(['name', 'base_name', 'suffix', 'disambiguation', 'mbid', 'discogs_id', 'default_genre', 'default_genres', 'image'])->all());
                     foreach ($a['aliases'] ?? [] as $alias) {
                         $source = is_array($alias) ? ($alias['source'] ?? null) : null;
                         $alias = is_array($alias) ? (string) ($alias['alias'] ?? '') : (string) $alias;

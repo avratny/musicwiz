@@ -1730,7 +1730,7 @@ class CleanupChecks
                     continue;
                 }
                 $hints = $missing->mapWithKeys(fn ($t) => [$t->id => $this->genreHint((string) $t->artist)])->filter();
-                $actions = $this->applyActions($missing, fn ($t) => isset($hints[$t->id]) ? ['genres' => $this->genres->expand([$hints[$t->id]['genre']])] : []);
+                $actions = $this->applyActions($missing, fn ($t) => isset($hints[$t->id]) ? ['genres' => $this->genres->expand($hints[$t->id]['genres'] ?? [$hints[$t->id]['genre']])] : []);
                 $detail = $missing->count().' von '.$tracks->count().' Einzelliedern ohne Genre';
                 $detail .= $hints->isEmpty() ? ' – kein Vorschlag (im Editor pro Lied)'
                     : "\n".'Vorschlag für '.$hints->count().': '.$hints->pluck('genre')->countBy()->sortDesc()->map(fn ($n, $g) => $g.' ('.$n.')')->implode(', ');
@@ -1745,7 +1745,7 @@ class CleanupChecks
             $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album),
                 'detail' => $hint ? 'kein Genre · Vorschlag: '.$hint['genre'].' ('.$hint['reason'].')' : 'kein Genre – kein Vorschlag (im Editor setzen)',
                 'link' => $this->link($album),
-                'actions' => $hint ? $this->applyActions($tracks, fn () => ['genres' => $this->genres->expand([$hint['genre']])]) : []];
+                'actions' => $hint ? $this->applyActions($tracks, fn () => ['genres' => $this->genres->expand($hint['genres'] ?? [$hint['genre']])]) : []];
         }
 
         return $out;
@@ -1791,8 +1791,9 @@ class CleanupChecks
         $canonical = $this->directory->check($name)['canonical'] ?? $name;
         $artist = Artist::where('name', $canonical)->first();
         $hint = null;
-        if ($artist?->default_genre && $this->genres->isListed($artist->default_genre)) {
-            $hint = ['genre' => $artist->default_genre, 'reason' => 'Standard-Genre von '.$artist->name];
+        $listed = array_values(array_filter($artist?->genres() ?? [], fn ($g) => $this->genres->isListed($g)));
+        if ($listed) {
+            $hint = ['genre' => implode(', ', $listed), 'genres' => $listed, 'reason' => 'Standard-Genre von '.$artist->name];
         } elseif ($own = $this->genres->suggestForArtist($artist ?? new Artist(['name' => $canonical]))) {
             $hint = ['genre' => $own['genre'], 'reason' => $own['count'].' von '.$own['total'].' Liedern von '.$canonical];
         }

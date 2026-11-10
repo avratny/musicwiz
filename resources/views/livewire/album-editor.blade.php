@@ -278,8 +278,8 @@
                 @if ($genreSuggestion && $genreSuggestion !== $fields['genres'])
                     <button wire:click="useGenres(@js($genreSuggestion))" class="mt-2 block text-xs text-blue-400 hover:underline">Vorschlag aus Zuordnung: {{ implode(', ', $genreSuggestion) }}</button>
                 @endif
-                @if ($defaultGenre && ! in_array($defaultGenre, $fields['genres']))
-                    <button wire:click="useGenres(@js([$defaultGenre]))" class="mt-1 block text-xs text-blue-400 hover:underline">Standard-Genre des Künstlers: {{ $defaultGenre }}</button>
+                @if ($defaultGenres && array_diff($defaultGenres, $fields['genres']))
+                    <button wire:click="useGenres(@js($defaultGenres))" class="mt-1 block text-xs text-blue-400 hover:underline">Standard-Genre{{ count($defaultGenres) > 1 ? 's' : '' }} des Künstlers: {{ implode(', ', $defaultGenres) }}</button>
                 @endif
                 @if ($unlistedGenres)
                     <p class="mt-1 text-xs text-zinc-500">Im Tag (nicht auf der Liste): {{ implode(', ', $unlistedGenres) }}</p>

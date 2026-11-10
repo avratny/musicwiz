@@ -52,7 +52,14 @@ trait NewArtistWizard
     /** Per URL geladene Bilder: bleiben beim „Neu suchen“ erhalten */
     public array $wizCustomImages = [];
 
-    public string $wizGenre = '';
+    /** Standard-Genres für den neuen Eintrag (bis zu zwei, wie im Verzeichnis) */
+    public array $wizGenreList = [];
+
+    /** Bildauswahl als Dialog (öffnet sofort, Suche mit Wartebalken) */
+    public bool $wizImagesOpen = false;
+
+    /** Suche in der Warteschlange */
+    public string $wizQ = '';
 
     /** Genre-Vorschläge: [{source, genre, detail}] aus Bestand, MusicBrainz, Discogs */
     public array $wizGenres = [];
@@ -109,16 +116,7 @@ trait NewArtistWizard
     /** @return array<string, int> alle Namen aus dem Bestand, die noch nicht im Verzeichnis stehen (auch übersprungene) */
     private function wizOpenNames(ArtistDirectory $directory): array
     {
-        $out = [];
-        $counts = $directory->namesInCollection();
-        arsort($counts);
-        foreach ($counts as $name => $n) {
-            if (in_array($directory->check($name)['status'], ['new', 'similar'], true)) {
-                $out[$name] = $n;
-            }
-        }
-
-        return $out;
+        return array_map(fn ($o) => $o['n'], $directory->openNames());
     }
 
     /**
@@ -139,11 +137,13 @@ trait NewArtistWizard
             $mbByKey[ArtistNames::compareKey($alias)] ??= $alias;
         }
         $out = [];
-        foreach ($this->wizOpenNames($directory) as $other => $count) {
+        foreach ($directory->openNames() as $other => $o) {
+            $other = (string) $other;
+            $count = $o['n'];
             if ($other === $name) {
                 continue;
             }
-            $k = ArtistNames::compareKey($other);
+            $k = $o['key'];
             $mbAlias = $mbByKey[$k] ?? null;
             if ($k === $key) {
                 $reason = 'gleiche Schreibweise bis auf Groß/klein, Satzzeichen oder Akzente';
@@ -200,7 +200,8 @@ trait NewArtistWizard
         $this->wizFinal = (string) $name;
         $this->wizMb = $this->wizDiscogs = $this->wizImages = $this->wizCustomImages = $this->wizErrors = $this->wizGenres = $this->wizMbAliases = $this->wizTake = [];
         $this->wizMbid = $this->wizDiscogsId = $this->wizImage = null;
-        $this->wizGenre = '';
+        $this->wizGenreList = [];
+        $this->wizImagesOpen = false;
         $this->wizLoaded = false;
         $this->wizDetailsLoaded = false;
         $this->wizFresh = false;
@@ -289,7 +290,7 @@ trait NewArtistWizard
             $this->wizFresh = false;
         }
         $this->wizLoadGenres(true);
-        $this->wizFindImages($lookup);
+        // Bilder erst, wenn der Bilddialog geöffnet wird (sonst fünf Dienste bei jedem Namen)
     }
 
     /** @return list<string> eigene Liedtitel des aktuellen Namens (für die Liedprüfung bei MusicBrainz) */
@@ -321,8 +322,8 @@ trait NewArtistWizard
         $r = app(ArtistGenreSuggestions::class)->for((string) $this->wizName, $this->wizMbid, $this->wizDiscogsId);
         $this->wizGenres = $r['proposals'];
         array_push($this->wizErrors, ...$r['errors']);
-        if ($fill && $this->wizGenre === '') {
-            $this->wizGenre = (string) ArtistGenreSuggestions::best($this->wizGenres);
+        if ($fill && ! $this->wizGenreList && ($best = ArtistGenreSuggestions::best($this->wizGenres))) {
+            $this->wizGenreList = [$best];
         }
     }
 
@@ -396,12 +397,32 @@ trait NewArtistWizard
         $this->wizImages = [$entry, ...array_values(array_filter($this->wizImages, fn ($c) => $c['url'] !== $url))];
         $this->wizImage = $url;
         $this->wizImageUrl = '';
+        $this->wizImagesOpen = false;
+    }
+
+    /** Standard-Genre hinzufügen (bis zu zwei; ein drittes ersetzt das zweite) bzw. entfernen */
+    public function wizAddGenre(string $genre): void
+    {
+        $genre = trim($genre);
+        if ($genre === '' || in_array($genre, $this->wizGenreList, true)) {
+            return;
+        }
+        $max = Artist::MAX_GENRES;
+        $this->wizGenreList = count($this->wizGenreList) >= $max ? [...array_slice($this->wizGenreList, 0, $max - 1), $genre] : [...$this->wizGenreList, $genre];
+    }
+
+    public function wizRemoveGenre(string $genre): void
+    {
+        $this->wizGenreList = array_values(array_diff($this->wizGenreList, [$genre]));
     }
 
     public function wizPickImage(int $i): void
     {
         $url = $this->wizImages[$i]['url'] ?? null;
         $this->wizImage = $this->wizImage === $url ? null : $url;
+        if ($this->wizImage) {
+            $this->wizImagesOpen = false; // gewählt: Dialog zu (gespeichert wird mit „Speichern & weiter“)
+        }
     }
 
     /** Neuen Künstler speichern (bzw. bei bekannter Schreibweise als Variante) und zum nächsten. */
@@ -419,8 +440,10 @@ trait NewArtistWizard
         $artist->fill(array_filter([
             'mbid' => $artist->mbid ?: $this->wizMbid,
             'discogs_id' => $artist->discogs_id ?: $this->wizDiscogsId,
-            'default_genre' => $artist->default_genre ?: ($this->wizGenre ?: null),
         ]))->save();
+        if (! $artist->genres() && $this->wizGenreList) {
+            $artist->setGenres($this->wizGenreList)->save();
+        }
         if (! $this->wizDetailsLoaded) {
             $this->wizLoadMbAliases(); // vor dem zweiten Schritt gespeichert: Schreibweisen trotzdem mitnehmen
         }
@@ -520,8 +543,12 @@ trait NewArtistWizard
         }
         unset($r);
 
+        $q = mb_strtolower(trim($this->wizQ));
+
         return [
             'wizQueue' => $queue,
+            // Anzeige der Warteschlange: gefiltert nach Suchtext
+            'wizQueueShown' => array_slice($q === '' ? $queue : array_filter($queue, fn ($n, $name) => str_contains(mb_strtolower((string) $name), $q), ARRAY_FILTER_USE_BOTH), 0, 300, true),
             'wizCount' => $name !== null ? ($queue[$name] ?? 0) : 0,
             'wizSimilar' => $similar,
             'wizTracks' => $name !== null ? array_slice($this->wizSampleTracks(), 0, 6) : [],

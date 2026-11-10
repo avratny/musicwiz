@@ -988,11 +988,11 @@ class AlbumEditor extends Component
             $personOptions[$i] = array_map(fn ($a) => ['name' => $a->name, 'label' => $a->name.($a->disambiguation ? ' – '.$a->disambiguation : '')], $directory->personsFor($p['base']));
         }
 
-        $defaultGenre = null;
+        $defaultGenres = [];
         $firstArtist = ArtistNames::split($this->fields['albumartist'] ?: ($this->rows[0]['artist'] ?? ''))[0] ?? null;
         if ($firstArtist) {
             $canonical = $directory->check($firstArtist)['canonical'] ?? $firstArtist;
-            $defaultGenre = Artist::where('name', $canonical)->value('default_genre');
+            $defaultGenres = Artist::where('name', $canonical)->first()?->genres() ?? [];
         }
         $trackGenres = Track::where('album_id', $album->id)->pluck('genres')->flatten()->filter()->unique()->values()->all();
         $genreSuggestion = $genres->suggest($trackGenres);
@@ -1016,7 +1016,7 @@ class AlbumEditor extends Component
             'manualDirs' => collect(DiscSet::all())->flatMap(fn ($s) => array_column($s->members, 'dir'))->all(),
             'albumArtistFix' => $albumArtistFix !== $this->fields['albumartist'] ? $albumArtistFix : null,
             'albumArtistNew' => $albumArtistNew,
-            'defaultGenre' => $defaultGenre,
+            'defaultGenres' => $defaultGenres,
             'genreSuggestion' => $genreSuggestion,
             'unlistedGenres' => array_values(array_filter($trackGenres, fn ($g) => ! $genres->isListed($g))),
             'compilationArtist' => $compilationArtist,

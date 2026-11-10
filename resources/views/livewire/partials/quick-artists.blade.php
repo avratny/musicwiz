@@ -6,6 +6,7 @@
 @endphp
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden" @if ($pf['running'] ?? false) wire:poll.5s @endif>
     <div class="flex shrink-0 flex-wrap items-center gap-2 border-b border-zinc-800 px-6 py-3">
+        <input type="search" wire:model.live.debounce.300ms="quickQ" placeholder="Namen suchen …" class="input-sm w-56">
         @foreach (\App\Support\ArtistQuickMatch::KINDS as $k => $label)
             <button wire:click="$set('quickKind', '{{ $k }}')" class="rounded-full border px-3 py-1 text-sm {{ $quickKind === $k ? 'border-blue-500 bg-blue-500/15 text-blue-100' : 'border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200' }}">
                 {{ $label }} <span class="tabular-nums text-zinc-500">{{ $quickCounts[$k] ?? 0 }}</span>
@@ -104,7 +105,7 @@
                 <button wire:click="$set('quickLimit', {{ $quickLimit + 100 }})" class="btn-ghost mt-3">Mehr anzeigen (noch {{ $quickTotal - count($quickRows) }})</button>
             @endif
         @else
-            <p class="py-10 text-center text-zinc-500">Keine Namen in dieser Gruppe.</p>
+            <p class="py-10 text-center text-zinc-500">{{ $quickQ !== '' ? 'Kein Name passt zur Suche.' : 'Keine Namen in dieser Gruppe.' }}</p>
         @endif
     </div>
 

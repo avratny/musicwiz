@@ -10,7 +10,26 @@ class Artist extends Model
 {
     protected $guarded = [];
 
-    protected $casts = ['name_confirmed_at' => 'datetime'];
+    protected $casts = ['name_confirmed_at' => 'datetime', 'default_genres' => 'array'];
+
+    /** Höchstens so viele Standard-Genres (wie beim Album im Editor) */
+    public const MAX_GENRES = 2;
+
+    /** Standard-Genres (bis zu zwei, Reihenfolge = Wichtigkeit) */
+    public function genres(): array
+    {
+        return array_values(array_filter((array) ($this->default_genres ?: ($this->default_genre ? [$this->default_genre] : []))));
+    }
+
+    /** Standard-Genres setzen; default_genre bleibt das erste (für alles, was nur eins liest). */
+    public function setGenres(array $genres): static
+    {
+        $genres = array_slice(array_values(array_unique(array_filter(array_map('trim', $genres)))), 0, self::MAX_GENRES);
+        $this->default_genres = $genres ?: null;
+        $this->default_genre = $genres[0] ?? null;
+
+        return $this;
+    }
 
     protected static function booted(): void
     {

@@ -3,10 +3,12 @@
 namespace App\Support;
 
 use App\Jobs\PrefetchArtistLookup;
+use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\StoreArtistImage;
 use App\Models\Artist;
 use App\Models\ArtistAlias;
 use App\Models\ArtistSplit;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * „Schnell erfassen“: noch nicht erfasste Namen mit ihrem MusicBrainz-Treffer aus dem Vorladen – eindeutige Fälle lassen
@@ -33,19 +35,43 @@ class ArtistQuickMatch
      *
      * @return list<array{name: string, key: string, count: int, kind: string, reason: string, hit: ?array}>
      */
+    /** Zähler: neue Vorlade- bzw. Kombi-Ergebnisse (die gespeicherte Liste wird dann neu gebildet) */
+    public const RESULTS_BUMP = 'artist-results:bump';
+
+    private ?array $rows = null;
+
+    /**
+     * Wie rows(), aber als Ganzes gespeichert – vorher wurden bei jedem Klick (auch beim Setzen eines Häkchens) die
+     * Vorlade-Ergebnisse aller offenen Namen einzeln gelesen. Neu gebildet nur, wenn sich Bestand, Verzeichnis oder
+     * Ergebnisse ändern.
+     */
     public function rows(): array
     {
-        $counts = $this->directory->namesInCollection();
-        arsort($counts);
-        $open = [];
-        foreach ($counts as $name => $n) {
-            $status = $this->directory->check($name)['status'];
-            if (in_array($status, ['new', 'similar'], true)) {
-                $open[$name] = ['n' => $n, 'status' => $status];
-            }
+        if ($this->rows !== null) {
+            return $this->rows;
         }
+        $base = DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory();
+        $key = 'artist-quick-rows:v1:'.$base.':'.(int) Cache::get(self::RESULTS_BUMP, 0);
+        if (($rows = Cache::get($key)) !== null) {
+            return $this->rows = $rows;
+        }
+        // Vorladen läuft (neue Ergebnisse im Sekundentakt): höchstens einmal pro Minute neu bilden, sonst letzten Stand zeigen
+        $last = Cache::get('artist-quick-rows:last');
+        if ($last && $last['base'] === $base && now()->diffInSeconds($last['at'], true) < 60 && (PrefetchUnknownArtists::status()['running'] ?? false)) {
+            return $this->rows = $last['rows'];
+        }
+        $rows = $this->buildRows();
+        Cache::put($key, $rows, now()->addDay());
+        Cache::put('artist-quick-rows:last', ['base' => $base, 'at' => now()->toIso8601String(), 'rows' => $rows], now()->addHour());
+
+        return $this->rows = $rows;
+    }
+
+    private function buildRows(): array
+    {
+        $open = $this->directory->openNames();
         // gleicher Vergleichsschlüssel wie ein anderer offener Name: erst entscheiden, welche Schreibweise gilt
-        $byKey = array_count_values(array_map(fn ($n) => ArtistNames::compareKey((string) $n), array_keys($open)));
+        $byKey = array_count_values(array_column($open, 'key'));
         $results = PrefetchArtistLookup::results(array_map('strval', array_keys($open)));
         // Kombi-Prüfung (eingetragene Künstler bei Deezer, Spotify, MusicBrainz) – nur gespeicherte Ergebnisse
         $combis = app(CombiCheck::class)->cachedMany(array_values(array_filter(array_map('strval', array_keys($open)), fn ($n) => CombiCheck::applies($n))));
@@ -56,7 +82,7 @@ class ArtistQuickMatch
             [$kind, $reason, $hit] = $this->classify($name, $results[$name] ?? null);
             if ($kind !== 'pending' && $o['status'] === 'similar') {
                 [$kind, $reason] = ['unsure', 'ähnlicher Eintrag im Verzeichnis – im Assistenten zuordnen'];
-            } elseif ($kind !== 'pending' && ($byKey[ArtistNames::compareKey($name)] ?? 0) > 1) {
+            } elseif ($kind !== 'pending' && ($byKey[$o['key']] ?? 0) > 1) {
                 [$kind, $reason] = ['unsure', 'mehrere Schreibweisen im Bestand – im Assistenten entscheiden'];
             } elseif ($kind !== 'pending' && CombiCheck::applies($name)) {
                 // Kombi-Name: eindeutig nur, wenn die Dienste ihn als einen Act eintragen
@@ -184,9 +210,9 @@ class ArtistQuickMatch
                 StoreArtistImage::dispatch($artist->id, $p['image']);
             }
             app(NameConfirmation::class)->evaluate($artist->fresh());
-            if (! $artist->default_genre) {
+            if (! $artist->genres()) {
                 $genre = ArtistGenreSuggestions::best($genres->for($final, $artist->mbid, null, $artist->fresh('aliases'))['proposals']);
-                $genre && $artist->update(['default_genre' => $genre]);
+                $genre && $artist->setGenres([$genre])->save();
             }
         }
         $this->directory->flush();

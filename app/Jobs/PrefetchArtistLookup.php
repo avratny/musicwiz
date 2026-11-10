@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Support\ArtistQuickMatch;
 use App\Support\CombiCheck;
 use App\Support\Lookup;
 use App\Support\Settings;
@@ -87,6 +88,7 @@ class PrefetchArtistLookup implements ShouldQueue
         // MusicBrainz nicht erreichbar: nicht als erledigt merken, beim nächsten Vorladen erneut
         if ($result !== null) {
             Cache::put(self::marker($name), $result, now()->addDays(max(1, (int) config('musicwiz.lookup_cache_days', 10))));
+            Cache::increment(ArtistQuickMatch::RESULTS_BUMP);
         }
     }
 

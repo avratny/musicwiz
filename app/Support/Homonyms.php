@@ -259,9 +259,9 @@ class Homonyms
     {
         $map = app(Genres::class)->map();
         $expand = fn ($g) => array_filter([$g, $map[$g] ?? null]);
-        $matches = array_values(array_filter($persons, fn ($p) => $p->default_genre && array_intersect($expand($p->default_genre), $genres)));
+        $matches = array_values(array_filter($persons, fn ($p) => array_intersect(array_merge(...array_map($expand, $p->genres() ?: [''])), $genres)));
 
-        return count($matches) === 1 ? [$matches[0]->name, 'Genre passt ('.$matches[0]->default_genre.')'] : [null, null];
+        return count($matches) === 1 ? [$matches[0]->name, 'Genre passt ('.implode(', ', $matches[0]->genres()).')'] : [null, null];
     }
 
     /** MusicBrainz: Gehören Lieder des Albums zu einer der Personen? (langsam, ca. 1 Abfrage/s) */

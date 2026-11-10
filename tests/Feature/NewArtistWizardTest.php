@@ -66,9 +66,9 @@ class NewArtistWizardTest extends TestCase
             ->call('wizLookup')
             ->assertSet('wizMbid', 'beck')
             ->assertSee('passt zu euren Liedern')
-            ->assertSee('lädt Bilder, Genres und Schreibweisen') // Treffer zuerst, Rest im zweiten Schritt
+            ->assertSee('lädt Genres und Schreibweisen') // Treffer zuerst, Rest im zweiten Schritt (Bilder erst im Bilddialog)
             ->call('wizLookupDetails')
-            ->assertSet('wizGenre', 'Trance');
+            ->assertSet('wizGenreList', ['Trance']);
 
         // nur eine Abfrage für die Liedprüfung (statt einer je Kandidat und Titel)
         Http::assertSentCount(collect(Http::recorded())->count());
@@ -79,13 +79,13 @@ class NewArtistWizardTest extends TestCase
     {
         Livewire::test(Artists::class, ['tab' => 'unknown'])
             ->set('wizMbid', 'beck')
-            ->set('wizGenre', 'Trance')
+            ->call('wizAddGenre', 'Trance')->call('wizAddGenre', 'Techno')
             ->call('wizSave')
             ->assertSet('wizName', 'Chuck Berry');
 
         $a = Artist::where('name', 'Taucher')->sole();
         $this->assertSame('beck', $a->mbid);
-        $this->assertSame('Trance', $a->default_genre);
+        $this->assertSame(['Trance', 'Techno'], $a->genres(), 'beide Standard-Genres');
     }
 
     public function test_image_from_url_is_checked_shown_and_saved(): void
@@ -103,8 +103,7 @@ class NewArtistWizardTest extends TestCase
         ]);
 
         Livewire::test(Artists::class, ['tab' => 'unknown'])
-            ->set('wizLoaded', true)->set('wizDetailsLoaded', true) // Bildbereich erscheint nach Suche + „Details laden“
-            ->assertSee('oder Bild-URL einfügen')
+            ->assertSee('oder Bild-URL einfügen') // im Bilddialog (immer da, öffnet sofort)
             ->set('wizImageUrl', 'https://example.com/kein-bild')->call('wizLoadImageUrl')->assertHasErrors('wizImageUrl')
             ->set('wizImageUrl', 'https://example.com/taucher.jpg')->call('wizLoadImageUrl')->assertHasNoErrors()
             ->assertSet('wizImage', 'https://example.com/taucher.jpg')
@@ -177,7 +176,7 @@ class NewArtistWizardTest extends TestCase
         Livewire::test(Artists::class, ['tab' => 'unknown'])
             ->call('wizLookup')
             ->assertSet('wizMbid', 'other')
-            ->assertSee('Mit dieser Schreibweise suchen')
+            ->assertSee('bei MusicBrainz und Discogs mit dieser Schreibweise suchen')
             ->call('wizSearchAgain', 'Tauscher')
             ->assertSet('wizFinal', 'Tauscher')
             ->assertSet('wizSearched', 'Tauscher')

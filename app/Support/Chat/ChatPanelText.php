@@ -18,7 +18,7 @@ class ChatPanelText
             'stage_tags' => count((array) ($in['changes'] ?? [])).' Titel: Tags vormerken'.(! empty($in['label']) ? ' – '.$in['label'] : ''),
             'discard_pending' => ! empty($in['all']) ? 'Alle Vormerkungen verwerfen' : 'Vormerkungen verwerfen ('.count((array) ($in['album_ids'] ?? [])).' Alben, '.count((array) ($in['track_ids'] ?? [])).' Titel)',
             'artist_create' => '„'.($in['name'] ?? '?').'“ anlegen'.(! empty($in['mbid']) ? ' mit MusicBrainz-ID' : '').(! empty($in['aliases']) ? ', Schreibweisen: '.$list($in['aliases']) : '').(! empty($in['image_url']) ? ', mit Bild' : ''),
-            'artist_update' => $artist().': '.implode(', ', array_merge(array_map(fn ($k) => $k.' = '.$in[$k], array_values(array_intersect(['mbid', 'discogs_id', 'genre'], array_keys($in)))),
+            'artist_update' => $artist().': '.implode(', ', array_merge(array_map(fn ($k) => $k.' = '.$in[$k], array_values(array_intersect(['mbid', 'discogs_id'], array_keys($in)))), isset($in['genres']) ? ['Genres = '.$list($in['genres'])] : [],
                 array_key_exists('confirmed', $in) ? [$in['confirmed'] ? '„Name passt“ bestätigen' : '„Name passt“ zurücknehmen'] : [])),
             'artist_rename' => $artist().' → „'.($in['name'] ?? '?').'“',
             'artist_merge' => count((array) ($in['ids'] ?? [])).' Eintrag/Einträge gehen in „'.$artist().'“ auf',

@@ -27,7 +27,7 @@ class ArtistDirectory
 
     public function flush(): void
     {
-        $this->exact = $this->byKey = $this->ambiguous = $this->names = $this->invertMode = null;
+        $this->exact = $this->byKey = $this->ambiguous = $this->names = $this->openNames = $this->invertMode = null;
         ArtistNames::flushProtected();
     }
 
@@ -232,6 +232,32 @@ class ArtistDirectory
     }
 
     private ?array $names = null;
+
+    private ?array $openNames = null;
+
+    /**
+     * Noch nicht erfasste Namen aus dem Bestand (Status neu bzw. ähnlich), häufigste zuerst – mit Vergleichsschlüssel.
+     * Einmal berechnet und gespeichert, bis sich Bestand oder Verzeichnis ändern (vorher: bei jedem Seitenaufbau
+     * mehrmals alle Namen geprüft).
+     *
+     * @return array<string, array{n: int, status: string, key: string}>
+     */
+    public function openNames(): array
+    {
+        return $this->openNames ??= Cache::remember('artist-open-names:v1:'.DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory(), now()->addDays(7), function () {
+            $counts = $this->namesInCollection();
+            arsort($counts);
+            $out = [];
+            foreach ($counts as $name => $n) {
+                $status = $this->check((string) $name)['status'];
+                if (in_array($status, ['new', 'similar'], true)) {
+                    $out[(string) $name] = ['n' => (int) $n, 'status' => $status, 'key' => ArtistNames::compareKey((string) $name)];
+                }
+            }
+
+            return $out;
+        });
+    }
 
     /** @return array<string, int> */
     /** Platzhalter („Unknown Artist“) bzw. Sampler-Schreibweise („Sampler“, „Various Artists“, „V.A.“) – kein Künstler. */
@@ -488,7 +514,7 @@ class ArtistDirectory
                 continue;
             }
             DB::transaction(function () use ($target, $other, $imageDir, $files) {
-                foreach (['mbid', 'discogs_id', 'default_genre', 'disambiguation'] as $field) {
+                foreach (['mbid', 'discogs_id', 'default_genre', 'default_genres', 'disambiguation'] as $field) {
                     if (blank($target->{$field}) && filled($other->{$field})) {
                         $target->{$field} = $other->{$field};
                     }
@@ -545,7 +571,7 @@ class ArtistDirectory
             $old = Artist::where('name', $v)->where('id', '!=', $artist->id)->first();
             if ($old) {
                 ArtistAlias::where('artist_id', $old->id)->update(['artist_id' => $artist->id]);
-                $artist->fill(array_filter($artist->only(['mbid', 'discogs_id', 'default_genre'])) + array_filter($old->only(['mbid', 'discogs_id', 'default_genre'])))->save();
+                $artist->fill(array_filter($artist->only(['mbid', 'discogs_id', 'default_genre', 'default_genres'])) + array_filter($old->only(['mbid', 'discogs_id', 'default_genre', 'default_genres'])))->save();
                 $old->delete();
             }
         }

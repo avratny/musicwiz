@@ -34,7 +34,11 @@ class ArtistActions
         $artist = Artist::where('name', $name)->first();
         $created = ! $artist;
         $artist ??= Artist::create(['name' => $name]);
-        $artist->fill(array_filter(['mbid' => $artist->mbid ?: $mbid, 'default_genre' => $artist->default_genre ?: $genre]))->save();
+        $artist->fill(array_filter(['mbid' => $artist->mbid ?: $mbid]));
+        if (! $artist->genres() && $genre) {
+            $artist->setGenres((array) $genre); // eins oder eine Liste (bis zu zwei)
+        }
+        $artist->save();
         $added = [];
         foreach ($aliases as $alias) {
             if ($this->addAliasQuietly($artist, (string) $alias)) {

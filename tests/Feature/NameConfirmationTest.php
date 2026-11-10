@@ -55,9 +55,9 @@ class NameConfirmationTest extends TestCase
         $this->combi('Beam & Yanou', 'collab', ['Deezer' => 'collab', 'Spotify' => 'collab']);
         $version = DataVersion::directory();
 
-        $page = Livewire::test(Artists::class)->assertSee('1 wahrscheinlich Zusammenarbeit')->assertSee('Noch nicht geprüft (1)')
+        $page = Livewire::test(Artists::class)->assertViewHas('filterCounts', fn ($c) => $c['collab'] === 1 && $c['unconfirmed'] === 1)
             ->call('select', $by->id)->assertSee('Name passt')->call('setConfirmed', true)
-            ->assertSee('von dir bestätigt')->assertDontSee('wahrscheinlich Zusammenarbeit')->assertSee('Noch nicht geprüft (0)');
+            ->assertSee('von dir bestätigt')->assertViewHas('filterCounts', fn ($c) => $c['collab'] === 0 && $c['unconfirmed'] === 0);
         $this->assertSame('manual', $by->fresh()->name_confirmed);
         $this->assertSame($version, DataVersion::directory(), 'Häkchen ist keine Verzeichnisänderung (Aufräumen rechnet nicht neu)');
 

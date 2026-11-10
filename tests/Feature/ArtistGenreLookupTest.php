@@ -86,7 +86,7 @@ class ArtistGenreLookupTest extends TestCase
             ->call('wizLookup')
             ->assertSet('wizMbid', 'beck')
             ->call('wizLookupDetails')
-            ->assertSet('wizGenre', 'Trance')
+            ->assertSet('wizGenreList', ['Trance'])
             ->assertSee('MusicBrainz:');
     }
 
@@ -98,7 +98,7 @@ class ArtistGenreLookupTest extends TestCase
         Livewire::test(Artists::class)->call('select', $a->id)->call('lookupGenres')
             ->assertSet('genreProposals.0.source', 'MusicBrainz')
             ->assertSet('genreProposals.0.genre', 'Trance')
-            ->call('$set', 'form.default_genre', 'Trance');
+            ->call('addGenre', 'Trance')->call('saveArtist');
 
         $this->assertSame('Trance', $a->fresh()->default_genre);
     }

@@ -73,7 +73,7 @@ class MusicBrainzAliasesTest extends TestCase
         $page->call('removeAlias', ArtistAlias::where('alias', 'Bobo')->value('id'))
             ->call('loadMusicBrainzAliases')
             ->assertSee('Keine neuen Schreibweisen bei MusicBrainz')
-            ->assertSee('Gelöscht, wird nicht wieder geholt');
+            ->assertSee('Gelöscht:')->assertSee('Bobo');
         $this->assertSame(['D.J. BoBo'], $a->aliases()->pluck('alias')->all());
         $this->assertSame([], app(ArtistDirectory::class)->importMusicBrainzAliases($a, ['bobo']), 'auch in anderer Groß/Kleinschreibung');
 
@@ -96,7 +96,7 @@ class MusicBrainzAliasesTest extends TestCase
         $this->fakeBobo();
         $a = Artist::create(['name' => 'DJ BoBo']);
 
-        Livewire::test(Artists::class)->call('select', $a->id)->call('lookupMusicBrainz')->call('useMusicBrainz', 0)
+        Livewire::test(Artists::class)->call('select', $a->id)->call('lookupMusicBrainz')->call('useMusicBrainz', 0)->call('saveArtist')
             ->assertSee('2 Schreibweise(n) von MusicBrainz übernommen');
 
         $this->assertEqualsCanonicalizing(['Bobo', 'D.J. BoBo'], $a->aliases()->pluck('alias')->all());

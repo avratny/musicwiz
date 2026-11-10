@@ -108,7 +108,9 @@ class ArtistQuickMatchTest extends TestCase
             ->assertSee('einzeln erfassen …')->assertSeeLivewire(NewArtistModal::class); // Dialog statt Tabwechsel
         Livewire::test(NewArtistModal::class)->dispatch('open-new-artist', name: 'Madonna')->assertSet('open', true)->assertSet('wizName', 'Madonna');
 
-        $page->set('quickKind', 'sure')->assertSee('https://cdn.test/yanou-m.jpg')->assertDontSee('https://cdn.test/fan-m.jpg');
+        $page->set('quickKind', 'sure')->set('quickQ', 'ac/')->assertSee('AC/DC')->assertDontSee('Lied „King of My Castle“ gefunden') // Suche (auch im MusicBrainz-Namen)
+            ->set('quickQ', 'zzz')->assertSee('Kein Name passt zur Suche.')->set('quickQ', '');
+        $page->assertSee('https://cdn.test/yanou-m.jpg')->assertDontSee('https://cdn.test/fan-m.jpg');
         $this->assertFalse($page->get('quickTake')[md5('Yanou')], 'nichts vorab angehakt');
         $page->call('quickPickImage', md5('Yanou'), 'https://cdn.test/yanou-xl.jpg')
             ->assertSet('quickTake.'.md5('Yanou'), true) // Bild wählen hakt an

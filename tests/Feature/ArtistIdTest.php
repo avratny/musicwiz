@@ -24,20 +24,23 @@ class ArtistIdTest extends TestCase
         $cc = Artist::create(['name' => 'C.C. Catch']);
         $ateens = Artist::create(['name' => 'A-Teens']);
 
-        $page = Livewire::test(Artists::class)->call('select', $cc->id)->call('lookupMusicBrainz')->assertSee('German-Dutch singer')->assertSee('Treffer bei MusicBrainz')
-            ->call('useMusicBrainz', 0)->assertSee('MusicBrainz-ID gespeichert');
-        $this->assertSame('mbid-cc', $cc->fresh()->mbid, 'ohne „Speichern“ in der Datenbank');
+        // ein „Suchen“ für fehlende IDs; Treffer übernehmen füllt das Formular, „Speichern“ sichert
+        $page = Livewire::test(Artists::class)->call('select', $cc->id)->assertSee('Suchen')->call('searchIds')->assertSee('German-Dutch singer')->assertSee('Klick übernimmt die ID')
+            ->call('useMusicBrainz', 0)->assertSee('MusicBrainz-ID übernommen')->assertSet('form.mbid', 'mbid-cc');
+        $this->assertNull($cc->fresh()->mbid, 'erst mit „Speichern“');
+        $page->call('saveArtist');
+        $this->assertSame('mbid-cc', $cc->fresh()->mbid);
         $this->assertSame('C.C. Catch', $cc->fresh()->name);
 
         // abweichende Schreibweise: ID gespeichert, Name nur vorgeschlagen
         $page->call('select', $ateens->id)->call('lookupMusicBrainz')->call('useMusicBrainz', 0)
-            ->assertSet('form.name', 'A★Teens')->assertSee('mit „Speichern“ bestätigen');
-        $this->assertSame('mbid-ac', $ateens->fresh()->mbid);
+            ->assertSet('form.name', 'A★Teens')->assertSee('ins Namensfeld übernommen');
         $this->assertSame('A-Teens', $ateens->fresh()->name, 'Umbenennung erst mit Speichern');
 
-        // von Hand eingetippt
-        $page->set('form.discogs_id', '12345');
+        // von Hand eingetippt, beide IDs da: „Suchen“ verschwindet
+        $page->set('form.discogs_id', '12345')->call('saveArtist')->assertDontSee('wire:click="searchIds"', false);
         $this->assertSame('12345', $ateens->fresh()->discogs_id);
+        $this->assertSame('mbid-ac', $ateens->fresh()->mbid);
     }
 
     public function test_musicbrainz_falls_back_to_free_search(): void
