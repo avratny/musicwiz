@@ -64,8 +64,8 @@ Das Image wird bei jedem Push von GitHub Actions gebaut: `ghcr.io/avratny/musicw
 4. **Deploy.** Danach läuft MusicWiz unter `http://<server>:8000`.
 5. In der App unter **Einstellungen** Basisordner, Inbox, Papierkorb, Kategorien und Namensschema prüfen, dann **Inbox → Scannen**.
 
-Der Stack besteht aus drei Containern aus demselben Image: `app` (Oberfläche), `queue` (Verschieben, Tags schreiben, Scans)
-und `downloads` (YouTube). Der Anwendungsschlüssel (`APP_KEY`) wird beim ersten Start erzeugt und in `./data` abgelegt.
+Der Stack besteht aus vier Containern aus demselben Image: `app` (Oberfläche), `queue` (Verschieben, Tags schreiben, Scans),
+`research` (Nachschlagen, Künstler übernehmen, Audiodaten prüfen) und `downloads` (YouTube). Der Anwendungsschlüssel (`APP_KEY`) wird beim ersten Start erzeugt und in `./data` abgelegt.
 
 ### Daten und Sicherung
 
@@ -155,7 +155,7 @@ docker compose exec app vendor/bin/pint       # Code formatieren
 ```
 
 In der Entwicklung ist `./demofiles` im Container als `/music` eingebunden (`inbox`, `library`, `blackhole`); der Ordner ist
-nicht im Repository. Container: `app` (FrankenPHP), `queue` und `downloads` (Jobs, Queue auf SQLite), `assets` (Vite/Tailwind im Watch-Modus).
+nicht im Repository. Container: `app` (FrankenPHP), `queue`, `research` und `downloads` (Jobs, Queue auf SQLite), `assets` (Vite/Tailwind im Watch-Modus).
 
 Stack: Laravel 13, Livewire 4, Tailwind 4, SQLite; Tags über mutagen (`tools/tagtool.py`) und getID3; yt-dlp + ffmpeg für YouTube.
 

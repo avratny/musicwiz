@@ -80,6 +80,12 @@ class Integrity
             $stat = @stat($path);
             if ($stat) { // sonst inzwischen verschoben/gelöscht – der nächste Scan bereinigt den Index
                 $error = $this->check($path);
+                // während der Prüfung verschoben (Dateiaktionen laufen im eigenen Worker gleichzeitig): kein Fehler der Datei
+                if ($error !== null && ! is_file($path)) {
+                    $done++;
+
+                    continue;
+                }
                 $errors += $error ? 1 : 0;
                 IntegrityResult::updateOrCreate(['path' => $path], ['mtime' => $stat['mtime'], 'size' => $stat['size'], 'ok' => $error === null, 'error' => $error]);
             }

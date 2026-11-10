@@ -41,7 +41,7 @@ services:
       start_period: 30s
     command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public"]
 
-  # Verschieben, Tags schreiben, Scans
+  # Verschieben, Tags schreiben, Scans – genau ein Worker, damit Dateiaktionen strikt nacheinander laufen
   queue:
     <<: *app
     environment:
@@ -49,9 +49,24 @@ services:
       RUN_MIGRATIONS: "0"
     healthcheck:
       disable: true
-    command: ["php", "artisan", "queue:work", "--queue=default,research", "--sleep=1", "--tries=1", "--timeout=0"]
+    command: ["php", "artisan", "queue:work", "--queue=default", "--sleep=1", "--tries=1", "--timeout=0"]
     # bei Update/Neustart die laufende Aktion zu Ende bringen lassen statt sie nach 10 s hart abzubrechen
     stop_grace_period: 2m
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # Nachschlagen (MusicBrainz, Spotify …), Künstler übernehmen, Audiodaten prüfen – eigener Worker, damit Einordnen nicht
+  # auf die Recherche wartet und umgekehrt; mehr als einer bringt nichts (MusicBrainz erlaubt nur eine Abfrage pro Sekunde)
+  research:
+    <<: *app
+    environment:
+      <<: *env
+      RUN_MIGRATIONS: "0"
+    healthcheck:
+      disable: true
+    command: ["php", "artisan", "queue:work", "--queue=research", "--sleep=1", "--tries=1", "--timeout=0"]
+    stop_grace_period: 1m
     depends_on:
       app:
         condition: service_healthy
