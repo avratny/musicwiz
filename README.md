@@ -133,6 +133,7 @@ Schnittstelle steht im Protokoll („Schnittstelle: …“).
 | `GET /api/albums`, `/api/albums/{id}`, `/api/tracks`, `/api/artists`, `/api/history`, `/api/stats` | lesen |
 | `POST /api/artists`, `/api/artists/{id}` (`/rename`, `/merge`, `/aliases`, `/split`) | Künstlerverzeichnis pflegen wie in der App – wirkt sofort, Tags werden nur vorgemerkt |
 | `GET/POST /api/quick`, `POST /api/quick/split`, `GET/POST /api/combined` | Schnell erfassen und Kombi-Vorschläge |
+| `GET /api/splits`, `DELETE /api/splits/{id}` | gemerkte Trennungen ansehen bzw. aufheben |
 | `GET /api/status` | laufende Vorgänge, Warteschlange, fehlgeschlagene Jobs, Speicherplatz, Ordnerrechte, PHP-Grenzen |
 | `GET /api/logs?entries=50&level=warning` | Fehlerprotokoll (neueste zuerst, Zugangsdaten geschwärzt) |
 | `GET /api/history/{id}?errors=1` | eine Aktion mit allen Einträgen bzw. nur Fehlern/Hinweisen |

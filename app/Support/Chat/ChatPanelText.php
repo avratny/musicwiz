@@ -3,6 +3,7 @@
 namespace App\Support\Chat;
 
 use App\Models\Artist;
+use App\Models\ArtistSplit;
 
 /** Ein Satz zu einem Änderungsvorschlag des Assistenten (die Details stehen darunter aufklappbar). */
 class ChatPanelText
@@ -27,6 +28,7 @@ class ChatPanelText
             'quick_split' => '„'.($in['name'] ?? '?').'“ trennen'.(! empty($in['parts']) ? ' → '.$list($in['parts']) : ''),
             'combined_apply' => ! empty($in['all']) ? 'Alle Kombi-Vorschläge übernehmen' : 'Kombi-Vorschläge übernehmen: '.$list($in['names'] ?? []),
             'combi_start' => 'Kombi-Prüfung aller Kombi-Namen im Hintergrund starten',
+            'split_remove' => ($s = ArtistSplit::find((int) ($in['id'] ?? 0))) ? '„'.$s->name.'“ nicht mehr trennen ('.$list($s->parts).')' : 'Trennung aufheben',
             default => ChatTools::label($tool),
         };
     }

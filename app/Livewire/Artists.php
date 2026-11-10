@@ -411,7 +411,9 @@ class Artists extends Component
     /** Gemerkte Trennung („Yanou & Liz“ → Yanou, Liz) aufheben. */
     public function deleteSplit(int $id): void
     {
-        ArtistSplit::whereKey($id)->delete();
+        if ($split = ArtistSplit::find($id)) {
+            app(ArtistActions::class)->removeSplit($split);
+        }
     }
 
     /** Verzeichnis: nur Einträge zeigen, die laut Kombi-Prüfung eine Zusammenarbeit sind */

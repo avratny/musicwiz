@@ -5,6 +5,7 @@ namespace App\Support\Chat;
 use App\Http\Controllers\ApiController;
 use App\Models\Album;
 use App\Models\Artist;
+use App\Models\ArtistSplit;
 use App\Models\Operation;
 use App\Models\PendingChange;
 use App\Support\Lookup;
@@ -51,6 +52,7 @@ class ChatTools
             'artist' => ['Ein Eintrag im Künstlerverzeichnis: Schreibweisen, Titel im Bestand, Trennvorschlag, Mitglieder laut MusicBrainz, Kombi-Prüfung, TheAudioDB.', ['id' => $int('Künstler-ID')], ['id'], false, 'liest einen Künstler'],
             'quick_list' => ['„Schnell erfassen“: noch nicht erfasste Namen mit MusicBrainz-Treffer, Kombi-Prüfung und Bildvorschlägen.', ['kind' => $str('sure|name|unsure|pending (Standard sure)'), 'limit' => $int('Standard 30'), 'offset' => $int('Standard 0')], [], false, 'liest „Schnell erfassen“'],
             'combined_list' => ['Kombi-Namen (&, und, Komma …) aus dem Aufräumen mit Vorschlag (trennen / ein Künstler).', [], [], false, 'liest Kombi-Namen'],
+            'splits' => ['Gemerkte Trennungen von Kombi-Namen („Beam & Yanou“ → Beam · Yanou).', ['q' => $str('Suchtext')], [], false, 'liest gemerkte Trennungen'],
             'combi_result' => ['Gespeichertes Ergebnis der Kombi-Prüfung eines Namens: Act oder Zusammenarbeit, mit den je Dienst eingetragenen Künstlern.', ['name' => $str('Kombi-Name')], ['name'], false, 'liest eine Kombi-Prüfung'],
             'combi_check' => ['Kombi-Prüfung jetzt ausführen (fragt Deezer, Spotify, MusicBrainz; dauert ein paar Sekunden je Name; max. 10).', ['names' => $list('Kombi-Namen'), 'fresh' => $bool('auch schon geprüfte neu')], ['names'], false, 'prüft Kombi-Namen bei den Diensten'],
             'wikipedia_search' => ['Wikipedia durchsuchen (frei). Für Künstler mit MusicBrainz-ID besser wikipedia_article mit artist_id – dann ist es sicher der richtige Artikel.', ['query' => $str('Suchtext'), 'lang' => $str('de|en (Standard de)')], ['query'], false, 'sucht bei Wikipedia'],
@@ -73,6 +75,7 @@ class ChatTools
             'quick_create' => ['Aus „Schnell erfassen“ anlegen (nur Namen der Art sure/name).', ['picks' => $list('Auswahl', ['type' => 'object', 'properties' => ['name' => ['type' => 'string'], 'mb_spelling' => ['type' => 'boolean'], 'image' => ['type' => 'string']], 'required' => ['name']])], ['picks'], true, 'Künstler anlegen (Schnell erfassen)'],
             'quick_split' => ['Offenen Kombi-Namen (nicht im Verzeichnis) trennen.', ['name' => $str('Kombi-Name'), 'parts' => $list('Einzelkünstler')], ['name'], true, 'Kombi-Namen trennen'],
             'combined_apply' => ['Kombi-Vorschläge übernehmen (trennen bzw. als ein Künstler anlegen).', ['names' => $list('Namen'), 'all' => $bool('alle Vorschläge')], [], true, 'Kombi-Vorschläge übernehmen'],
+            'split_remove' => ['Gemerkte Trennung aufheben (der Kombi-Name gilt wieder als ein Name; geschriebene Tags bleiben, vorgemerkte ggf. mit discard_pending verwerfen).', ['id' => $int('ID der Trennung (aus „splits“)')], ['id'], true, 'Trennung aufheben'],
             'combi_start' => ['Kombi-Prüfung aller Kombi-Namen im Hintergrund starten.', ['fresh' => $bool('auch schon geprüfte neu')], [], true, 'Kombi-Prüfung starten'],
         ];
     }
@@ -139,6 +142,8 @@ class ChatTools
             'artist' => $this->api('artist', [], ['artist' => Artist::findOrFail($id())]),
             'quick_list' => $this->api('quick', ['kind' => $in['kind'] ?? 'sure', 'limit' => (int) ($in['limit'] ?? 30), 'offset' => (int) ($in['offset'] ?? 0)]),
             'combined_list' => $this->api('combined'),
+            'splits' => $this->api('splits', ['q' => $in['q'] ?? '']),
+            'split_remove' => $this->api('deleteSplit', [], ['split' => ArtistSplit::findOrFail($id())], 'DELETE'),
             'combi_result' => $this->api('combi', ['name' => (string) $in['name']]),
             'combi_check' => $this->api('combiCheck', ['names' => (array) $in['names'], 'fresh' => (bool) ($in['fresh'] ?? false)], [], 'POST'),
             'wikipedia_search' => ['results' => app(Lookup::class)->wikipediaSearch((string) $in['query'], (string) ($in['lang'] ?? 'de'))],

@@ -29,6 +29,8 @@ Route::post('/quick', [ApiController::class, 'quickSave']);
 Route::post('/quick/split', [ApiController::class, 'quickSplit']);
 Route::get('/combined', [ApiController::class, 'combined']);
 Route::post('/combined', [ApiController::class, 'combinedApply']);
+Route::get('/splits', [ApiController::class, 'splits']);
+Route::delete('/splits/{split}', [ApiController::class, 'deleteSplit']);
 Route::get('/combi', [ApiController::class, 'combi']);
 Route::post('/combi', [ApiController::class, 'combiCheck']);
 Route::post('/combi/start', [ApiController::class, 'combiStart']);

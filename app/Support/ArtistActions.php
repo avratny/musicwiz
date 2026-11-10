@@ -165,6 +165,22 @@ class ArtistActions
             'new' => array_values(array_filter($parts, fn ($p) => $this->directory->check($p)['status'] === 'new'))];
     }
 
+    /**
+     * Gemerkte Trennung aufheben („Nicht mehr trennen“): der Kombi-Name gilt wieder als ein Name. Schon geschriebene
+     * ARTISTS-Tags bleiben; noch vorgemerkte lassen sich verwerfen.
+     *
+     * @return array{name: string, parts: list<string>}
+     */
+    public function removeSplit(ArtistSplit $split): array
+    {
+        $result = ['name' => $split->name, 'parts' => (array) $split->parts];
+        $split->delete();
+        $this->directory->flush();
+        RefreshCleanup::request();
+
+        return $result;
+    }
+
     private function addAliasQuietly(Artist $artist, string $alias): bool
     {
         $alias = trim($alias);

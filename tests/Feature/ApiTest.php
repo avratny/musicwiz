@@ -4,10 +4,13 @@ namespace Tests\Feature;
 
 use App\Models\Album;
 use App\Models\Artist;
+use App\Models\ArtistSplit;
 use App\Models\Operation;
 use App\Models\PendingChange;
 use App\Models\RejectedAlias;
 use App\Models\Track;
+use App\Support\ArtistNames;
+use App\Support\Chat\ChatTools;
 use App\Support\Scanner;
 use App\Support\Settings;
 use App\Support\TagTool;
@@ -161,5 +164,18 @@ class ApiTest extends TestCase
         $this->assertNull(Operation::first());
         $this->assertSame('Gold (Remaster)', $this->fileAlbum('03 - Fernando'));
         $this->postJson('/api/pending/write')->assertStatus(404);
+    }
+
+    public function test_splits_can_be_listed_and_removed(): void
+    {
+        $split = ArtistSplit::remember('Beam & Yanou', ['Beam', 'Yanou']);
+        $this->assertSame(['Beam', 'Yanou'], ArtistNames::split('Beam & Yanou'));
+        $this->getJson('/api/splits?q=Beam')->assertOk()->assertJsonPath('splits.0.name', 'Beam & Yanou')->assertJsonPath('splits.0.parts', ['Beam', 'Yanou']);
+
+        $this->deleteJson('/api/splits/'.$split->id)->assertOk()->assertJsonPath('ok', true)->assertJsonPath('name', 'Beam & Yanou');
+        $this->assertSame(0, ArtistSplit::count());
+        $this->assertSame(['Beam & Yanou'], ArtistNames::split('Beam & Yanou'), 'gilt wieder als ein Name');
+        $this->deleteJson('/api/splits/999')->assertNotFound();
+        $this->assertTrue(ChatTools::mutating('split_remove'));
     }
 }

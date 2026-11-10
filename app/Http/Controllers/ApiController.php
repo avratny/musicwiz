@@ -8,6 +8,7 @@ use App\Jobs\PrefetchUnknownArtists;
 use App\Jobs\RefreshCleanup;
 use App\Models\Album;
 use App\Models\Artist;
+use App\Models\ArtistSplit;
 use App\Models\HistoryEntry;
 use App\Models\Operation;
 use App\Models\PendingChange;
@@ -79,6 +80,8 @@ class ApiController extends Controller
                 'POST /api/quick' => '{"picks": [{"name", "mb_spelling"?: true, "image"?: url}]} – anlegen',
                 'POST /api/quick/split' => '{"name", "parts"?: [..]} – offenen Kombi-Namen trennen',
                 'GET /api/combined' => 'Kombi-Namen (&, und, Komma) mit Vorschlag',
+                'GET /api/splits?q=' => 'gemerkte Trennungen („Beam & Yanou“ → Beam · Yanou)',
+                'DELETE /api/splits/{id}' => 'Trennung aufheben – der Kombi-Name gilt wieder als ein Name (geschriebene Tags bleiben)',
                 'GET /api/combi?name=' => 'Kombi-Prüfung eines Namens (gespeichertes Ergebnis): Act oder Zusammenarbeit, mit den je Dienst eingetragenen Künstlern',
                 'POST /api/combi' => '{"names": [..], "fresh"?: true} – jetzt prüfen (fragt Deezer, Spotify, MusicBrainz; max. 10 Namen)',
                 'POST /api/combi/start' => '{"fresh"?: true} – alle Kombi-Einträge im Verzeichnis im Hintergrund prüfen',
@@ -398,6 +401,19 @@ class ApiController extends Controller
         $names = $request->boolean('all') ? array_column($checks->displayFindings('combined_manual')[0], 'new_artist') : (array) $request->input('names', []);
 
         return $this->change(fn () => $actions->applyCombined($names), 'Kombi-Vorschläge übernehmen', ['names' => $request->boolean('all') ? 'alle' : $names]);
+    }
+
+    public function splits(Request $request): JsonResponse
+    {
+        $q = trim((string) $request->input('q'));
+
+        return $this->json(['splits' => ArtistSplit::orderBy('name')->when($q !== '', fn ($w) => $w->where('name', 'like', "%$q%"))->get()
+            ->map(fn (ArtistSplit $s) => ['id' => $s->id, 'name' => $s->name, 'parts' => (array) $s->parts])->all()]);
+    }
+
+    public function deleteSplit(ArtistSplit $split, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => $actions->removeSplit($split), 'Trennung aufheben', ['id' => $split->id, 'name' => $split->name]);
     }
 
     public function combi(Request $request, CombiCheck $check): JsonResponse
