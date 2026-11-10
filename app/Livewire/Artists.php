@@ -4,7 +4,6 @@ namespace App\Livewire;
 
 use App\Jobs\ImportMusicBrainzAliases;
 use App\Jobs\PrefetchUnknownArtists;
-use App\Jobs\RefreshCleanup;
 use App\Jobs\ResearchArtistGroup;
 use App\Livewire\Concerns\NewArtistWizard;
 use App\Models\Album;
@@ -13,6 +12,7 @@ use App\Models\ArtistAlias;
 use App\Models\ArtistSplit;
 use App\Models\RejectedAlias;
 use App\Models\Track;
+use App\Support\ArtistActions;
 use App\Support\ArtistDirectory;
 use App\Support\ArtistGenreSuggestions;
 use App\Support\ArtistGroupAnalyzer;
@@ -29,7 +29,6 @@ use App\Support\PendingChanges;
 use App\Support\Settings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Title;
@@ -297,15 +296,13 @@ class Artists extends Component
         // Namensänderung: Bild mit umbenennen, alter Name wird Variante
         $staged = 0;
         if ($name !== $a->name) {
-            $oldName = $a->name;
             try {
-                $a = app(ArtistDirectory::class)->rename($a, $name);
+                ['artist' => $a, 'staged' => $staged] = app(ArtistActions::class)->rename($a, $name);
             } catch (\Throwable $e) {
                 $this->lookupError = 'Nicht umbenannt: '.$e->getMessage();
 
                 return;
             }
-            $staged = app(PendingChanges::class)->stageForNames([$oldName, $name], 'Künstler umbenannt');
         }
         $a->fill([
             'mbid' => trim($this->form['mbid'] ?? '') ?: null,
@@ -371,8 +368,8 @@ class Artists extends Component
         if (! $target || ! $ids) {
             return;
         }
-        $result = $directory->merge($target, $ids);
-        $staged = $result['merged'] ? app(PendingChanges::class)->stageForNames([...$result['merged'], $target->name], 'Künstler zusammengeführt') : 0;
+        $result = app(ArtistActions::class)->merge($target, $ids);
+        $staged = $result['staged'];
         $msg = $result['merged']
             ? '„'.implode('“, „', $result['merged']).'“ '.(count($result['merged']) === 1 ? 'ist' : 'sind').' jetzt Schreibweise von „'.$target->name.'“.'.PendingChanges::note($staged)
             : 'Nichts zusammengeführt.';
@@ -498,39 +495,24 @@ class Artists extends Component
      * Eintrag ist eine Zusammenarbeit („Beam & Yanou“): aus dem Verzeichnis nehmen, Trennung merken (auch für seine
      * Kombi-Schreibweisen wie „Beam and Yanou“), Tags der Titel vormerken und die Einzelnamen zum Erfassen anbieten.
      */
-    public function saveSplitInto(ArtistDirectory $directory): void
+    public function saveSplitInto(ArtistActions $actions): void
     {
-        $a = Artist::with('aliases')->find($this->selected);
+        $a = Artist::find($this->selected);
         if (! $a || ! $this->splitInto) {
             return;
         }
-        $parts = array_values(array_unique(array_filter(array_map('trim', $this->splitInto['parts']),
-            fn ($p) => $p !== '' && mb_strtolower($p) !== mb_strtolower($a->name))));
-        if (count($parts) < 2) {
-            $this->splitInto['error'] = 'Mindestens zwei Künstler angeben.';
+        try {
+            $r = $actions->splitInto($a, $this->splitInto['parts']);
+        } catch (\InvalidArgumentException $e) {
+            $this->splitInto['error'] = $e->getMessage();
 
             return;
         }
-        $names = [$a->name, ...$a->aliases->pluck('alias')->filter(fn ($n) => ArtistNames::looksCollaboration($n))->all()];
-        DB::transaction(function () use ($a, $names, $parts) {
-            foreach ($names as $n) {
-                ArtistSplit::remember($n, $parts);
-            }
-            // Bild gehört zu keinem Einzelkünstler: in den Papierkorb (lässt sich von dort zurückholen)
-            $dir = rtrim((string) app(Settings::class)->get('artist_images'), '/');
-            if ($a->image && is_file($dir.'/'.$a->image)) {
-                rescue(fn () => app(FileOps::class)->trash($dir.'/'.$a->image), report: false);
-            }
-            $a->delete();
-        });
-        $directory->flush();
-        $staged = app(PendingChanges::class)->stageForNames([...$names, ...$parts], 'Trennen');
-        RefreshCleanup::request();
-        $this->splitNew = array_values(array_filter($parts, fn ($p) => $directory->check($p)['status'] === 'new'));
+        $this->splitNew = $r['new'];
         $this->splitInto = null;
         $this->selected = null;
         $this->form = [];
-        session()->flash('status', '„'.$a->name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $parts)).' getrennt und steht nicht mehr im Verzeichnis.'.PendingChanges::note($staged));
+        session()->flash('status', '„'.$a->name.'“ wird künftig in '.implode(', ', array_map(fn ($p) => '„'.$p.'“', $r['parts'])).' getrennt und steht nicht mehr im Verzeichnis.'.PendingChanges::note($r['staged']));
     }
 
     public function deleteArtist(): void
@@ -547,18 +529,15 @@ class Artists extends Component
         if (! $a || $alias === '' || $alias === $a->name) {
             return;
         }
-        // gehört die Schreibweise schon einem anderen Künstler, nicht still umhängen
-        $taken = ArtistAlias::with('artist')->where('alias', $alias)->where('artist_id', '!=', $a->id)->first();
-        if ($taken) {
-            $this->addError('newAlias', '„'.$alias.'“ ist schon eine Schreibweise von „'.($taken->artist?->name ?? '?').'“ – dort zuerst entfernen.');
+        try {
+            $staged = app(ArtistActions::class)->addAlias($a, $alias)['staged'];
+        } catch (\InvalidArgumentException $e) {
+            $this->addError('newAlias', $e->getMessage());
 
             return;
         }
         $this->resetErrorBag('newAlias');
-        ArtistAlias::updateOrCreate(['alias' => $alias], ['artist_id' => $a->id]);
-        RejectedAlias::forget($a->id, $alias); // von Hand wieder eingetragen: nicht mehr abgelehnt
         $this->newAlias = '';
-        $staged = app(PendingChanges::class)->stageForNames([$alias, $a->name], 'Schreibweise');
         if ($staged) {
             session()->flash('status', '„'.$alias.'“ ist jetzt eine Schreibweise von „'.$a->name.'“.'.PendingChanges::note($staged));
         }

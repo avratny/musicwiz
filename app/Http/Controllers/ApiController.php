@@ -11,8 +11,15 @@ use App\Models\HistoryEntry;
 use App\Models\Operation;
 use App\Models\PendingChange;
 use App\Models\Track;
+use App\Support\ArtistActions;
+use App\Support\ArtistDirectory;
+use App\Support\ArtistGenreSuggestions;
+use App\Support\ArtistNames;
+use App\Support\ArtistQuickMatch;
 use App\Support\CleanupChecks;
+use App\Support\CombinedSuggestions;
 use App\Support\InboxWatch;
+use App\Support\Lookup;
 use App\Support\PendingChanges;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -20,6 +27,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 
 /**
  * Schnittstelle zum Prüfen und Vormerken (z. B. für eine Analyse von außen): lesen und Änderungen vormerken bzw.
@@ -55,6 +64,19 @@ class ApiController extends Controller
                 'GET /api/albums/{id}' => 'Album mit allen Titeln, Tags und Vormerkungen',
                 'GET /api/tracks?q=&limit=100' => 'Titel suchen (Interpret, Titel, Album, Pfad)',
                 'GET /api/artists?q=&limit=100' => 'Künstlerverzeichnis mit Schreibweisen',
+                'GET /api/artists/{id}' => 'ein Eintrag mit Schreibweisen, Titeln im Bestand und Mitgliedern laut MusicBrainz',
+                'POST /api/artists' => '{"name", "mbid"?, "genre"?, "aliases"?: [..], "image_url"?} – anlegen bzw. ergänzen',
+                'POST /api/artists/{id}' => '{"mbid"?, "discogs_id"?, "genre"?} – Felder setzen',
+                'POST /api/artists/{id}/rename' => '{"name"} – umbenennen (alter Name wird Schreibweise)',
+                'POST /api/artists/{id}/merge' => '{"ids": [..]} – „Ist derselbe wie …“',
+                'POST /api/artists/{id}/aliases' => '{"alias"} – Schreibweise hinzufügen',
+                'DELETE /api/artists/{id}/aliases' => '{"alias"} – Schreibweise entfernen (wird gemerkt)',
+                'POST /api/artists/{id}/split' => '{"parts"?: [..]} – in Einzelkünstler trennen',
+                'GET /api/quick?kind=sure&limit=100' => 'Schnell erfassen: offene Namen mit Treffer und Bildvorschlägen (kind: sure|name|unsure|pending)',
+                'POST /api/quick' => '{"picks": [{"name", "mb_spelling"?: true, "image"?: url}]} – anlegen',
+                'POST /api/quick/split' => '{"name", "parts"?: [..]} – offenen Kombi-Namen trennen',
+                'GET /api/combined' => 'Kombi-Namen (&, und, Komma) mit Vorschlag',
+                'POST /api/combined' => '{"names": [..]} oder {"all": true} – Vorschläge übernehmen',
                 'GET /api/history?limit=20' => 'letzte Aktionen im Verlauf',
                 'GET /api/history/{id}?errors=1&limit=2000' => 'eine Aktion mit allen Einträgen (errors=1: nur Fehler/Hinweise)',
                 'GET /api/status' => 'laufende Vorgänge, Warteschlange, fehlgeschlagene Jobs, Speicherplatz, Ordnerrechte, PHP-Grenzen',
@@ -142,6 +164,7 @@ class ApiController extends Controller
         if ($staged) {
             RefreshCleanup::request();
         }
+        Log::info('Schnittstelle: Behebungen vormerken', ['check' => $key, 'findings' => $staged, 'tracks' => $tracks]);
 
         return $this->json(['staged_findings' => $staged, 'staged_tracks' => $tracks, 'skipped' => $skipped,
             'missing' => array_values(array_diff($ids, $findings->pluck('id')->all()))]);
@@ -176,6 +199,7 @@ class ApiController extends Controller
         if ($staged) {
             RefreshCleanup::request();
         }
+        Log::info('Schnittstelle: Tags vormerken', ['label' => $label, 'tracks' => $staged, 'errors' => count($errors)]);
 
         return $this->json(['staged' => count($staged), 'track_ids' => $staged, 'errors' => $errors], $errors && ! $staged ? 422 : 200);
     }
@@ -192,6 +216,7 @@ class ApiController extends Controller
             $n = count($ids);
         }
         RefreshCleanup::request();
+        Log::info('Schnittstelle: Vormerkungen verworfen', ['count' => $n, 'request' => $request->all()]);
 
         return $this->json(['discarded' => $n]);
     }
@@ -246,6 +271,139 @@ class ApiController extends Controller
             'done' => $o->done, 'failed' => $o->failed, 'total' => $o->total, 'error' => $o->error,
             'created_at' => $o->created_at?->toIso8601String(), 'finished_at' => $o->finished_at?->toIso8601String(),
         ])->all()]);
+    }
+
+    // ---------------------------------------------------------------- Künstlerverzeichnis (ändert sofort, Tags nur vorgemerkt)
+
+    public function artist(Artist $artist, Lookup $lookup): JsonResponse
+    {
+        $counts = app(ArtistDirectory::class)->namesInCollection();
+
+        return $this->json([
+            'id' => $artist->id, 'name' => $artist->name, 'mbid' => $artist->mbid, 'discogs_id' => $artist->discogs_id, 'default_genre' => $artist->default_genre,
+            'image' => (bool) $artist->image, 'aliases' => $artist->aliases()->pluck('alias')->all(),
+            'tracks' => collect([$artist->name, ...$artist->aliases()->pluck('alias')->all()])->mapWithKeys(fn ($n) => [$n => $counts[$n] ?? 0])->filter()->all(),
+            'looks_collaboration' => ArtistNames::looksCollaboration($artist->name),
+            'split_suggestion' => ArtistNames::suggestSplit($artist->name),
+            'musicbrainz_members' => $artist->mbid ? rescue(fn () => $lookup->musicbrainzMembers($artist->mbid), [], report: false) : [],
+        ]);
+    }
+
+    public function createArtist(Request $request, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => $actions->create((string) $request->input('name'), $request->input('mbid'), $request->input('genre'),
+            (array) $request->input('aliases', []), $request->input('image_url'), 'Schnittstelle: neuer Künstler'), 'Künstler anlegen', $request->all());
+    }
+
+    public function updateArtist(Request $request, Artist $artist): JsonResponse
+    {
+        return $this->change(function () use ($request, $artist) {
+            foreach (['mbid' => 'mbid', 'discogs_id' => 'discogs_id', 'genre' => 'default_genre'] as $in => $col) {
+                if ($request->has($in)) {
+                    $artist->{$col} = trim((string) $request->input($in)) ?: null;
+                }
+            }
+            $artist->save();
+
+            return ['artist' => $artist];
+        }, 'Künstler ändern', ['id' => $artist->id] + $request->all());
+    }
+
+    public function renameArtist(Request $request, Artist $artist, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => $actions->rename($artist, (string) $request->input('name')), 'Künstler umbenennen', ['from' => $artist->name, 'to' => $request->input('name')]);
+    }
+
+    public function mergeArtists(Request $request, Artist $artist, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => $actions->merge($artist, (array) $request->input('ids', [])), 'Künstler zusammenführen', ['into' => $artist->name, 'ids' => $request->input('ids')]);
+    }
+
+    public function addArtistAlias(Request $request, Artist $artist, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => $actions->addAlias($artist, (string) $request->input('alias')), 'Schreibweise hinzufügen', ['artist' => $artist->name, 'alias' => $request->input('alias')]);
+    }
+
+    public function removeArtistAlias(Request $request, Artist $artist, ArtistActions $actions): JsonResponse
+    {
+        return $this->change(fn () => ['removed' => $actions->removeAlias($artist, (string) $request->input('alias'))], 'Schreibweise entfernen', ['artist' => $artist->name, 'alias' => $request->input('alias')]);
+    }
+
+    public function splitArtist(Request $request, Artist $artist, ArtistActions $actions): JsonResponse
+    {
+        $parts = (array) ($request->input('parts') ?: ArtistNames::suggestSplit($artist->name));
+
+        return $this->change(fn () => $actions->splitInto($artist, $parts), 'Künstler trennen', ['artist' => $artist->name, 'parts' => $parts]);
+    }
+
+    public function quick(Request $request, ArtistQuickMatch $quick, Lookup $lookup): JsonResponse
+    {
+        $kind = (string) $request->input('kind', 'sure');
+        $rows = array_values(array_filter($quick->rows(), fn ($r) => $r['kind'] === $kind));
+        $page = array_slice($rows, max(0, $request->integer('offset')), min(500, $request->integer('limit', 100)));
+        $images = $quick->images($page, $lookup);
+
+        return $this->json(['kind' => $kind, 'total' => count($rows), 'rows' => array_map(fn ($r) => $r + ['images' => $images[$r['key']] ?? []], $page)]);
+    }
+
+    public function quickSave(Request $request, ArtistQuickMatch $quick, Lookup $lookup, ArtistGenreSuggestions $genres): JsonResponse
+    {
+        $wanted = collect((array) $request->input('picks', []))->keyBy('name');
+        $picks = [];
+        foreach ($quick->rows() as $r) {
+            if (($p = $wanted[$r['name']] ?? null) && in_array($r['kind'], ['sure', 'name'], true) && $r['hit']) {
+                $picks[] = ['name' => $r['name'], 'hit' => $r['hit'], 'mb_spelling' => $r['hit']['name'] !== $r['name'] && ($p['mb_spelling'] ?? true), 'image' => $p['image'] ?? null];
+            }
+        }
+        $missing = array_values(array_diff($wanted->keys()->all(), array_column($picks, 'name')));
+
+        return $this->change(fn () => ($picks ? $quick->save($picks, $lookup, $genres) : ['created' => 0, 'staged' => 0]) + ['taken' => array_column($picks, 'name'), 'not_offered' => $missing],
+            'Schnell erfassen', ['names' => $wanted->keys()->all()]);
+    }
+
+    public function quickSplit(Request $request, ArtistQuickMatch $quick): JsonResponse
+    {
+        $name = (string) $request->input('name');
+        $parts = array_values(array_filter(array_map('trim', (array) ($request->input('parts') ?: ArtistNames::suggestSplit($name)))));
+
+        return $this->change(function () use ($quick, $name, $parts) {
+            if (count($parts) < 2 || Artist::where('name', $name)->exists()) {
+                throw new InvalidArgumentException(count($parts) < 2 ? 'Mindestens zwei Teile angeben.' : '„'.$name.'“ steht im Verzeichnis – dort trennen (POST /api/artists/{id}/split).');
+            }
+
+            return ['parts' => $parts, 'staged' => $quick->split($name, $parts)];
+        }, 'Kombi trennen', ['name' => $name, 'parts' => $parts]);
+    }
+
+    public function combined(CleanupChecks $checks, CombinedSuggestions $suggest): JsonResponse
+    {
+        [$list, $stale] = $checks->displayFindings('combined_manual');
+        $names = array_values(array_filter(array_column($list, 'new_artist')));
+        $s = $suggest->for($names);
+
+        return $this->json(['stale' => $stale, 'total' => count($names), 'names' => array_map(fn ($f) => ['name' => $f['new_artist'], 'detail' => $f['detail'],
+            'suggestion' => $s[$f['new_artist']] ?? null], array_values(array_filter($list, fn ($f) => ! empty($f['new_artist']))))]);
+    }
+
+    public function combinedApply(Request $request, CleanupChecks $checks, ArtistActions $actions): JsonResponse
+    {
+        $names = $request->boolean('all') ? array_column($checks->displayFindings('combined_manual')[0], 'new_artist') : (array) $request->input('names', []);
+
+        return $this->change(fn () => $actions->applyCombined($names), 'Kombi-Vorschläge übernehmen', ['names' => $request->boolean('all') ? 'alle' : $names]);
+    }
+
+    /** Änderung ausführen und protokollieren (wer über die Schnittstelle was geändert hat, steht im Protokoll). */
+    private function change(callable $fn, string $what, array $context): JsonResponse
+    {
+        try {
+            $result = $fn();
+        } catch (InvalidArgumentException $e) {
+            return $this->json(['error' => $e->getMessage()], 422);
+        }
+        $result = array_map(fn ($v) => $v instanceof Artist ? ['id' => $v->id, 'name' => $v->name, 'mbid' => $v->mbid, 'default_genre' => $v->default_genre] : $v, (array) $result);
+        Log::info('Schnittstelle: '.$what, ['request' => $context, 'result' => array_diff_key($result, ['artist' => 1])]);
+
+        return $this->json(['ok' => true] + $result);
     }
 
     public function historyEntry(Request $request, Operation $operation): JsonResponse

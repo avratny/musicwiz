@@ -111,7 +111,8 @@ docker compose exec -u 1000:1000 app php artisan musicwiz:scan inbox
 
 Unter `/api` (z. B. `http://10.1.1.5:8000/api`) lässt sich der Bestand als JSON abfragen und Änderungen vormerken – etwa
 für eine Analyse von außen. **In die Dateien geschrieben wird darüber nie**, nur mit „Änderungen schreiben“ in der App.
-Ohne Anmeldung: nur im eigenen Netz erreichbar machen. `GET /api` listet alle Aufrufe.
+Ohne Anmeldung: nur im eigenen Netz erreichbar machen. `GET /api` listet alle Aufrufe. Jede Änderung über die
+Schnittstelle steht im Protokoll („Schnittstelle: …“).
 
 | Aufruf | Zweck |
 |---|---|
@@ -120,6 +121,8 @@ Ohne Anmeldung: nur im eigenen Netz erreichbar machen. `GET /api` listet alle Au
 | `GET /api/pending` | alles Vorgemerkte inkl. geplanter Aktionen (wie der JSON-Export) |
 | `POST /api/pending/stage`, `POST /api/pending/discard` | eigene Tag-Änderungen vormerken bzw. Vormerkungen verwerfen |
 | `GET /api/albums`, `/api/albums/{id}`, `/api/tracks`, `/api/artists`, `/api/history`, `/api/stats` | lesen |
+| `POST /api/artists`, `/api/artists/{id}` (`/rename`, `/merge`, `/aliases`, `/split`) | Künstlerverzeichnis pflegen wie in der App – wirkt sofort, Tags werden nur vorgemerkt |
+| `GET/POST /api/quick`, `POST /api/quick/split`, `GET/POST /api/combined` | Schnell erfassen und Kombi-Vorschläge |
 | `GET /api/status` | laufende Vorgänge, Warteschlange, fehlgeschlagene Jobs, Speicherplatz, Ordnerrechte, PHP-Grenzen |
 | `GET /api/logs?entries=50&level=warning` | Fehlerprotokoll (neueste zuerst, Zugangsdaten geschwärzt) |
 | `GET /api/history/{id}?errors=1` | eine Aktion mit allen Einträgen bzw. nur Fehlern/Hinweisen |

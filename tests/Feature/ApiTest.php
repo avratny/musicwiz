@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Album;
+use App\Models\Artist;
 use App\Models\Operation;
 use App\Models\PendingChange;
+use App\Models\RejectedAlias;
 use App\Models\Track;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -123,5 +125,41 @@ class ApiTest extends TestCase
         $op->entries()->create(['kind' => 'info', 'old_path' => $this->base.'/library/c.mp3', 'error' => 'übersprungen – Ziel belegt']);
         $this->getJson('/api/history/'.$op->id)->assertOk()->assertJsonCount(2, 'entries')->assertJsonPath('entries.0.new_path', 'library/b.mp3');
         $this->getJson('/api/history/'.$op->id.'?errors=1')->assertOk()->assertJsonCount(1, 'entries')->assertJsonPath('entries.0.error', 'übersprungen – Ziel belegt');
+    }
+
+    public function test_directory_tools_change_directory_and_only_stage_tags(): void
+    {
+        // anlegen mit Schreibweise: Tags der Titel mit der Schreibweise werden vorgemerkt
+        $r = $this->postJson('/api/artists', ['name' => 'ABBA', 'genre' => 'Pop', 'aliases' => ['Abba']])->assertOk()->assertJsonPath('ok', true)->assertJsonPath('created', true);
+        $abba = Artist::where('name', 'ABBA')->sole();
+        $this->assertSame('Pop', $abba->default_genre);
+        $this->postJson('/api/artists', ['name' => ''])->assertStatus(422);
+
+        // Schreibweise: Konflikt mit anderem Eintrag wird abgelehnt
+        $other = Artist::create(['name' => 'Abbacadabra']);
+        $this->postJson('/api/artists/'.$other->id.'/aliases', ['alias' => 'Abba'])->assertStatus(422)->assertJsonPath('error', '„Abba“ ist schon eine Schreibweise von „ABBA“ – dort zuerst entfernen.');
+        $this->deleteJson('/api/artists/'.$abba->id.'/aliases', ['alias' => 'Abba'])->assertOk()->assertJsonPath('removed', true);
+        $this->assertTrue(RejectedAlias::where('artist_id', $abba->id)->exists(), 'entfernte Schreibweise gemerkt');
+
+        // Felder, Umbenennen, Zusammenführen
+        $this->postJson('/api/artists/'.$abba->id, ['mbid' => 'mb-abba'])->assertOk();
+        $this->assertSame('mb-abba', $abba->fresh()->mbid);
+        $this->postJson('/api/artists/'.$other->id.'/rename', ['name' => 'Abbacadabra!'])->assertOk()->assertJsonPath('artist.name', 'Abbacadabra!');
+        $this->postJson('/api/artists/'.$abba->id.'/merge', ['ids' => [$other->id]])->assertOk()->assertJsonPath('merged', ['Abbacadabra!']);
+
+        // Einzelkünstler trennen
+        $duo = Artist::create(['name' => 'Beam & Yanou']);
+        $this->getJson('/api/artists/'.$duo->id)->assertOk()->assertJsonPath('looks_collaboration', true)->assertJsonPath('split_suggestion', ['Beam', 'Yanou']);
+        $this->postJson('/api/artists/'.$duo->id.'/split')->assertOk()->assertJsonPath('parts', ['Beam', 'Yanou'])->assertJsonPath('new', ['Beam', 'Yanou']);
+        $this->assertFalse(Artist::where('name', 'Beam & Yanou')->exists());
+
+        // Listen
+        $this->getJson('/api/quick?kind=pending')->assertOk()->assertJsonStructure(['total', 'rows']);
+        $this->getJson('/api/combined')->assertOk()->assertJsonStructure(['total', 'names']);
+
+        // nie schreiben: keine Aktion, Dateien unverändert, kein Aufruf dafür
+        $this->assertNull(Operation::first());
+        $this->assertSame('Gold (Remaster)', $this->fileAlbum('03 - Fernando'));
+        $this->postJson('/api/pending/write')->assertStatus(404);
     }
 }
