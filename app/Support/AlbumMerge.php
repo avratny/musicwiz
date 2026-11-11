@@ -90,7 +90,9 @@ class AlbumMerge
                     }
                     $pairs[] = [$t, $other];
                 }
-                $dropAlbumFiles[$group[0]->dir] = true;
+                if ($foreign || $pairs) {
+                    $dropAlbumFiles[Scanner::albumDir($group[0]->dir)] = true;
+                }
                 if ($foreign) {
                     // anderes Album mit gleichem Zielordner: nicht mischen
                     foreach ($group as $t) {

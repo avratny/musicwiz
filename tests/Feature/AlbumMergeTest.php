@@ -115,11 +115,12 @@ class AlbumMergeTest extends TestCase
         $this->mp3('A/ABBA/Gold/1-02 SOS.mp3', 2, 'SOS');
         $rest = $this->mp3('A/Abba Gold/Gold/03 Fernando.mp3', 3, 'Fernando');
         $this->mp3('A/Abba Gold/Gold/04 Chiquitita.mp3', 4, 'Chiquitita');
+        file_put_contents(dirname($rest).'/booklet.pdf', 'Booklet');
 
         $this->write([$this->base.'/library/artists/A/ABBA/Gold/1-01 Waterloo.mp3', $rest]);
 
-        $this->assertSame(['01 - Waterloo.mp3', '02 - SOS.mp3', '03 - Fernando.mp3', '04 - Chiquitita.mp3'],
-            $this->filesIn($this->base.'/library/artists/A/ABBA/Gold (1992)'), 'ergänzt sich: ein Album');
+        $this->assertSame(['01 - Waterloo.mp3', '02 - SOS.mp3', '03 - Fernando.mp3', '04 - Chiquitita.mp3', 'booklet.pdf'],
+            $this->filesIn($this->base.'/library/artists/A/ABBA/Gold (1992)'), 'ergänzt sich: ein Album, Extras ziehen mit');
     }
 
     private function tagsOf(string $path): array
