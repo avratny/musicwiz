@@ -440,7 +440,7 @@ class OperationRunner
         if (in_array($onConflict, ['best', 'best_skip'], true) && file_exists($to) && ! FileOps::sameFile($from, $to)) {
             $cmp = Quality::compare($from, $to);
             if ($cmp['winner'] === 'both' && $onConflict === 'best_skip') {
-                $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $from, 'error' => 'nicht verschoben – Ziel belegt, '.$cmp['reason']]));
+                $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $from, 'error' => 'nicht verschoben – Ziel belegt, '.str_replace('beide bleiben, diese mit „(2)“', 'diese bleibt am alten Ort', $cmp['reason'])]));
 
                 return;
             }

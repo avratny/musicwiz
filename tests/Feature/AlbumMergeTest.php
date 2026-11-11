@@ -43,13 +43,13 @@ class AlbumMergeTest extends TestCase
     }
 
     /** MP3 mit 128 oder 320 kbit/s (gleiche Länge) */
-    private function mp3(string $rel, int $track, string $title, int $kbit = 128): string
+    private function mp3(string $rel, int $track, string $title, int $kbit = 128, string $album = 'Gold'): string
     {
         $path = $this->base.'/library/artists/'.$rel;
         File::ensureDirectoryExists(dirname($path));
         [$byte, $size] = $kbit === 320 ? ["\xE0", 1044] : ["\x90", 417];
         file_put_contents($path, str_repeat("\xFF\xFB".$byte."\x00".str_repeat("\x00", $size - 4), 120));
-        app(TagTool::class)->write([['path' => $path, 'tags' => ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992',
+        app(TagTool::class)->write([['path' => $path, 'tags' => ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => $album, 'year' => '1992',
             'track' => (string) $track, 'title' => $title, 'comment' => 'LIB']]]);
 
         return $path;
@@ -90,6 +90,22 @@ class AlbumMergeTest extends TestCase
         $this->assertDirectoryDoesNotExist($this->base.'/library/artists/A/Abba Gold/Gold');
         $this->assertSame(4, Track::count());
         $this->assertSame([], $op->entries()->where('kind', 'error')->pluck('error')->all());
+    }
+
+    public function test_folder_names_differing_only_in_case_are_the_same_album(): void
+    {
+        // schon am Regelort, Albumname in Großbuchstaben; auf dem NAS ist „GOLD (1992)“ derselbe Ordner wie „Gold (1992)“
+        $this->mp3('A/ABBA/GOLD (1992)/01 - Waterloo.mp3', 1, 'Waterloo', 128, 'GOLD');
+        $this->mp3('A/ABBA/GOLD (1992)/02 - SOS.mp3', 2, 'SOS', 128, 'GOLD');
+        $copy = $this->mp3('A/Abba Gold/Gold/01 Waterloo.mp3', 1, 'Waterloo', 320);
+        $this->mp3('A/Abba Gold/Gold/02 SOS.mp3', 2, 'SOS');
+
+        $this->write([$copy]);
+
+        $files = collect(File::allFiles($this->base.'/library'))->map->getFilename()->sort()->values()->all();
+        $this->assertSame(['01 - Waterloo.mp3', '02 - SOS.mp3'], $files, 'kein Lied doppelt');
+        $this->assertGreaterThan(100000, filesize($this->base.'/library/artists/A/ABBA/GOLD (1992)/01 - Waterloo.mp3'), '320er-Fassung ersetzt die vorhandene');
+        $this->assertCount(2, File::allFiles($this->base.'/_papierkorb'));
     }
 
     public function test_other_album_with_the_same_folder_is_not_mixed_in(): void

@@ -35,22 +35,22 @@ class AlbumMerge
         // Zielordner (Album-Ebene) je bewegter Datei; nur Ordner, in die mehr als eine Quelle will, genauer ansehen
         $tracks = collect(array_chunk(array_keys($moving), 500))
             ->flatMap(fn ($paths) => Track::whereIn('path', $paths)->get())->keyBy('path');
+        // Ordner ohne Groß/klein vergleichen: auf dem NAS (case-insensitive) sind „Run To You (1992)“ und „Run to You (1992)“ einer
+        $key = fn (string $dir) => mb_strtolower(FileOps::nfc($dir));
         $byDir = [];
         foreach ($moving as $path => $i) {
             if ($t = $tracks[$path] ?? null) {
-                $byDir[Scanner::albumDir(dirname($actions[$i]['target']))][(int) $t->album_id][] = $t;
+                $byDir[$key(Scanner::albumDir(dirname($actions[$i]['target'])))][(int) $t->album_id][] = $t;
             }
         }
-        $residentAlbums = collect(array_chunk(array_keys($byDir), 500))
-            ->flatMap(fn ($dirs) => Album::where('location', 'library')->whereIn('dir', $dirs)->get(['id', 'dir']));
-        $residents = $residentAlbums->isEmpty() ? collect() : Track::whereIn('album_id', $residentAlbums->pluck('id'))->get()
-            ->reject(fn ($t) => isset($moving[$t->path]));
+        $residentAlbums = Album::where('location', 'library')->get(['id', 'dir'])->filter(fn ($a) => isset($byDir[$key((string) $a->dir)]));
+        $residents = $residentAlbums->isEmpty() ? collect() : collect($residentAlbums->pluck('id')->chunk(500))
+            ->flatMap(fn ($ids) => Track::whereIn('album_id', $ids->all())->get())->reject(fn ($t) => isset($moving[$t->path]));
         foreach ($residents as $t) {
-            $dir = $residentAlbums->firstWhere('id', $t->album_id)->dir;
-            $byDir[$dir][(int) $t->album_id][] = $t;
+            $byDir[$key($residentAlbums->firstWhere('id', $t->album_id)->dir)][(int) $t->album_id][] = $t;
         }
 
-        $noAlbum = (string) $this->settings->get('no_album');
+        $noAlbum = mb_strtolower((string) $this->settings->get('no_album'));
         $dropAlbumFiles = [];
         foreach ($byDir as $dir => $sources) {
             if (count($sources) < 2) {
@@ -63,7 +63,7 @@ class AlbumMerge
                 continue;
             }
             // führend: das Album, das schon dort liegt, sonst das größte
-            $resident = array_keys(array_intersect_key($sources, array_flip($residentAlbums->where('dir', $dir)->pluck('id')->all())));
+            $resident = array_keys(array_intersect_key($sources, array_flip($residentAlbums->filter(fn ($r) => $key((string) $r->dir) === $dir)->pluck('id')->all())));
             uksort($sources, fn ($a, $b) => [! in_array($a, $resident, true), -count($sources[$a]), $a] <=> [! in_array($b, $resident, true), -count($sources[$b]), $b]);
             $kept = [];
             foreach ($sources as $albumId => $group) {
@@ -79,7 +79,7 @@ class AlbumMerge
                     $other = $pos !== null ? ($kept[$pos] ?? null) : null;
                     if ($other === null) {
                         // gleicher Dateiname ohne passende Nummer: kein Zusammenführen
-                        $foreign = $foreign || collect($kept)->contains(fn ($k) => $final($k) === $final($t));
+                        $foreign = $foreign || collect($kept)->contains(fn ($k) => $key($final($k)) === $key($final($t)));
 
                         continue;
                     }
@@ -98,7 +98,7 @@ class AlbumMerge
                     foreach ($group as $t) {
                         if (isset($moving[$t->path])) {
                             $a = &$actions[$moving[$t->path]];
-                            $a['held'] = 'nicht verschoben – im Zielordner liegt ein anderes Album ('.basename($dir).')';
+                            $a['held'] = 'nicht verschoben – im Zielordner liegt ein anderes Album ('.basename(dirname($a['target'])).')';
                             unset($a['target']);
                             unset($a);
                         }
