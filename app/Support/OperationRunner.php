@@ -218,7 +218,9 @@ class OperationRunner
                     $this->writeTags($op, $path, $tags, $cover, $removeCover);
                 }
                 if (! empty($a['target']) && $a['target'] !== $path) {
-                    $this->moveLogged($op, $path, $a['target'], $onConflict);
+                    $this->moveLogged($op, $path, $a['target'], $a['on_conflict'] ?? $onConflict);
+                } elseif (! empty($a['held'])) {
+                    $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $path, 'error' => $a['held']]));
                 }
                 // vorgemerkte Änderung geschrieben: erledigt – oder (unterwegs Neues vorgemerkt) auf den neuen Pfad tragen
                 if (! empty($a['pending_id'])) {
@@ -232,7 +234,7 @@ class OperationRunner
 
             case 'move':
                 $this->touch($a['path']);
-                $this->moveLogged($op, $a['path'], $a['target'], $onConflict);
+                $this->moveLogged($op, $a['path'], $a['target'], $a['on_conflict'] ?? $onConflict);
                 break;
 
             case 'album_files':
@@ -434,8 +436,14 @@ class OperationRunner
     private function moveLogged(Operation $op, string $from, string $to, string $onConflict): void
     {
         // Ziel belegt + "bessere Version behalten": die schlechtere Fassung wandert in den Papierkorb
-        if ($onConflict === 'best' && file_exists($to) && ! FileOps::sameFile($from, $to)) {
+        // „best_skip“ (Doppel aus einem anderen Album): wie „best“, aber nicht nachweislich dasselbe Lied → bleibt liegen
+        if (in_array($onConflict, ['best', 'best_skip'], true) && file_exists($to) && ! FileOps::sameFile($from, $to)) {
             $cmp = Quality::compare($from, $to);
+            if ($cmp['winner'] === 'both' && $onConflict === 'best_skip') {
+                $this->db(fn () => $op->entries()->create(['kind' => 'info', 'old_path' => $from, 'error' => 'nicht verschoben – Ziel belegt, '.$cmp['reason']]));
+
+                return;
+            }
             if ($cmp['winner'] === 'both') {
                 // unklar: nichts aussortieren, zweite Fassung daneben ablegen
                 $this->moveFile($op, $from, $to, 'number', $cmp['reason']);

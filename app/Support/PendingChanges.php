@@ -376,10 +376,13 @@ class PendingChanges
                 $actions[] = array_filter(['type' => 'apply', 'path' => $path, 'tags' => $tags ?: null, 'target' => $target, 'pending_id' => $pc->id, 'revision' => $pc->revision] + $cover($pc), fn ($v) => $v !== null);
             }
         }
+        // mehrere Alben mit demselben Zielordner: nie mischen, doppelte Lieder nur in der besten Fassung
+        $actions = app(AlbumMerge::class)->resolve($actions);
         $actions = [...$this->albumCoverActions($pending, $actions), ...$actions];
-        // Reihenfolge: Cover-Dateien in den Papierkorb, Titel, album_files (wie „Nicht am Regelort“), zuletzt neues cover.jpg
+        // Reihenfolge: Cover-Dateien in den Papierkorb, Titel, Doppel (nach dem Album, mit dem sie verglichen werden),
+        // album_files (wie „Nicht am Regelort“), zuletzt neues cover.jpg
         $rank = fn ($a) => match ($a['type']) {
-            'trash' => 0, 'album_files' => 2, 'cover_file' => 3, default => 1
+            'trash' => 0, 'album_files' => 3, 'cover_file' => 4, default => empty($a['merge']) ? 1 : 2
         };
         usort($actions, fn ($a, $b) => $rank($a) <=> $rank($b));
 
