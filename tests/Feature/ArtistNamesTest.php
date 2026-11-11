@@ -68,4 +68,21 @@ class ArtistNamesTest extends TestCase
         $this->assertSame('new', $dir->check('Cher')['status']);
         $this->assertSame('A-Teens feat. Cher', $dir->correctText('A. Teens feat. Cher'));
     }
+
+    public function test_names_ending_in_brackets_stay_whole(): void
+    {
+        $this->assertSame(['Was (Not Was)'], ArtistNames::split('Was (Not Was)'));
+        $this->assertSame(['Dream Dance Alliance (D.D. Alliance)'], ArtistNames::split('Dream Dance Alliance (D.D. Alliance)'));
+        $this->assertSame(['Yanou', 'Liz'], ArtistNames::split('Yanou [feat. Liz]'));
+        $this->assertSame(['Yanou', 'Liz (UK)'], ArtistNames::split('Yanou (feat. Liz (UK))'));
+        $this->assertSame(['Was (Not Was)', 'Liz'], ArtistNames::split('Was (Not Was) feat. Liz'));
+
+        // Aliase von MusicBrainz mit abgeschnittener Klammer dürfen den richtigen Namen nicht anwachsen lassen
+        $dir = app(ArtistDirectory::class);
+        $dir->resolve('Was (Not Was)', ['Was (Not Was', 'Was Not Was']);
+        $dir->resolve('Dream Dance Alliance', ['Dream Dance Alliance (D.D. Alliance)']);
+        $this->assertSame('Was (Not Was)', $dir->correctText('Was (Not Was)'));
+        $this->assertSame('Was (Not Was)', $dir->correctText('Was Not Was'));
+        $this->assertSame('Dream Dance Alliance', $dir->correctText('Dream Dance Alliance (D.D. Alliance)'));
+    }
 }

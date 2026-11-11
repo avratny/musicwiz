@@ -30,7 +30,7 @@ class ArtistGroupAnalyzer
             return $this->profiles;
         }
 
-        return $this->profiles = Cache::remember('artist-profiles:v6:'.DataVersion::artistContent().':'.DataVersion::splits(), now()->addDays(30), function () {
+        return $this->profiles = Cache::remember('artist-profiles:v7:'.DataVersion::artistContent().':'.DataVersion::splits(), now()->addDays(30), function () {
             $va = mb_strtolower((string) $this->settings->get('compilation_artist'));
             $out = [];
             // nur der Bestand – die Inbox wird erst nach dem Einordnen relevant

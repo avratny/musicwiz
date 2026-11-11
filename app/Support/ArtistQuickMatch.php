@@ -57,7 +57,7 @@ class ArtistQuickMatch
             return $this->rows;
         }
         $base = DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory();
-        $key = 'artist-quick-rows:v2:'.$base.':'.(int) Cache::get(self::RESULTS_BUMP, 0);
+        $key = 'artist-quick-rows:v3:'.$base.':'.(int) Cache::get(self::RESULTS_BUMP, 0);
         if (($rows = Cache::get($key)) !== null) {
             return $this->rows = $rows;
         }

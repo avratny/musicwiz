@@ -41,7 +41,7 @@ class ArtistNames
         $splits = self::splitRules();
         foreach (preg_split('/\s*;\s*/u', $text) as $part) {
             foreach (preg_split(self::SEPARATOR, $part) as $name) {
-                $name = trim(strtr($name, $keep), " \t)]");
+                $name = self::trimClosing(trim(strtr($name, $keep)));
                 // gemerkte Zusammenarbeit („Yanou & Liz“ → Yanou, Liz)
                 foreach ($splits[ArtistSplit::keyOf($name)] ?? [$name] as $one) {
                     if ($one !== '' && ! in_array($one, $out, true)) {
@@ -52,6 +52,22 @@ class ArtistNames
         }
 
         return $out;
+    }
+
+    /**
+     * Schließende Klammer vom Trennen abschneiden („Yanou (feat. Liz)“ → „Liz)“), aber nur ohne passende öffnende –
+     * „Was (Not Was)“ bleibt ganz (sonst wird daraus beim Korrigieren „Was (Not Was))“, bei jedem Lauf eine mehr).
+     */
+    private static function trimClosing(string $name): string
+    {
+        while (preg_match('/[)\]]$/u', $name, $m)) {
+            if (substr_count($name, $m[0] === ')' ? '(' : '[') >= substr_count($name, $m[0])) {
+                break;
+            }
+            $name = rtrim(substr($name, 0, -1));
+        }
+
+        return $name;
     }
 
     /** @var array<string, list<string>>|null Kleinschreibung der Kombi => Teile */

@@ -228,7 +228,7 @@ class ArtistDirectory
     {
         $skip = mb_strtolower((string) $this->settings->get('compilation_artist'));
 
-        return $this->names ??= Cache::remember('artist-names:v6:'.DataVersion::artistContent().':'.DataVersion::splits().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
+        return $this->names ??= Cache::remember('artist-names:v7:'.DataVersion::artistContent().':'.DataVersion::splits().':'.md5($skip), now()->addDays(30), fn () => $this->countNames($skip));
     }
 
     private ?array $names = null;
@@ -244,7 +244,7 @@ class ArtistDirectory
      */
     public function openNames(): array
     {
-        return $this->openNames ??= Cache::remember('artist-open-names:v1:'.DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory(), now()->addDays(7), function () {
+        return $this->openNames ??= Cache::remember('artist-open-names:v2:'.DataVersion::artistContent().':'.DataVersion::splits().':'.DataVersion::directory(), now()->addDays(7), function () {
             $counts = $this->namesInCollection();
             arsort($counts);
             $out = [];
@@ -302,7 +302,7 @@ class ArtistDirectory
     public function candidateGroups(): array
     {
         // teuer (Ähnlichkeitssuche über alle Namen) – neu nur, wenn sich Bestand oder Verzeichnis ändern
-        return Cache::remember('artist-groups:v3:'.DataVersion::artistContent().':'.DataVersion::directory(), now()->addDays(30), fn () => $this->buildCandidateGroups());
+        return Cache::remember('artist-groups:v4:'.DataVersion::artistContent().':'.DataVersion::directory(), now()->addDays(30), fn () => $this->buildCandidateGroups());
     }
 
     /**
@@ -313,7 +313,7 @@ class ArtistDirectory
      */
     private function rawGroups(): array
     {
-        return Cache::remember('artist-raw-groups:v3:'.DataVersion::artistContent().':'.DataVersion::splits(), now()->addDays(30), function () {
+        return Cache::remember('artist-raw-groups:v4:'.DataVersion::artistContent().':'.DataVersion::splits(), now()->addDays(30), function () {
             $counts = $this->namesInCollection();
             $groups = [];
             foreach ($counts as $name => $n) {
