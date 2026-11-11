@@ -648,10 +648,12 @@ class CleanupChecks
             $held = [];
             // Schutz 1: mehrere Titel mit demselben Ziel (z. B. „Lied (3).flac“ neben „Lied.flac“) – keiner wird verschoben,
             // sonst gewinnt zufällig eine Kopie; erst unter „Duplikate“ entscheiden
-            $byTarget = array_count_values(array_filter(array_map(fn ($m) => $m['target'] ?? null, $moves)));
+            // ohne Groß/klein: auf dem NAS (SMB/ZFS case-insensitive) ist „Lied.mp3“ dasselbe Ziel wie „lied.mp3“
+            $targetKey = fn ($m) => isset($m['target']) ? mb_strtolower(FileOps::nfc($m['target'])) : null;
+            $byTarget = array_count_values(array_filter(array_map($targetKey, $moves)));
             $clash = array_filter($byTarget, fn ($n) => $n > 1);
             if ($clash) {
-                $moves = $this->withoutTargets($moves, fn ($m) => isset($clash[$m['target'] ?? '']));
+                $moves = $this->withoutTargets($moves, fn ($m) => isset($clash[$targetKey($m) ?? '']));
                 $held[] = array_sum($clash).' Datei(en) hätten dasselbe Ziel – erst unter „Duplikate“ entscheiden';
             }
             // Schutz 2: das Album würde auf mehrere Ordner verteilt (z. B. Sampler mit dem Jahr der Original-Single je Titel) –

@@ -424,6 +424,18 @@ class PendingChangesTest extends TestCase
         }
     }
 
+    public function test_targets_differing_only_in_case_count_as_the_same(): void
+    {
+        // auf dem NAS (case-insensitive) wäre „01 - WATERLOO.mp3“ dasselbe Ziel wie „01 - Waterloo.mp3“
+        $this->mp3('A/ABBA/Gold/1-01 Waterloo.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '1', 'title' => 'Waterloo']);
+        $this->mp3('A/ABBA/Gold/1-01 WATERLOO copy.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992', 'track' => '1', 'title' => 'WATERLOO']);
+        app(Scanner::class)->scan('library');
+
+        $f = app(CleanupChecks::class)->findings('misplaced')[0];
+        $this->assertStringContainsString('2 Datei(en) hätten dasselbe Ziel', $f['detail']);
+        $this->assertSame([], $f['actions']);
+    }
+
     public function test_year_with_date_keeps_only_the_year(): void
     {
         $a = $this->mp3('A/ABBA/Gold (1992)/01 - Waterloo.mp3', ['artist' => 'ABBA', 'albumartist' => 'ABBA', 'album' => 'Gold', 'year' => '1992-09-21', 'track' => '1', 'title' => 'Waterloo']);
