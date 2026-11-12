@@ -1,6 +1,6 @@
 # MusicWiz – Regeln und Abläufe
 
-Was MusicWiz prüft, entscheidet und schreibt – und was nicht. Stand: Version 0.3.41 (November 2026).
+Was MusicWiz prüft, entscheidet und schreibt – und was nicht. Stand: Version 0.3.42 (November 2026).
 Technischer Aufbau und Installation: [`README.md`](README.md), Anforderungen: [`MusicWiz – Planung.md`](MusicWiz%20–%20Planung.md).
 
 ---

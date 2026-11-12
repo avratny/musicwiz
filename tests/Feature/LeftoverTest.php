@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Livewire\Cleanup;
 use App\Models\Leftover;
 use App\Models\Track;
 use App\Support\AutoCleanup;
@@ -12,6 +13,7 @@ use App\Support\Scanner;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\File;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 class LeftoverTest extends TestCase
@@ -52,9 +54,10 @@ class LeftoverTest extends TestCase
         $findings = app(CleanupChecks::class)->findings('leftovers');
         $this->assertCount(1, $findings, 'kein „Ordner ohne Musik“');
         $this->assertStringContainsString('Umbenennen abgebrochen', $findings[0]['detail']);
-        $this->assertSame([['type' => 'move', 'path' => $dir.'/Cambodia.MP3'.FileOps::RENAME_SUFFIX, 'target' => $dir.'/Cambodia.mp3']], $findings[0]['actions']);
+        $this->assertSame([['type' => 'move', 'path' => $dir.'/Cambodia.MP3'.FileOps::RENAME_SUFFIX, 'target' => $dir.'/Cambodia.mp3', 'direct' => true]], $findings[0]['actions']);
 
-        OperationRunner::dispatch('cleanup', 'Reste', $findings[0]['actions']);
+        // „Übernehmen“ im Aufräumen: läuft sofort (die Datei ist kein Titel im Bestand, vormerken ginge ins Leere)
+        Livewire::test(Cleanup::class)->set('check', 'leftovers')->call('applyOne', $findings[0]['id']);
         $this->assertFileExists($dir.'/Cambodia.mp3');
         $this->assertDirectoryDoesNotExist($this->base.'/_papierkorb');
         $this->assertSame($dir.'/Cambodia.mp3', Track::value('path'), 'wieder im Bestand');

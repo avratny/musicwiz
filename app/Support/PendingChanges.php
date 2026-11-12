@@ -24,7 +24,8 @@ class PendingChanges
     public static function stageable(array $actions): bool
     {
         foreach ($actions as $a) {
-            if (! in_array($a['type'] ?? '', self::STAGEABLE, true)) {
+            // „direct“: Datei steht (noch) nicht im Bestand, z. B. hängengebliebene Umbenennung – vormerken ginge ins Leere
+            if (! in_array($a['type'] ?? '', self::STAGEABLE, true) || ! empty($a['direct'])) {
                 return false;
             }
             if (($a['type'] === 'apply') && (! empty($a['cover']) || ! empty($a['embed_from']) || ! empty($a['remove_cover'])

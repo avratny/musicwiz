@@ -1644,7 +1644,7 @@ class CleanupChecks
                 $target = substr($name, 0, -strlen(pathinfo($name, PATHINFO_EXTENSION))).strtolower(pathinfo($name, PATHINFO_EXTENSION));
 
                 return ['id' => 'l'.$l->id, 'title' => $this->rel($l->path), 'detail' => $detail."\n→ zurückbenennen: ".basename($target), 'link' => null,
-                    'actions' => [['type' => 'move', 'path' => $l->path, 'target' => $target]]];
+                    'actions' => [['type' => 'move', 'path' => $l->path, 'target' => $target, 'direct' => true]]];
             }
             $real = in_array($l->kind, ['no_music', 'bad_dir'], true) && $this->hasRealContent($l->path);
             // Bilder eines umgezogenen Albums gehören zum Album: Ziel aus dem Verlauf
