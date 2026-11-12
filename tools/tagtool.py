@@ -14,6 +14,8 @@ Schlüssel: title artist artists album albumartist albumartists track tracktotal
            artistsort albumartistsort (Sortiernamen; FLAC: ARTISTSORT/ALBUMARTISTSORT, MP3: TSOP/TSO2)
            rg_track_gain rg_track_peak rg_album_gain rg_album_peak (ReplayGain, z. B. "-6.62 dB" / "0.988")
            lyrics (Songtext, auch synchronisiert im LRC-Format "[00:12.34] …"; FLAC: LYRICS, MP3: USLT)
+           originaldate releasedate mb_albumid (Navidrome trennt Alben danach; FLAC: ORIGINALDATE/RELEASEDATE/
+           MUSICBRAINZ_ALBUMID, MP3: TDOR/TDRL/TXXX:MusicBrainz Album Id)
 Gelesen werden zusätzlich: source (Herkunft, z. B. YouTube) und rating.
 read liefert außerdem "info": {duration, bitrate, cover_embedded, cover_size} – so muss der Scan jede Datei nur einmal öffnen.
 Ausgabe: JSON {"results": [{"path": ..., "ok": true|false, "error": ...}]}
@@ -30,7 +32,7 @@ from mutagen.mp3 import MP3, HeaderNotFoundError
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (ID3, ID3NoHeaderError, APIC, COMM, POPM, TALB, TCMP, TCON,
-                         TDRC, TIT2, TPE1, TPE2, TPOS, TRCK, TSO2, TSOP, TXXX, USLT)
+                         TDOR, TDRC, TDRL, TIT2, TPE1, TPE2, TPOS, TRCK, TSO2, TSOP, TXXX, USLT)
 
 LIST_KEYS = {"artists", "albumartists", "genres"}
 
@@ -147,6 +149,9 @@ FLAC_SIMPLE = {
     "artistsort": ["ARTISTSORT"],
     "albumartistsort": ["ALBUMARTISTSORT"],
     "lyrics": ["LYRICS", "UNSYNCEDLYRICS"],
+    "originaldate": ["ORIGINALDATE", "ORIGINALYEAR"],
+    "releasedate": ["RELEASEDATE"],
+    "mb_albumid": ["MUSICBRAINZ_ALBUMID"],
     **{k: [v] for k, v in REPLAYGAIN.items()},
 }
 FLAC_LIST = {"artists": "ARTISTS", "albumartists": "ALBUMARTISTS", "genres": "GENRE"}
@@ -166,6 +171,8 @@ def flac_read(f):
         "genres": list(t.get("GENRE", [])), "compilation": g("COMPILATION") == "1",
         "source": g("SOURCE"), "rating": flac_rating_to_stars(g("RATING")),
         "lyrics": g("LYRICS") or g("UNSYNCEDLYRICS"),
+        "originaldate": g("ORIGINALDATE") or g("ORIGINALYEAR"), "releasedate": g("RELEASEDATE"),
+        "mb_albumid": g("MUSICBRAINZ_ALBUMID"),
         **{k: g(v) for k, v in REPLAYGAIN.items()},
     }
     return out
@@ -284,6 +291,9 @@ def mp3_read(t):
         "source": (txxx("SOURCE") or [""])[0],
         "rating": mp3_rating(t),
         "lyrics": mp3_lyrics(t),
+        "originaldate": id3_text(t, "TDOR") or id3_text(t, "TORY") or txxx_any(t, "ORIGINALDATE") or txxx_any(t, "ORIGYEAR"),
+        "releasedate": id3_text(t, "TDRL") or txxx_any(t, "RELEASEDATE"),
+        "mb_albumid": txxx_any(t, "MUSICBRAINZ ALBUM ID"),
         **{k: txxx_any(t, v) for k, v in REPLAYGAIN.items()},
     }
 
@@ -345,6 +355,18 @@ def mp3_write(path, tags, cover, remove_cover, version):
             t.add(COMM(encoding=3, lang=lang, desc="", text=[val]))
     if "compilation" in tags:
         set_text("TCMP", TCMP, "1" if tags["compilation"] else "")
+    if "originaldate" in tags:
+        # ID3v2.3 kennt kein TDOR – mutagen macht beim Speichern daraus TORY (nur das Jahr)
+        t.delall("TORY")
+        set_text("TDOR", TDOR, as_str(tags["originaldate"]))
+    if "releasedate" in tags:
+        set_text("TDRL", TDRL, as_str(tags["releasedate"]))
+    if "mb_albumid" in tags:
+        for k in [k for k in t.keys() if k.startswith("TXXX:") and t[k].desc.upper() == "MUSICBRAINZ ALBUM ID"]:
+            del t[k]
+        val = as_str(tags["mb_albumid"])
+        if val:
+            t.add(TXXX(encoding=3, desc="MusicBrainz Album Id", text=[val]))
     for key, desc in REPLAYGAIN.items():
         if key in tags:
             for k in [k for k in t.keys() if k.startswith("TXXX:") and t[k].desc.upper() == desc]:

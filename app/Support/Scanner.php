@@ -403,6 +403,15 @@ class Scanner
 
                 continue;
             }
+            // hängengebliebene Umbenennung („Lied.MP3.musicwiz-tmp“): das ist die echte Musikdatei – nie als Rest wegräumen,
+            // unter „Leere Ordner und Reste“ wird sie zurückbenannt
+            if (str_ends_with($entry, FileOps::RENAME_SUFFIX)
+                && in_array(strtolower(pathinfo(substr($entry, 0, -strlen(FileOps::RENAME_SUFFIX)), PATHINFO_EXTENSION)), $audioExt, true)) {
+                $content = $audio = true;
+                $leftovers[$path] = 'interrupted';
+
+                continue;
+            }
             // Zwischendatei eines abgebrochenen Tag-Schreibens: das Original ist unverändert, die Kopie ist ein Rest
             if (in_array($entry, $junk, true) || str_starts_with($entry, '._') || str_ends_with($entry, TagTool::WRITE_SUFFIX)) {
                 $leftovers[$path] = 'junk';

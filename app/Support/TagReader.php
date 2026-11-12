@@ -136,6 +136,10 @@ class TagReader
             'replaygain' => $str($tags['rg_track_gain'] ?? ''),
             'replaygain_album' => $str($tags['rg_album_gain'] ?? ''),
             'has_lyrics' => trim((string) ($tags['lyrics'] ?? '')) !== '',
+            // nur für „Album uneinheitlich“: danach trennt Navidrome Alben (im Editor nicht bearbeitet)
+            'originaldate' => $str($tags['originaldate'] ?? ''),
+            'releasedate' => $str($tags['releasedate'] ?? ''),
+            'mb_albumid' => $str($tags['mb_albumid'] ?? ''),
         ];
     }
 

@@ -59,7 +59,7 @@ class CleanupChecks
             'inverted' => ['Umgedrehte Namen', 'Sortierschreibweise wie „Crystals, The“ → „The Crystals“ (je nach Einstellung auch „Berry, Chuck“ → „Chuck Berry“) – Anzeigetext und ARTISTS.', 'Richtig herum schreiben'],
             'spelling' => ['Uneinheitliche Interpreten-Schreibweisen', 'Namen, die laut Künstlerverzeichnis anders geschrieben werden.', 'Richtige Schreibweise schreiben'],
             'combined' => ['Kombi-Interpreten ohne ARTISTS', 'z. B. „Yanou feat. Liz“ ohne einzelne ARTISTS-Einträge.', 'ARTISTS erzeugen'],
-            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte.', 'Häufigsten Wert fürs ganze Album setzen'],
+            'album_mixed' => ['Album mit uneinheitlichem Album-Interpret oder Album-Namen', 'Tracks eines Ordners haben verschiedene Werte – auch MusicBrainz-Album-ID, Veröffentlichungs- oder Original-Datum, nach denen Navidrome ein Album trennt.', 'Häufigsten Wert fürs ganze Album setzen'],
             'sampler_flags' => ['Sampler ohne „Various Artists“ oder Compilation-Flag', 'Alben in Compilation-Kategorien: Album-Interpret genau „Various Artists“ (auch statt „V.A.“, „Diverse“ …) und Flag setzen – der Interpret der Titel bleibt.', 'Tags setzen'],
             'compilation_in_artists' => ['Sampler im Künstler-Ordner', 'Compilation-Flag oder „Various Artists“-Schreibweise („V.A.“, „Diverse“ …) als Album-Interpret, liegt aber bei den Künstlern. Ohne „Various Artists“-Schreibweise im Album-Interpreten und mit nur einem Interpreten (bzw. „Kein Album“) ist nur das Flag falsch – es wird entfernt. Sonst im Album-Editor entscheiden (Sampler-Kategorie oder echten Album-Interpreten eintragen).', 'Compilation-Flag entfernen'],
             'year_date' => ['Jahr als Datum', 'Im Jahr-Tag steht ein Datum („2003-05-12“) oder mehr als die Jahreszahl – nur das Jahr behalten.', 'Nur das Jahr schreiben'],
@@ -71,7 +71,7 @@ class CleanupChecks
             'genre_missing' => ['Alben ohne Genre', 'Kein Genre im Tag – Vorschlag aus dem Standard-Genre des Künstlers bzw. seinen anderen Liedern.', 'Vorgeschlagenes Genre schreiben'],
             'electronic_sub' => ['Electronic ohne Unterstil', 'Electronic-Alben brauchen einen Unterstil (z. B. Trance) – oder „Electronic reicht hier“.', null],
             'misplaced' => ['Datei liegt nicht am Regelort', 'Pfad weicht vom Namensschema der Kategorie ab.', 'An den richtigen Ort verschieben'],
-            'leftovers' => ['Leere Ordner und Reste', 'Leere Ordner, „-Interpret@1-“, .DS_Store.', 'Entfernen'],
+            'leftovers' => ['Leere Ordner und Reste', 'Leere Ordner, „-Interpret@1-“, .DS_Store. Hängengebliebene Umbenennungen („Lied.MP3.musicwiz-tmp“) sind Musik und werden zurückbenannt, nie weggeräumt.', 'Entfernen'],
             'cover' => ['Fehlendes oder sehr kleines Cover', 'Kein Cover bzw. kleiner als die eingestellte Größe.', null],
             'incomplete' => ['Album unvollständig', 'Lücken in den Tracknummern (1, 2, 4 …) oder weniger Titel als laut Gesamtzahl (TRACKTOTAL).', null],
             'replaygain' => ['ReplayGain fehlt', 'Ohne Lautstärke-Angleich spielen leise Alben (z. B. 80er-Sampler) deutlich leiser als neue. Gemessen wird beim Ausführen (EBU R128, Bezug −18 LUFS) – dauert pro Album etwa so lange wie ein schnelles Abspielen.', 'Messen und ReplayGain schreiben'],
@@ -308,7 +308,8 @@ class CleanupChecks
 
     /** Felder der Titel, die Prüfungen verwenden (ohne Bewertung, Änderungszeit und Größe) */
     private const TRACK_FIELDS = ['id', 'album_id', 'path', 'ext', 'format', 'duration', 'bitrate', 'title', 'artist', 'artists', 'album', 'albumartist', 'albumartists',
-        'track', 'tracktotal', 'disc', 'disctotal', 'year', 'genres', 'comment', 'category', 'compilation', 'artistsort', 'albumartistsort', 'cover_embedded', 'cover_size', 'writable', 'error', 'replaygain', 'has_lyrics'];
+        'track', 'tracktotal', 'disc', 'disctotal', 'year', 'genres', 'comment', 'category', 'compilation', 'artistsort', 'albumartistsort', 'cover_embedded', 'cover_size', 'writable', 'error', 'replaygain', 'has_lyrics',
+        'originaldate', 'releasedate', 'mb_albumid'];
 
     private const ALBUM_FIELDS = ['id', 'dir', 'dirs', 'category', 'title', 'albumartist', 'folder_artist', 'is_compilation', 'cover_file', 'cover_embedded', 'cover_size', 'track_count'];
 
@@ -868,6 +869,9 @@ class CleanupChecks
         return $out;
     }
 
+    /** Felder, nach denen Navidrome Alben trennt (MusicBrainz-Album-ID, sonst u. a. Veröffentlichungsdatum) – Anzeigename */
+    private const RELEASE_FIELDS = ['mb_albumid' => 'MusicBrainz-Album-ID', 'releasedate' => 'Veröffentlichungsdatum', 'originaldate' => 'Original-Datum'];
+
     private function checkAlbumMixed(): array
     {
         $out = [];
@@ -875,7 +879,17 @@ class CleanupChecks
             $album = $this->albums()[$albumId] ?? null;
             $titles = $tracks->pluck('album')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
             $aas = $tracks->pluck('albumartist')->map(fn ($v) => (string) $v)->countBy()->sortDesc();
-            if ($titles->count() <= 1 && $aas->count() <= 1) {
+            // Navidrome-Felder: uneinheitlich, wenn manche Titel einen Wert haben und andere nicht – beim Original-Datum
+            // sind verschiedene Jahre je Titel (Sampler) üblich, bei ID und Veröffentlichungsdatum nicht
+            $release = [];
+            foreach (self::RELEASE_FIELDS as $field => $label) {
+                $values = $tracks->pluck($field)->map(fn ($v) => trim((string) $v))->countBy()->sortDesc();
+                $filled = $values->keys()->filter(fn ($v) => $v !== '');
+                if ($values->count() > 1 && ($values->has('') || $field !== 'originaldate')) {
+                    $release[$field] = [$values, $filled->count() === 1 ? (string) $filled->first() : null];
+                }
+            }
+            if ($titles->count() <= 1 && $aas->count() <= 1 && ! $release) {
                 continue;
             }
             // "Kein Album"-Ordner mit Einzeltiteln sind gewollt uneinheitlich
@@ -884,7 +898,7 @@ class CleanupChecks
             }
             $title = (string) $titles->keys()->first();
             $aa = (string) $aas->keys()->first();
-            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas) {
+            $actions = $this->applyActions($tracks, function (Track $t) use ($title, $aa, $titles, $aas, $release) {
                 $tags = [];
                 if ($titles->count() > 1 && (string) $t->album !== $title) {
                     $tags['album'] = $title;
@@ -893,19 +907,31 @@ class CleanupChecks
                     $tags['albumartist'] = $aa;
                     $tags['albumartists'] = ArtistNames::split($aa);
                 }
+                // nur ergänzen, wenn es genau einen Wert gibt (fehlt bei einzelnen Titeln) – verschiedene Werte entscheidet der Nutzer
+                foreach ($release as $field => [, $only]) {
+                    if ($only !== null && trim((string) $t->{$field}) === '' && TagTool::canWrite($t->path)) {
+                        $tags[$field] = $only;
+                    }
+                }
 
                 return $tags;
             });
             $detail = [];
             $changes = [];
-            foreach (['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa]] as $field => [$values, $target]) {
+            $fields = ['Album' => [$titles, $title], 'Album-Interpret' => [$aas, $aa]];
+            foreach ($release as $field => [$values, $only]) {
+                $fields[self::RELEASE_FIELDS[$field]] = [$values, $only];
+            }
+            foreach ($fields as $field => [$values, $target]) {
                 if ($values->count() <= 1) {
                     continue;
                 }
-                $detail[] = $field.': '.$values->keys()->map(fn ($k) => $k === '' ? '∅' : $k)->implode(' / ');
-                // je bisherigem Wert: wie viele Titel, und wohin (der häufigste Wert bleibt)
+                $counts = in_array($field, self::RELEASE_FIELDS, true);
+                $detail[] = $field.': '.$values->map(fn ($n, $k) => ($k === '' ? '∅' : $k).($counts ? ' ('.$n.')' : ''))->implode(' / ')
+                    .($target === null ? ' – verschieden, bitte selbst entscheiden' : '');
+                // je bisherigem Wert: wie viele Titel, und wohin (der häufigste bzw. einzige Wert bleibt)
                 foreach ($values as $value => $n) {
-                    $changes[] = ['field' => $field, 'from' => (string) $value, 'count' => $n, 'to' => (string) $value === $target ? null : $target];
+                    $changes[] = ['field' => $field, 'from' => (string) $value, 'count' => $n, 'to' => $target === null || (string) $value === $target ? null : $target];
                 }
             }
             $out[] = ['id' => 'a'.$albumId, 'title' => $this->albumTitle($album), 'detail' => implode(' · ', $detail), 'changes' => $changes, 'link' => $this->link($album), 'actions' => $actions];
@@ -1603,13 +1629,22 @@ class CleanupChecks
 
     private function checkLeftovers(): array
     {
-        $labels = ['junk' => 'Rest-Datei', 'empty_dir' => 'leerer Ordner', 'bad_dir' => 'Ordner ohne Interpret', 'no_music' => 'Ordner ohne Musik'];
+        $labels = ['junk' => 'Rest-Datei', 'empty_dir' => 'leerer Ordner', 'bad_dir' => 'Ordner ohne Interpret', 'no_music' => 'Ordner ohne Musik',
+            'interrupted' => 'Umbenennen abgebrochen – Musikdatei unter Zwischennamen'];
 
         return Leftover::orderBy('path')->get()->filter(fn ($l) => ! $this->settings->isInInbox($l->path) && file_exists($l->path))->map(function ($l) use ($labels) {
             $detail = $labels[$l->kind] ?? $l->kind;
             if ($l->kind === 'no_music' || $l->kind === 'bad_dir') {
                 $inside = $this->contentsOf($l->path);
                 $detail .= $inside ? ' (enthält: '.implode(', ', array_slice($inside, 0, 4)).(count($inside) > 4 ? ' …' : '').')' : '';
+            }
+            if ($l->kind === 'interrupted') {
+                // „Lied.MP3.musicwiz-tmp“ → „Lied.mp3“ (belegtes Ziel: bleibt liegen, nichts wird überschrieben)
+                $name = substr($l->path, 0, -strlen(FileOps::RENAME_SUFFIX));
+                $target = substr($name, 0, -strlen(pathinfo($name, PATHINFO_EXTENSION))).strtolower(pathinfo($name, PATHINFO_EXTENSION));
+
+                return ['id' => 'l'.$l->id, 'title' => $this->rel($l->path), 'detail' => $detail."\n→ zurückbenennen: ".basename($target), 'link' => null,
+                    'actions' => [['type' => 'move', 'path' => $l->path, 'target' => $target]]];
             }
             $real = in_array($l->kind, ['no_music', 'bad_dir'], true) && $this->hasRealContent($l->path);
             // Bilder eines umgezogenen Albums gehören zum Album: Ziel aus dem Verlauf

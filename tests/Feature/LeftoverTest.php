@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Leftover;
+use App\Models\Track;
 use App\Support\AutoCleanup;
 use App\Support\CleanupChecks;
+use App\Support\FileOps;
 use App\Support\OperationRunner;
 use App\Support\Scanner;
 use App\Support\Settings;
@@ -38,6 +40,25 @@ class LeftoverTest extends TestCase
         file_put_contents($p, str_repeat("\xFF\xFB\x90\x00".str_repeat("\x00", 413), 60));
 
         return $p;
+    }
+
+    public function test_stuck_rename_is_music_and_gets_renamed_back_not_trashed(): void
+    {
+        // Endung klein machen über den Zwischennamen, auf dem NAS hängengeblieben: „Cambodia.MP3.musicwiz-tmp“
+        $dir = $this->base.'/library/artists/K/Kim Wilde/Kein Album';
+        rename($this->mp3('K/Kim Wilde/Kein Album/Cambodia.MP3'), $dir.'/Cambodia.MP3'.FileOps::RENAME_SUFFIX);
+        app(Scanner::class)->scan('library');
+
+        $findings = app(CleanupChecks::class)->findings('leftovers');
+        $this->assertCount(1, $findings, 'kein „Ordner ohne Musik“');
+        $this->assertStringContainsString('Umbenennen abgebrochen', $findings[0]['detail']);
+        $this->assertSame([['type' => 'move', 'path' => $dir.'/Cambodia.MP3'.FileOps::RENAME_SUFFIX, 'target' => $dir.'/Cambodia.mp3']], $findings[0]['actions']);
+
+        OperationRunner::dispatch('cleanup', 'Reste', $findings[0]['actions']);
+        $this->assertFileExists($dir.'/Cambodia.mp3');
+        $this->assertDirectoryDoesNotExist($this->base.'/_papierkorb');
+        $this->assertSame($dir.'/Cambodia.mp3', Track::value('path'), 'wieder im Bestand');
+        $this->assertSame([], app(CleanupChecks::class)->findings('leftovers'));
     }
 
     public function test_folder_without_music_is_reported_and_trashed(): void

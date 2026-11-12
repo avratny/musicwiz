@@ -146,13 +146,16 @@ class FileOps
         return $to;
     }
 
+    /** Zwischenname beim Umbenennen (nur Groß/klein) – bleibt eine Datei so liegen, ist es die echte Datei, kein Rest. */
+    public const RENAME_SUFFIX = '.musicwiz-tmp';
+
     /**
      * Umbenennen über einen Zwischennamen (nötig, wenn sich nur Groß/klein ändert). Scheitert der zweite Schritt,
      * wird der erste zurückgenommen – es bleibt nie still ein "….musicwiz-tmp" liegen.
      */
     public static function renameVia(string $from, string $to): void
     {
-        $tmp = $from.'.musicwiz-tmp';
+        $tmp = $from.self::RENAME_SUFFIX;
         if (! @rename($from, $tmp)) {
             throw new RuntimeException('Umbenennen fehlgeschlagen: '.$from);
         }
@@ -161,6 +164,12 @@ class FileOps
                 throw new RuntimeException('Umbenennen abgebrochen – liegt jetzt unter '.$tmp);
             }
             throw new RuntimeException('Umbenennen fehlgeschlagen: '.$from.' → '.$to);
+        }
+        // NFS kann Erfolg melden, obwohl die Datei noch unter dem Zwischennamen liegt (so geschehen bei „Endungen“) –
+        // nachsehen und laut melden statt still einen Zwischennamen zu hinterlassen
+        clearstatcache();
+        if (file_exists($tmp) || ! file_exists($to)) {
+            throw new RuntimeException('Umbenennen nicht angekommen – liegt evtl. noch unter '.$tmp.' (unter „Leere Ordner und Reste“ zurückbenennen)');
         }
     }
 
