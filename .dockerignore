@@ -8,10 +8,11 @@ storage/framework/cache/*
 storage/framework/sessions/*
 storage/framework/views/*
 storage/framework/testing
-storage/app/private/*
+storage/app/*
 database/*.sqlite*
 data
 .env
 .git
 .DS_Store
 *.md
+**/__pycache__

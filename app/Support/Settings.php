@@ -3,209 +3,67 @@
 namespace App\Support;
 
 use App\Models\Setting;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Crypt;
 
-/**
- * Einstellungen aus SQLite, Startwerte aus config/musicwiz.php (.env).
- */
+/** Einstellungen aus der Datenbank; Zugangsdaten werden verschlüsselt gespeichert. */
 class Settings
 {
-    public const KEYS = ['base', 'inbox', 'trash', 'artist_images', 'categories', 'no_album', 'non_letter_folder',
-        'compilation_artist', 'replace_colon', 'replace_slash', 'id3_version', 'scan_throttle_ms', 'small_cover_px',
-        'discogs_token', 'fanart_key', 'acoustid_key', 'spotify_client_id', 'spotify_client_secret', 'audiodb_key', 'anthropic_api_key', 'chat_model', 'auto_cleanup', 'inbox_watch', 'qobuz_store', 'invert_names', 'sort_articles',
-        'yt_sleep_min', 'yt_sleep_max', 'yt_sleep_requests', 'yt_rate_mb', 'yt_daily_limit'];
+    /** Zugangsdaten anderer Plattformen: Schlüssel => [Bezeichnung, Hinweis, Link] */
+    public const SECRETS = [
+        'discogs_token' => ['Discogs-Token', 'Persönliches Token für Album- und Interpretendaten.', 'https://www.discogs.com/settings/developers'],
+        'spotify_client_id' => ['Spotify Client-ID', 'App im Spotify-Entwickler-Dashboard anlegen.', 'https://developer.spotify.com/dashboard'],
+        'spotify_client_secret' => ['Spotify Client-Secret', 'Gehört zur Client-ID.', 'https://developer.spotify.com/dashboard'],
+        'fanart_key' => ['Fanart.tv-API-Key', 'Interpretenbilder.', 'https://fanart.tv/get-an-api-key/'],
+        'audiodb_key' => ['TheAudioDB-API-Key', 'Interpretenbilder, Genres, Biografie – leer = freier Test-Key.', 'https://www.theaudiodb.com/free_music_api'],
+        'lastfm_api_key' => ['Last.fm-API-Key', 'Hörerzahlen, korrigierte Schreibweise und Tags der Interpreten.', 'https://www.last.fm/api/account/create'],
+        'lastfm_secret' => ['Last.fm Shared Secret', 'Gehört zum API-Key (für spätere Funktionen mit Anmeldung).', 'https://www.last.fm/api/accounts'],
+        'acoustid_key' => ['AcoustID-Anwendungsschlüssel', 'Lieder per Fingerabdruck erkennen.', 'https://acoustid.org/new-application'],
+        'anthropic_api_key' => ['Anthropic-API-Key', 'Für Claude: Vorschläge bei Encoding-Fehlern (Sonstiges).', 'https://console.anthropic.com/settings/keys'],
+    ];
+
+    /** Einstellungen › Sonstiges: Schlüssel => [Bezeichnung, Hinweis, Standard, kleinster, größter Wert] (ganze Zahlen) */
+    public const OTHER = [
+        'cover_min_px' => ['Mindestgröße Cover (px)', 'Kürzere Seite des Covers – kleinere meldet Alben › Cover zu klein.', 500, 50, 5000],
+        'genre_share' => ['Anteil Hauptgenre (%)', 'Ab diesem Anteil zählt ein Hauptgenre zum Interpreten – sonst meldet Sonstiges › Genre weicht ab.', 15, 1, 100],
+    ];
 
     private ?array $cache = null;
 
-    public function all(): array
+    public function get(string $key, mixed $default = null): mixed
     {
-        if ($this->cache === null) {
-            $stored = Schema::hasTable('settings') ? Setting::pluck('value', 'key')->all() : [];
-            $this->cache = [];
-            foreach (self::KEYS as $key) {
-                $this->cache[$key] = array_key_exists($key, $stored) && $stored[$key] !== null ? $stored[$key] : config('musicwiz.'.$key);
-            }
-            // früher mehrere Inbox-Ordner: der erste gilt
-            if (! isset($stored['inbox']) && ! empty($stored['inbox_paths'])) {
-                $this->cache['inbox'] = (string) ((array) $stored['inbox_paths'])[0];
+        $this->cache ??= Setting::pluck('value', 'key')->all();
+        $value = $this->cache[$key] ?? null;
+        if ($value === null || $value === '') {
+            return $default;
+        }
+        if (isset(self::SECRETS[$key])) {
+            try {
+                return Crypt::decryptString($value);
+            } catch (DecryptException) {
+                return $default; // mit anderem App-Schlüssel gespeichert
             }
         }
 
-        return $this->cache;
+        return $value;
     }
 
-    public function get(string $key, mixed $default = null): mixed
+    /** Wert aus Einstellungen › Sonstiges (Standard, wenn nicht gesetzt) */
+    public function other(string $key): int
     {
-        return $this->all()[$key] ?? $default;
+        [, , $default] = self::OTHER[$key];
+
+        return (int) $this->get($key, $default);
     }
 
+    /** @param  array<string, mixed>  $values */
     public function set(array $values): void
     {
         foreach ($values as $key => $value) {
-            if (in_array($key, self::KEYS, true)) {
-                Setting::updateOrCreate(['key' => $key], ['value' => $value]);
-            }
+            $value = $value === null ? null : trim((string) $value);
+            $stored = $value === null || $value === '' ? null : (isset(self::SECRETS[$key]) ? Crypt::encryptString($value) : $value);
+            Setting::updateOrCreate(['key' => $key], ['value' => $stored]);
         }
         $this->cache = null;
-    }
-
-    /** Kopie mit ungespeicherten Werten (für die Live-Vorschau). */
-    public function override(array $values): static
-    {
-        $copy = clone $this;
-        $copy->cache = array_merge($this->all(), $values);
-
-        return $copy;
-    }
-
-    public function reset(string $key): void
-    {
-        Setting::where('key', $key)->delete();
-        $this->cache = null;
-    }
-
-    public function base(): string
-    {
-        return rtrim($this->get('base'), '/');
-    }
-
-    /**
-     * Feste Kategorien: je Bereich (Lib, Blackhole) ein Ordner für Künstler und einer für Sampler.
-     * Einstellbar sind nur Name (Kommentar-Tag), Zielordner und Muster.
-     *
-     * @return list<array{role:string, area:string, name:string, folder:string, pattern:string, compilation:bool}>
-     */
-    public function categories(): array
-    {
-        $stored = (array) $this->get('categories', []);
-        $defaults = config('musicwiz.categories');
-        $out = [];
-        foreach (self::ROLES as $role => [$area, $compilation]) {
-            // ältere Einstellungen: freie Liste statt fester Rollen – über den Namen zuordnen
-            $c = $stored[$role]
-                ?? collect($stored)->first(fn ($c) => is_array($c) && ($c['role'] ?? null) === $role)
-                ?? collect($stored)->first(fn ($c) => is_array($c) && strcasecmp((string) ($c['name'] ?? ''), $defaults[$role]['name']) === 0)
-                ?? [];
-            $c = array_merge($defaults[$role], array_filter((array) $c, fn ($v) => is_string($v) && trim($v) !== ''));
-            $out[] = [
-                'role' => $role,
-                'area' => $area,
-                'name' => trim((string) $c['name']),
-                'folder' => trim((string) $c['folder'], '/ '),
-                'pattern' => trim((string) $c['pattern']),
-                'compilation' => $compilation,
-            ];
-        }
-
-        return $out;
-    }
-
-    /** Rolle => [Bereich, Compilation] */
-    public const ROLES = [
-        'lib' => ['library', false],
-        'lib_compilation' => ['library', true],
-        'blackhole' => ['blackhole', false],
-        'blackhole_compilation' => ['blackhole', true],
-    ];
-
-    /** @return list<array{role:string, area:string, name:string, folder:string, pattern:string, compilation:bool}> */
-    public function categoriesIn(string $area): array
-    {
-        return array_values(array_filter($this->categories(), fn ($c) => $c['area'] === $area));
-    }
-
-    public function category(?string $name): ?array
-    {
-        foreach ($this->categories() as $c) {
-            if ($name !== null && strcasecmp($c['name'], trim($name)) === 0) {
-                return $c;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Ordner, die sich nicht vertragen: leer, "." bzw. "..", oder ineinander (z. B. Papierkorb in einem Kategorie-Ordner –
-     * dann würde der Papierkorb als Lib eingelesen und von Aufräumen zurückverschoben).
-     *
-     * @return list<string>
-     */
-    public function pathProblems(): array
-    {
-        $problems = [];
-        $norm = fn ($p) => rtrim((string) preg_replace('#/+#', '/', trim((string) $p)), '/');
-        if ($norm($this->get('base')) === '') {
-            $problems[] = 'Basisordner fehlt.';
-        }
-        $dirs = ['Inbox' => $this->inbox(), 'Papierkorb' => $norm($this->get('trash')), 'Künstlerbilder' => $norm($this->get('artist_images'))];
-        foreach ($this->categories() as $c) {
-            $parts = explode('/', trim((string) $c['folder'], '/ '));
-            if (trim((string) $c['folder'], '/ ') === '' || array_intersect($parts, ['.', '..', ''])) {
-                $problems[] = 'Kategorie „'.$c['name'].'“: Zielordner muss ein Unterordner des Basisordners sein (nicht leer, ohne „.“/„..“).';
-
-                continue;
-            }
-            $dirs['Kategorie „'.$c['name'].'“'] = $norm($this->categoryRoot($c));
-        }
-        foreach ($dirs as $label => $dir) {
-            if ($dir === '') {
-                $problems[] = $label.': Ordner fehlt.';
-            }
-        }
-        $dirs = array_filter($dirs);
-        foreach ($dirs as $a => $da) {
-            foreach ($dirs as $b => $db) {
-                if ($a === $b) {
-                    continue;
-                }
-                if (strcasecmp($da, $db) === 0) {
-                    $problems[] = $a.' und '.$b.' sind derselbe Ordner ('.$da.').';
-                } elseif (str_starts_with(mb_strtolower($db.'/'), mb_strtolower($da.'/'))) {
-                    $problems[] = $b.' liegt im Ordner von '.$a.' ('.$db.') – Ordner dürfen nicht ineinander liegen.';
-                }
-            }
-        }
-
-        return array_values(array_unique($problems));
-    }
-
-    public function categoryRoot(array $category): string
-    {
-        return $this->base().'/'.$category['folder'];
-    }
-
-    /** Kategorie, in deren Zielordner der Pfad liegt. */
-    public function categoryForPath(string $path): ?array
-    {
-        $best = null;
-        foreach ($this->categories() as $c) {
-            $root = $this->categoryRoot($c).'/';
-            if (str_starts_with($path, $root) && ($best === null || strlen($root) > strlen($this->categoryRoot($best)))) {
-                $best = $c;
-            }
-        }
-
-        return $best;
-    }
-
-    public function inbox(): string
-    {
-        return rtrim(trim((string) $this->get('inbox')), '/');
-    }
-
-    public function isInInbox(string $path): bool
-    {
-        return $this->inbox() !== '' && str_starts_with($path, $this->inbox().'/');
-    }
-
-    /** Bereich eines Pfads im Index: inbox, blackhole oder library. */
-    public function locationOf(string $path): string
-    {
-        if ($this->isInInbox($path)) {
-            return 'inbox';
-        }
-
-        return ($this->categoryForPath($path)['area'] ?? null) === 'blackhole' ? 'blackhole' : 'library';
     }
 }

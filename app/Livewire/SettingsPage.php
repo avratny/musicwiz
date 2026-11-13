@@ -2,314 +2,274 @@
 
 namespace App\Livewire;
 
-use App\Models\Genre;
-use App\Models\GenreMapping;
-use App\Models\Track;
-use App\Support\AutoCleanup;
-use App\Support\DataVersion;
-use App\Support\Genres;
-use App\Support\InboxWatch;
-use App\Support\PathBuilder;
+use App\Jobs\UpdateMusicBrainzData;
+use App\Models\NameRule;
+use App\Support\Duplicates;
+use App\Support\Locations;
+use App\Support\MusicBrainzData;
+use App\Support\NameRules;
+use App\Support\PathTemplate;
 use App\Support\Settings;
-use App\Support\SettingsBackup;
-use Illuminate\Support\Facades\Cache;
+use App\Support\SortNames;
 use Livewire\Attributes\Layout;
-use Livewire\Attributes\Locked;
-use Livewire\Attributes\Title;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
-use Livewire\WithFileUploads;
 
-#[Layout('layouts.app'), Title('Einstellungen')]
+/**
+ * Einstellungen in Tabs: Zugangsdaten anderer Plattformen, Ordner (aus der .env) mit Vorlagen für die Dateinamen und
+ * Schreibweisen (Regeln für Interpreten: was zu „Various Artists“ wird, Ersetzungen wie „d.r.“ → „Dr.“) und Sonstiges
+ * (z. B. Mindestgröße der Cover).
+ */
+#[Layout('layouts.app')]
 class SettingsPage extends Component
 {
-    use WithFileUploads;
+    public const TABS = ['zugangsdaten' => 'Zugangsdaten', 'ordner' => 'Ordner', 'schreibweisen' => 'Schreibweisen', 'musicbrainz' => 'MusicBrainz', 'sonstiges' => 'Sonstiges'];
+
+    public const SECTIONS = ['various' => 'Various Artists', 'names' => 'Namen', 'sortierung' => 'Sortiernamen'];
 
     #[Url]
-    public string $tab = 'general';
+    public string $tab = 'zugangsdaten';
 
-    public array $s = [];
+    #[Url]
+    public string $section = 'various';
 
-    public string $newGenre = '';
+    public array $secrets = [];
 
-    public ?int $newGenreParent = null;
+    /** Vorlagen und Optionen für die Dateinamen (Schlüssel aus PathTemplate::TEMPLATES und ::OPTIONS) */
+    public array $paths = [];
 
-    public string $mappingFilter = '';
+    public array $pathErrors = [];
 
-    // Sichern & Zurücksetzen
-    public bool $exportSecrets = false;
+    public ?string $pathsSaved = null;
 
-    public bool $exportImages = true;
+    /** Einstellungen › Sonstiges (Schlüssel aus Settings::OTHER) */
+    public array $other = [];
 
-    public int $importImages = 0;
+    public array $otherErrors = [];
 
-    public $importFile;
+    public ?string $otherSaved = null;
 
-    public ?array $importSummary = null;
+    /** Duplikate: allgemeine Titel (kein Ersetzen über Albumgrenzen ohne Fingerabdruck), kommagetrennt */
+    public string $genericTitles = '';
 
-    public array $importSections = [];
+    public ?string $saved = null;
 
-    public array $resetSections = ['settings'];
+    /** Schreibweisen › Sortiernamen: Artikel, die nach hinten kommen („The Beatles“ → „Beatles, The“) */
+    public string $articles = '';
 
-    /** all = Werkszustand, sections = nur ausgewählte Bereiche */
-    public string $resetMode = 'all';
+    public string $newRule = '';
 
-    public string $resetConfirm = '';
+    public string $newReplacement = '';
 
-    /** Beispiel-Tracks für die Live-Vorschau der Muster: einmal zufällig gewählt, damit sie nicht bei jedem Tastendruck wechseln */
-    #[Locked]
-    public ?array $sampleIds = null;
+    public bool $newWholeWord = true;
+
+    public ?string $message = null;
+
+    public ?string $error = null;
 
     public function mount(Settings $settings): void
     {
-        $this->load($settings);
+        $this->articles = (string) $settings->get('sort_articles', SortNames::DEFAULT_ARTICLES);
+        foreach (array_keys(Settings::SECRETS) as $key) {
+            $this->secrets[$key] = (string) $settings->get($key, '');
+        }
+        foreach (PathTemplate::TEMPLATES as $key => [, , , $default]) {
+            $this->paths[$key] = (string) $settings->get($key, $default);
+        }
+        foreach (PathTemplate::OPTIONS as $key => [, $default]) {
+            $this->paths[$key] = (string) $settings->get($key, $default);
+        }
+        foreach (array_keys(Settings::OTHER) as $key) {
+            $this->other[$key] = (string) $settings->other($key);
+        }
+        $this->genericTitles = (string) $settings->get('generic_titles', Duplicates::GENERIC_TITLES);
     }
 
-    private function load(Settings $settings): void
+    public function saveOther(Settings $settings): void
     {
-        $this->s = $settings->all();
-        $this->s['categories'] = $settings->categories();
+        $this->otherSaved = null;
+        $this->otherErrors = [];
+        foreach (Settings::OTHER as $key => [, , , $min, $max]) {
+            $value = trim((string) ($this->other[$key] ?? ''));
+            if (! preg_match('/^\d+$/', $value) || (int) $value < $min || (int) $value > $max) {
+                $this->otherErrors[$key] = 'Ganze Zahl von '.$min.' bis '.$max.'.';
+            }
+        }
+        if ($this->otherErrors) {
+            return;
+        }
+        $settings->set(array_map(fn ($v) => (string) (int) $v, array_intersect_key($this->other, Settings::OTHER)));
+        $titles = implode(', ', array_unique(array_filter(array_map('trim', explode(',', $this->genericTitles)))));
+        $settings->set(['generic_titles' => $titles === Duplicates::GENERIC_TITLES ? null : $titles]);
+        $this->genericTitles = $titles;
+        $this->otherSaved = 'Gespeichert.';
     }
 
-    /** Artikel für Sortiernamen an- bzw. abwählen (gespeichert mit „Speichern“). */
-    public function toggleArticle(string $article): void
+    /** Artikel speichern, dann Eindeutiges eintragen (umgedrehte Namen, Sortiernamen) */
+    public function saveArticles(Settings $settings, SortNames $sorts): void
     {
-        $list = array_values(array_filter(preg_split('/\s*,\s*/u', trim((string) ($this->s['sort_articles'] ?? ''))), fn ($a) => $a !== ''));
-        $has = array_filter($list, fn ($a) => mb_strtolower($a) === mb_strtolower($article));
-        $list = $has ? array_values(array_diff_key($list, $has)) : [...$list, $article];
-        $this->s['sort_articles'] = implode(', ', $list);
+        $list = implode(', ', array_unique(array_filter(array_map('trim', explode(',', $this->articles)))));
+        $settings->set(['sort_articles' => $list === '' ? null : $list]);
+        $this->articles = $list;
+        $sorts->forget();
+        $n = $sorts->apply();
+        $this->message = 'Gespeichert'.($n ? ' – Sortiernamen bei '.$n.' '.($n === 1 ? 'Lied' : 'Liedern').' angepasst.' : '.');
+        $this->error = null;
     }
 
     public function save(Settings $settings): void
     {
-        $this->validate([
-            's.base' => 'required|string',
-            's.inbox' => 'required|string',
-            's.categories.*.name' => 'required|string|distinct',
-            's.categories.*.folder' => 'required|string',
-            's.categories.*.pattern' => ['required', 'string', 'regex:/\{ext\}$/'],
-            's.trash' => 'required|string',
-            's.artist_images' => 'required|string',
-            's.id3_version' => 'in:3,4',
-            's.scan_throttle_ms' => 'integer|min:0|max:5000',
-        ], ['s.categories.*.pattern.regex' => 'Das Muster muss mit {ext} enden.']);
-
-        $values = $this->s;
-        unset($values['auto_cleanup']); // wird im Reiter „Automatiken“ direkt gespeichert
-        $values['id3_version'] = (int) $values['id3_version'];
-        $values['scan_throttle_ms'] = (int) $values['scan_throttle_ms'];
-        $values['small_cover_px'] = (int) $values['small_cover_px'];
-        $values['inbox_watch'] = (bool) ($values['inbox_watch'] ?? false);
-        $values['inbox'] = rtrim(trim($values['inbox']), '/');
-        // feste Rollen: gespeichert werden nur Name, Zielordner und Muster
-        $values['categories'] = collect($values['categories'])->mapWithKeys(fn ($c) => [$c['role'] => ['name' => trim($c['name']), 'folder' => trim($c['folder'], '/ '), 'pattern' => trim($c['pattern'])]])->all();
-        if ($problems = $settings->override($values)->pathProblems()) {
-            foreach ($problems as $i => $problem) {
-                $this->addError('paths.'.$i, $problem);
-            }
-
-            return;
-        }
-        $settings->set($values);
-        $this->load($settings);
-        app(InboxWatch::class)->ensure();
-        session()->flash('status', 'Gespeichert. Neue Muster gelten für neue Einordnungen; die Lib wird über „Aufräumen“ verschoben'
-            .(app(AutoCleanup::class)->isEnabled('misplaced') ? ' – bzw. von der Automatik „falscher Ort“ nach dem nächsten Scan (höchstens '.AutoCleanup::LIMIT.' Schritte ohne Nachfrage).' : '.'));
+        $settings->set(array_intersect_key($this->secrets, Settings::SECRETS));
+        $this->saved = 'Gespeichert.';
     }
 
-    // ---------------------------------------------------------------- Genres
-
-    public function addGenre(): void
+    public function savePaths(Settings $settings): void
     {
-        $name = trim($this->newGenre);
-        if ($name === '' || Genre::where('name', $name)->exists()) {
-            return;
-        }
-        Genre::create(['name' => $name, 'parent_id' => $this->newGenreParent ?: null, 'position' => (int) Genre::where('parent_id', $this->newGenreParent ?: null)->max('position') + 1]);
-        $this->newGenre = '';
-    }
-
-    public function renameGenre(int $id, string $name): void
-    {
-        $name = trim($name);
-        $genre = Genre::find($id);
-        if ($genre && $name !== '' && ! Genre::where('name', $name)->where('id', '!=', $id)->exists()) {
-            GenreMapping::where('target', $genre->name)->update(['target' => $name]);
-            $genre->update(['name' => $name]);
-        }
-    }
-
-    public function deleteGenre(int $id): void
-    {
-        $genre = Genre::find($id);
-        if ($genre) {
-            GenreMapping::where('target', $genre->name)->update(['target' => null]);
-            $genre->delete();
-        }
-    }
-
-    public function moveGenre(int $id, int $dir): void
-    {
-        $genre = Genre::find($id);
-        if (! $genre) {
-            return;
-        }
-        $siblings = Genre::where('parent_id', $genre->parent_id)->orderBy('position')->orderBy('name')->get()->values();
-        $i = $siblings->search(fn ($g) => $g->id === $id);
-        $j = $i + $dir;
-        if ($j < 0 || $j >= $siblings->count()) {
-            return;
-        }
-        $list = $siblings->all();
-        [$list[$i], $list[$j]] = [$list[$j], $list[$i]];
-        foreach ($list as $pos => $g) {
-            $g->update(['position' => $pos]);
-        }
-    }
-
-    public function updatedImportFile(SettingsBackup $backup): void
-    {
-        $this->resetErrorBag('importFile');
-        $this->importSummary = null;
-        try {
-            $read = $backup->read($this->importFile->getRealPath());
-            $this->importSummary = $backup->summarize($read['data']);
-            $this->importImages = count($read['images']);
-            $this->importSections = array_values(array_intersect(array_keys(array_filter($this->importSummary)), SettingsBackup::BACKUP_SECTIONS));
-        } catch (\Throwable $e) {
-            $this->addError('importFile', $e->getMessage());
-        }
-    }
-
-    public function runImport(SettingsBackup $backup, Settings $settings): void
-    {
-        if (! $this->importFile || ! $this->importSections) {
-            return;
-        }
-        $read = $backup->read($this->importFile->getRealPath());
-        try {
-            $backup->import($read['data'], $this->importSections);
-        } catch (\RuntimeException $e) {
-            $settings->set([]); // Zwischenspeicher leeren: die Datenbank ist unverändert
-            $this->addError('importFile', $e->getMessage());
-
-            return;
-        }
-        $images = in_array('artists', $this->importSections, true) ? $backup->restoreImages($read['images']) : 0;
-        $this->importFile = null;
-        $this->importSummary = null;
-        $this->load($settings);
-        session()->flash('status', 'Sicherung eingespielt: '.implode(', ', array_map(fn ($k) => SettingsBackup::SECTIONS[$k][0], $this->importSections)).'.'
-            .($images ? ' '.$images.' Künstlerbild(er) abgelegt.' : ''));
-    }
-
-    public function runReset(SettingsBackup $backup, Settings $settings)
-    {
-        $this->resetErrorBag('resetConfirm');
-        if (trim($this->resetConfirm) !== 'ZURÜCKSETZEN') {
-            $this->addError('resetConfirm', 'Bitte „ZURÜCKSETZEN“ eintippen.');
-
-            return null;
-        }
-        if ($this->resetMode === 'all') {
-            $backup->factoryReset();
-            session()->flash('status', 'MusicWiz ist im Werkszustand – Datenbank geleert. Zum Start: Einstellungen prüfen, dann Inbox und Bestand scannen.');
-
-            return $this->redirectRoute('inbox');
-        }
-        if (! $this->resetSections) {
-            return null;
-        }
-        $backup->reset($this->resetSections);
-        $done = implode(', ', array_map(fn ($k) => SettingsBackup::SECTIONS[$k][0], $this->resetSections));
-        $this->resetConfirm = '';
-        $this->load($settings);
-        session()->flash('status', 'Zurückgesetzt: '.$done.'.');
-
-        return null;
-    }
-
-    public function toggleAuto(string $check, string $category, Settings $settings): void
-    {
-        $config = (array) $settings->get('auto_cleanup', []);
-        $config[$check][$category] = empty($config[$check][$category]);
-        $config[$check] = array_filter($config[$check]);
-        $settings->set(['auto_cleanup' => array_filter($config)]);
-        $this->s['auto_cleanup'] = $settings->get('auto_cleanup');
-    }
-
-    public function runAuto(AutoCleanup $auto): void
-    {
-        $started = $auto->run();
-        $this->dispatch('activity-changed');
-        session()->flash('status', $started ? 'Automatiken gestartet – Schritt für Schritt, Details im Protokoll und Verlauf.' : 'Keine Automatik freigegeben.');
-    }
-
-    public function setMapping(string $source, string $target): void
-    {
-        GenreMapping::updateOrCreate(['source' => $source], ['target' => $target !== '' ? $target : null]);
-    }
-
-    public function render(Settings $settings, PathBuilder $paths, Genres $genres)
-    {
-        $data = ['categoriesPreview' => [], 'genreTree' => collect(), 'mappings' => [], 'genreOptions' => []];
-
-        if ($this->tab === 'categories') {
-            $preview = $settings->override(['categories' => $this->s['categories'], 'base' => $this->s['base'], 'no_album' => $this->s['no_album'],
-                'non_letter_folder' => $this->s['non_letter_folder'], 'replace_colon' => $this->s['replace_colon'], 'replace_slash' => $this->s['replace_slash']]);
-            $builder = new PathBuilder($preview);
-            $this->sampleIds ??= Track::inRandomOrder()->whereNotNull('artist')->limit(3)->pluck('id')->all();
-            $samples = Track::whereIn('id', $this->sampleIds)->get()->map(fn ($t) => ['tags' => $t->tags(), 'path' => $t->path])->all();
-            $samples[] = ['tags' => ['artist' => 'Yanou feat. Liz', 'title' => 'King of My Castle', 'album' => 'Sunrise', 'year' => '2006', 'track' => '5', 'disc' => '2', 'disctotal' => '2'], 'path' => 'x.flac'];
-            $samples[] = ['tags' => ['artist' => 'AC/DC', 'title' => 'Thunderstruck', 'album' => '', 'year' => '', 'track' => ''], 'path' => 'x.mp3'];
-            foreach ($preview->categories() as $i => $c) {
-                foreach ($samples as $sample) {
-                    try {
-                        $target = $builder->target($c, $sample['tags'], PathBuilder::isMultiDisc([$sample['tags']]), $sample['path']);
-                        $data['categoriesPreview'][$i][] = substr($target, strlen(rtrim($this->s['base'], '/')) + 1);
-                    } catch (\Throwable $e) {
-                        $data['categoriesPreview'][$i][] = 'Fehler: '.$e->getMessage();
-                    }
-                }
+        $this->pathsSaved = null;
+        $this->pathErrors = [];
+        foreach (array_keys(PathTemplate::TEMPLATES) as $key) {
+            if ($problem = PathTemplate::problem((string) ($this->paths[$key] ?? ''))) {
+                $this->pathErrors[$key] = $problem;
             }
         }
-        if ($this->tab === 'auto') {
-            $auto = app(AutoCleanup::class);
-            $data['autoChecks'] = $auto->fixableChecks();
-            $data['autoColumns'] = $auto->columns();
-            $data['autoConfig'] = $auto->config();
-            $data['autoPreview'] = $auto->preview();
-            $data['autoHeld'] = $auto->held();
-            $data['risky'] = AutoCleanup::RISKY;
-        }
-        if ($this->tab === 'genres' || $this->tab === 'mapping') {
-            $data['genreTree'] = Genre::whereNull('parent_id')->with('children')->orderBy('position')->orderBy('name')->get();
-            $data['genreOptions'] = $genres->options();
-        }
-        if ($this->tab === 'mapping') {
-            // Genre-Häufigkeiten über den ganzen Bestand nur bei geändertem Datenstand neu zählen
-            $all = Cache::remember('genre-counts:'.DataVersion::tracks(), now()->addHour(), function () {
-                $all = [];
-                foreach (Track::where('location', '!=', 'blackhole')->select('genres')->cursor() as $t) {
-                    foreach ($t->genres ?? [] as $g) {
-                        $all[$g] = ($all[$g] ?? 0) + 1;
-                    }
-                }
-
-                return $all;
-            });
-            $counts = array_filter($all, fn ($g) => ! $genres->isListed($g), ARRAY_FILTER_USE_KEY);
-            foreach (GenreMapping::pluck('source') as $src) {
-                $counts[$src] ??= 0;
+        foreach (PathTemplate::OPTIONS as $key => [$label]) {
+            if (preg_match('/[\/\\\\:?*<>|"]/', (string) ($this->paths[$key] ?? ''))) {
+                $this->pathErrors[$key] = 'Keine Zeichen, die in Namen nicht erlaubt sind (/ \\ : ? * < > | ").';
             }
-            if ($this->mappingFilter !== '') {
-                $counts = array_filter($counts, fn ($k) => stripos($k, $this->mappingFilter) !== false, ARRAY_FILTER_USE_KEY);
-            }
-            arsort($counts);
-            $data['mappings'] = $counts;
-            $data['mapped'] = GenreMapping::pluck('target', 'source')->all();
+        }
+        if ($this->pathErrors) {
+            return;
+        }
+        $settings->set(array_intersect_key($this->paths, PathTemplate::TEMPLATES + PathTemplate::OPTIONS));
+        $this->pathsSaved = 'Gespeichert.';
+    }
+
+    /** Vorlage auf die Vorgabe zurücksetzen (noch nicht gespeichert) */
+    public function resetTemplate(string $key): void
+    {
+        if (isset(PathTemplate::TEMPLATES[$key])) {
+            $this->paths[$key] = PathTemplate::TEMPLATES[$key][3];
+        }
+    }
+
+    /** Regel hinzufügen und gleich auf alle Lieder anwenden (System-Änderungen) */
+    public function addRule(): void
+    {
+        $kind = $this->section === 'names' ? 'word' : 'various';
+        $value = trim(preg_replace('/\s+/u', ' ', $this->newRule));
+        $replacement = trim(preg_replace('/\s+/u', ' ', $this->newReplacement));
+        $this->message = $this->error = null;
+        if ($value === '' || mb_strlen($value) > 128 || ($kind === 'word' && ($replacement === '' || mb_strlen($replacement) > 128))) {
+            $this->error = $kind === 'word' ? 'Bitte Suchtext und Ersetzung eingeben.' : 'Bitte einen Wert eingeben.';
+
+            return;
+        }
+        if ($kind === 'word' && $value === $replacement) {
+            $this->error = 'Suchtext und Ersetzung sind gleich.';
+
+            return;
+        }
+        if ($kind === 'various' && NameRules::normalize($value) === NameRules::normalize(NameRules::VARIOUS)) {
+            $this->error = '„'.NameRules::VARIOUS.'“ ist das Ziel selbst.';
+
+            return;
+        }
+        $existing = NameRule::where('kind', $kind)->get()->first(fn ($r) => $kind === 'various'
+            ? NameRules::normalize($r->value) === NameRules::normalize($value)
+            : mb_strtolower($r->value) === mb_strtolower($value));
+        if ($existing) {
+            $this->error = '„'.$value.'“ '.($kind === 'various'
+                ? 'ist schon abgedeckt ('.($existing->value === $value ? 'gibt es schon' : 'durch „'.$existing->value.'“').').'
+                : 'wird schon ersetzt (durch „'.$existing->replacement.'“).');
+
+            return;
+        }
+        NameRule::create(['kind' => $kind, 'value' => $value] + ($kind === 'word' ? ['replacement' => $replacement, 'whole_word' => $this->newWholeWord] : []));
+        $this->newRule = $this->newReplacement = '';
+        $this->newWholeWord = true;
+        $n = app(NameRules::class)->apply();
+        $this->message = '„'.$value.'“'.($kind === 'word' ? ' → „'.$replacement.'“' : '').' hinzugefügt – '.$this->changedText($n);
+    }
+
+    /** Weitere Schreibweise, die zu $replacement wird (in der Gruppe „Dr.“ wird geschrieben, wenn …) */
+    public function addTo(string $replacement, string $search): void
+    {
+        $this->section = 'names';
+        $this->newReplacement = $replacement;
+        $this->newRule = $search;
+        $this->newWholeWord = true;
+        $this->addRule();
+    }
+
+    /** Namen-Regel: nur als eigenes Wort ↔ auch innerhalb eines Worts */
+    public function toggleWholeWord(int $id): void
+    {
+        $rule = NameRule::where('kind', 'word')->findOrFail($id);
+        $rule->update(['whole_word' => ! $rule->whole_word]);
+        $n = app(NameRules::class)->apply();
+        $this->error = null;
+        $this->message = '„'.$rule->value.'“ gilt jetzt '.($rule->whole_word ? 'nur als eigenes Wort' : 'auch innerhalb eines Worts').' – '.$this->changedText($n);
+    }
+
+    private function changedText(int $n): string
+    {
+        return $n.' '.($n === 1 ? 'Lied' : 'Lieder').' angepasst'.($n ? ' (siehe Änderungen)' : '').'.';
+    }
+
+    /** Regel entfernen – bereits angepasste Lieder bleiben so */
+    public function removeRule(int $id): void
+    {
+        $rule = NameRule::findOrFail($id);
+        $rule->delete();
+        $this->error = null;
+        $this->message = '„'.$rule->value.'“ entfernt.';
+    }
+
+    public function updatedSection(): void
+    {
+        $this->newRule = $this->newReplacement = '';
+        $this->newWholeWord = true;
+        $this->message = $this->error = null;
+    }
+
+    /** Beispiele je Vorlage – mit den eingegebenen (noch nicht gespeicherten) Werten */
+    private function examples(): array
+    {
+        $builder = new PathTemplate(array_intersect_key($this->paths, PathTemplate::OPTIONS));
+        $out = [];
+        foreach (PathTemplate::TEMPLATES as $key => [$location, $compilation]) {
+            $template = (string) ($this->paths[$key] ?? '');
+            $out[$key] = PathTemplate::problem($template) ? [] : $builder->examples($template, $location, $compilation);
         }
 
-        return view('livewire.settings', $data);
+        return $out;
+    }
+
+    /** MusicBrainz-Daten aktualisieren (im Hintergrund); $force: auch wenn der Stand schon aktuell ist */
+    public function updateMusicBrainz(bool $force = false): void
+    {
+        UpdateMusicBrainzData::start($force);
+        $this->dispatch('activity-started');
+    }
+
+    #[On('musicbrainz-finished')]
+    public function musicBrainzFinished(): void {}
+
+    public function render()
+    {
+        $folders = [];
+        foreach (Locations::LABELS as $location => $label) {
+            $folders[$label] = Locations::root($location);
+        }
+        $folders['Interpretenbilder'] = (string) config('musicwiz.artist_images');
+
+        return view('livewire.settings-page', [
+            'folders' => array_map(fn ($path) => ['path' => $path, 'ok' => is_dir($path)], $folders),
+            'workers' => config('musicwiz.scan_workers'),
+            'rules' => NameRule::orderBy('value')->get()->groupBy('kind'),
+            'examples' => $this->tab === 'ordner' ? $this->examples() : [],
+            'musicbrainz' => $this->tab === 'musicbrainz' ? app(MusicBrainzData::class)->status() : null,
+        ])->title('Einstellungen – MusicWiz');
     }
 }

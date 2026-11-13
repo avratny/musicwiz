@@ -1,6 +1,7 @@
 # MusicWiz – Betrieb (z. B. als Stack in Dockge). Das Image baut GitHub Actions bei jedem Push.
 # Werte in der .env des Stacks setzen (siehe README):
 #   MUSIC_SHARE=/mnt/music   INBOX_SHARE=/mnt/inbox   PUID=1000   PGID=1000   MUSICWIZ_PORT=8000
+#   DB_PASSWORD=…   DB_ROOT_PASSWORD=…   MUSICWIZ_TAG=1.0.0-beta
 x-env: &env
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
@@ -8,15 +9,23 @@ x-env: &env
   PGROUPS: ${PGROUPS:-}
   TZ: ${TZ:-Europe/Vienna}
   APP_URL: ${APP_URL:-http://localhost:8000}
-  # Speichergrenze je PHP-Prozess (bei viel RAM z. B. 2G) und gleichzeitige Leseprozesse beim Scan
+  # Speichergrenze je PHP-Prozess (bei viel RAM z. B. 2G) und gleichzeitige Leseprozesse beim Einlesen
   PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
   PHP_MAX_EXECUTION_TIME: ${PHP_MAX_EXECUTION_TIME:-120}
   MUSIC_SCAN_WORKERS: ${MUSIC_SCAN_WORKERS:-4}
-  # Startwerte – gepflegt wird alles in der App unter Einstellungen
-  MUSIC_BASE: /music
-  MUSIC_INBOX: /inbox
-  MUSIC_TRASH: /music/_papierkorb
-  MUSIC_ARTIST_IMAGES: /music/_artists
+  # Datenbank (eigener Container „db“)
+  DB_CONNECTION: mariadb
+  DB_HOST: db
+  DB_PORT: 3306
+  DB_DATABASE: musicwiz
+  DB_USERNAME: musicwiz
+  DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD fehlt}
+  # Bereiche (Ordner im Container): Lib, Blackhole und Papierkorb im Musik-Share, die Inbox als eigenes Share
+  MUSIC_LIBRARY: ${MUSIC_LIBRARY:-/music/library}
+  MUSIC_BLACKHOLE: ${MUSIC_BLACKHOLE:-/music/blackhole}
+  MUSIC_TRASH: ${MUSIC_TRASH:-/music/_papierkorb}
+  MUSIC_INBOX: ${MUSIC_INBOX:-/inbox}
+  MUSIC_ARTIST_IMAGES: ${MUSIC_ARTIST_IMAGES:-/music/_artists}
 
 x-app: &app
   image: ghcr.io/avratny/musicwiz:${MUSICWIZ_TAG:-latest}
@@ -25,10 +34,40 @@ x-app: &app
   volumes:
     - ${MUSIC_SHARE:?MUSIC_SHARE fehlt}:/music
     - ${INBOX_SHARE:-./inbox}:/inbox
-    # Datenbank, Schlüssel, Sicherungen fürs Rückgängigmachen, Cache – bleibt bei Updates erhalten
+    # Schlüssel, Cover-Speicher, Vorschaubilder, Logs – bleibt bei Updates erhalten
     - ./data:/app/storage/app
 
+# Worker ohne Migrationen und ohne Healthcheck, starten erst, wenn die App läuft (die migriert)
+x-worker: &worker
+  <<: *app
+  environment:
+    <<: *env
+    RUN_MIGRATIONS: "0"
+  healthcheck:
+    disable: true
+  depends_on:
+    app:
+      condition: service_healthy
+
 services:
+  # Datenbank – Daten auf der lokalen Platte des Docker-Hosts (nicht auf dem NFS-Share)
+  db:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: musicwiz
+      MARIADB_USER: musicwiz
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD fehlt}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD fehlt}
+      TZ: ${TZ:-Europe/Vienna}
+    volumes:
+      - ./db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
   app:
     <<: *app
     ports:
@@ -38,48 +77,30 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 60s
     command: ["frankenphp", "php-server", "--listen", ":8080", "--root", "/app/public"]
+    depends_on:
+      db:
+        condition: service_healthy
 
-  # Verschieben, Tags schreiben, Scans – genau ein Worker, damit Dateiaktionen strikt nacheinander laufen
+  # Einlesen, Schreiben (Tags, Verschieben), ReplayGain, Fingerabdrücke – genau ein Worker, damit Datei-Aktionen strikt
+  # nacheinander laufen
   queue:
-    <<: *app
-    environment:
-      <<: *env
-      RUN_MIGRATIONS: "0"
-    healthcheck:
-      disable: true
+    <<: *worker
     command: ["php", "artisan", "queue:work", "--queue=default", "--sleep=1", "--tries=1", "--timeout=0"]
     # bei Update/Neustart die laufende Aktion zu Ende bringen lassen statt sie nach 10 s hart abzubrechen
     stop_grace_period: 2m
-    depends_on:
-      app:
-        condition: service_healthy
 
-  # Nachschlagen (MusicBrainz, Spotify …), Künstler übernehmen, Audiodaten prüfen – eigener Worker, damit Einordnen nicht
-  # auf die Recherche wartet und umgekehrt; mehr als einer bringt nichts (MusicBrainz erlaubt nur eine Abfrage pro Sekunde)
-  research:
-    <<: *app
-    environment:
-      <<: *env
-      RUN_MIGRATIONS: "0"
-    healthcheck:
-      disable: true
-    command: ["php", "artisan", "queue:work", "--queue=research", "--sleep=1", "--tries=1", "--timeout=0"]
+  # Abgleich der Interpreten (MusicBrainz, Spotify …) – eigener Worker, damit Einlesen nie wartet; „lookup-now“
+  # (einzelner Interpret) kommt vor dem nächsten Paket des großen Abgleichs dran. Mehr als einer bringt nichts
+  # (MusicBrainz erlaubt eine Abfrage pro Sekunde).
+  lookup:
+    <<: *worker
+    command: ["php", "artisan", "queue:work", "--queue=lookup-now,lookup", "--sleep=1", "--tries=1", "--timeout=0"]
     stop_grace_period: 1m
-    depends_on:
-      app:
-        condition: service_healthy
 
-  # YouTube-Downloads (eigene Warteschlange, damit sie andere Aktionen nicht aufhalten)
-  downloads:
-    <<: *app
-    environment:
-      <<: *env
-      RUN_MIGRATIONS: "0"
-    healthcheck:
-      disable: true
-    command: ["php", "artisan", "queue:work", "--queue=downloads", "--sleep=1", "--tries=1", "--timeout=0"]
-    depends_on:
-      app:
-        condition: service_healthy
+  # Vorschaubilder des Abgleichs – eigener Worker, damit der Abgleich nicht auf Bild-Downloads wartet
+  images:
+    <<: *worker
+    command: ["php", "artisan", "queue:work", "--queue=images", "--sleep=1", "--tries=1", "--timeout=0"]
+    stop_grace_period: 30s

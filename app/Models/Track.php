@@ -3,55 +3,58 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Track extends Model
 {
     protected $guarded = [];
 
     protected $casts = [
-        'artists' => 'array',
-        'albumartists' => 'array',
-        'genres' => 'array',
+        'tags' => 'array',
+        'has_cover' => 'boolean',
         'compilation' => 'boolean',
-        'has_lyrics' => 'boolean',
-        'cover_embedded' => 'boolean',
-        'writable' => 'boolean',
-        'mtime' => 'integer',
-        'size' => 'integer',
+        'rating' => 'integer',
+        'loudness' => 'float',
+        'loudness_peak' => 'float',
+        'duration' => 'float',
+        'scanned_at' => 'datetime',
     ];
 
-    public const TAG_KEYS = ['title', 'artist', 'artists', 'album', 'albumartist', 'albumartists', 'track', 'tracktotal',
-        'disc', 'disctotal', 'year', 'genres', 'comment', 'category', 'compilation', 'artistsort', 'albumartistsort'];
+    /** Grundfelder, die sich bearbeiten lassen (Tabelle und Flyout) – Beschriftung */
+    public const EDITABLE = [
+        'title' => 'Titel',
+        'artist' => 'Interpret',
+        'artists' => 'Interpreten einzeln',
+        'album' => 'Album',
+        'albumartist' => 'Album-Interpret',
+        'albumartists' => 'Album-Interpreten einzeln',
+        'artistsort' => 'Interpret (Sortierung)',
+        'albumartistsort' => 'Album-Interpret (Sortierung)',
+        'track' => 'Nr.',
+        'track_total' => 'von',
+        'disc' => 'CD',
+        'disc_total' => 'von',
+        'year' => 'Jahr',
+        'releasedate' => 'Veröffentlicht',
+        'mb_albumid' => 'MusicBrainz-Album-ID',
+        'genre' => 'Genre',
+        'comment' => 'Kommentar',
+        'compilation' => 'Sampler',
+        'rg_track_gain' => 'ReplayGain Lied',
+        'rg_track_peak' => 'ReplayGain Lied-Peak',
+        'rg_album_gain' => 'ReplayGain Album',
+        'rg_album_peak' => 'ReplayGain Album-Peak',
+        'rating' => 'Bewertung',      // 1–5 Sterne, null = keine (Ratings)
+        'category' => 'Kategorie',   // LIB, LIB COMPILATION, BLACKHOLE, BLACKHOLE COMPILATION (Categories)
+        'cover' => 'Cover',   // neu gesetztes Cover: Verweis in den Cover-Speicher (CoverStore)
+        'fingerprint' => 'Akustischer Fingerabdruck',   // Chromaprint, Tag ACOUSTID_FINGERPRINT (Fingerprints)
+    ];
 
-    /** Vorgemerkte Änderung (Aufräumen/Verzeichnis, noch nicht in der Datei) */
-    public function pendingChange(): HasOne
+    public const INTEGER_FIELDS = ['track', 'track_total', 'disc', 'disc_total'];
+
+    public function changes(): HasMany
     {
-        return $this->hasOne(PendingChange::class);
-    }
-
-    /** Relation heißt nicht "album", weil die Spalte "album" den Albumnamen enthält. */
-    public function albumRecord(): BelongsTo
-    {
-        return $this->belongsTo(Album::class, 'album_id');
-    }
-
-    /** Tags im Format des Tag-Tools. */
-    public function tags(): array
-    {
-        $out = [];
-        foreach (self::TAG_KEYS as $k) {
-            $out[$k] = $this->{$k} ?? (in_array($k, ['artists', 'albumartists', 'genres']) ? [] : ($k === 'compilation' ? false : ''));
-        }
-
-        return $out;
-    }
-
-    /** Aus einem YouTube-Download (Tag SOURCE, bleibt beim Einordnen erhalten). */
-    public function isFromYouTube(): bool
-    {
-        return strcasecmp((string) $this->source, 'YouTube') === 0;
+        return $this->hasMany(TagChange::class)->latest('id');
     }
 
     public function durationLabel(): string
@@ -59,5 +62,16 @@ class Track extends Model
         $s = (int) round($this->duration ?? 0);
 
         return sprintf('%d:%02d', intdiv($s, 60), $s % 60);
+    }
+
+    /** z. B. „FLAC 16/44,1“ bzw. „MP3 320“ */
+    public function qualityLabel(): string
+    {
+        $format = $this->format ?: strtoupper($this->ext);
+        if ($this->ext === 'flac') {
+            return trim($format.' '.($this->bits ? $this->bits.'/' : '').($this->sample_rate ? rtrim(rtrim(number_format($this->sample_rate / 1000, 1, ',', ''), '0'), ',') : ''));
+        }
+
+        return trim($format.' '.($this->bitrate ? round($this->bitrate / 1000) : ''));
     }
 }

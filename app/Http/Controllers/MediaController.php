@@ -2,89 +2,126 @@
 
 namespace App\Http\Controllers;
 
-use App\Models\Album;
+use App\Jobs\AskClaudeTextRepairs;
+use App\Jobs\CheckComboNames;
+use App\Jobs\CheckRecordings;
+use App\Jobs\ConfirmClearArtists;
+use App\Jobs\LookupArtists;
+use App\Jobs\MeasureFingerprints;
+use App\Jobs\MeasureReplayGain;
+use App\Jobs\WriteChanges;
 use App\Models\Artist;
+use App\Models\ArtistImage;
+use App\Models\FolderImage;
+use App\Models\TagChange;
 use App\Models\Track;
+use App\Support\Activity;
 use App\Support\Covers;
-use App\Support\Ratings;
-use App\Support\Settings;
-use App\Support\TagTool;
-use App\Support\Trash;
-use Illuminate\Http\Request;
+use App\Support\CoverStore;
+use App\Support\Locations;
+use App\Support\Lookup\ArtistPreviews;
+use App\Support\MusicBrainzData;
+use App\Support\SplitAlbums;
+use App\Support\TextRepairs;
+use Illuminate\Http\JsonResponse;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class MediaController extends Controller
 {
-    public function albumCover(Album $album, Request $request, Covers $covers)
+    public function cover(Track $track, Covers $covers, int $size = 300): BinaryFileResponse
     {
-        $path = $covers->albumThumb($album, (int) $request->query('s', 400));
-        abort_unless($path && is_file($path), 404);
+        $file = $covers->thumbnail($track, $size, request()->boolean('datei'));
+        abort_unless($file, 404);
+        // mit Versionszusatz (Covers::url) lange behalten – ohne (z. B. Player) jedes Mal nachfragen (304, falls gleich)
+        $cache = request()->filled('v') ? 'public, max-age='.Covers::BROWSER_CACHE : 'no-cache';
+        $response = response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => $cache]);
+        $response->setEtag(md5($file));
+        $response->isNotModified(request());
 
-        return response()->file($path, ['Cache-Control' => 'public, max-age=604800']);
+        return $response;
     }
 
-    /** Bewertung fürs Player-Fenster: aktueller Wert und ob bewertet werden darf (nicht im Blackhole, nur MP3/FLAC). */
-    public function rating(Track $track)
+    /** neu gesetztes Cover aus dem Cover-Speicher (Adresse = Inhalt, darf lange zwischengespeichert werden) */
+    public function coverImage(string $hash, CoverStore $store, int $size = 300): BinaryFileResponse
     {
-        return response()->json(['rating' => (int) $track->rating, 'rateable' => self::rateable($track)]);
+        $file = $store->thumbnail($hash, $size);
+        abort_unless($file, 404);
+
+        return response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'public, max-age=31536000, immutable']);
     }
 
-    public function rate(Track $track, Request $request, Ratings $ratings)
+    /** Bild im Ordner (cover/folder/front), verkleinert und zwischengespeichert */
+    public function folderImage(FolderImage $image, int $size = 300): BinaryFileResponse
     {
-        abort_unless(self::rateable($track), 422, 'Dieser Titel kann nicht bewertet werden.');
-        $stars = (int) $request->validate(['rating' => 'required|integer|min:0|max:5'])['rating'];
-        $ratings->track($track, $stars);
+        $size = in_array($size, Covers::SIZES, true) ? $size : 300;
+        $target = config('musicwiz.cover_cache').'/folder-'.sha1($image->path.'|'.$image->mtime.'|'.$image->size).'-'.$size.'.jpg';
+        if (! is_file($target)) {
+            abort_unless(is_file($image->path), 404);
+            @mkdir(dirname($target), 0775, true);
+            abort_unless(Covers::resize($image->path, $target, $size), 404);
+        }
 
-        return response()->json(['rating' => $stars, 'rateable' => true]);
+        // Adresse mit Stand (?v=), siehe Aufrufer
+        return response()->file($target, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'public, max-age='.Covers::BROWSER_CACHE]);
     }
 
-    private static function rateable(Track $track): bool
+    /** Künstlerbild, verkleinert und zwischengespeichert */
+    public function artistImage(Artist $artist, int $size = 300): BinaryFileResponse
     {
-        return $track->location !== 'blackhole' && TagTool::canWrite($track->path);
+        $size = in_array($size, Covers::SIZES, true) ? $size : 300;
+        $source = $artist->imagePath();
+        abort_unless($source, 404);
+        // Datei und Stand im Namen: gleiche ID mit anderem Bild (z. B. nach neuem Aufbau der Datenbank) trifft nie das alte
+        $target = config('musicwiz.cover_cache').'/artist-'.$artist->id.'-'.hash('crc32b', $source).filemtime($source).'-'.$size.'.jpg';
+        if (! is_file($target)) {
+            @mkdir(dirname($target), 0775, true);
+            abort_unless(Covers::resize($source, $target, $size), 404);
+        }
+
+        // Adresse mit Stand (?v= Änderungszeit des Interpreten)
+        return response()->file($target, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'public, max-age='.Covers::BROWSER_CACHE]);
     }
 
-    public function artistImage(Artist $artist, Settings $settings)
+    /** Vorschaubild aus dem Abgleich (lokal gespeichert) – fehlt es noch (Hintergrund nicht so weit), sofort laden */
+    public function artistPreview(ArtistImage $image, ArtistPreviews $previews): BinaryFileResponse
     {
-        $path = rtrim($settings->get('artist_images'), '/').'/'.$artist->image;
-        abort_unless($artist->image && is_file($path), 404);
+        abort_unless(ArtistPreviews::exists($image) || $previews->fetch($image), 404);
+        $path = $image->fresh()->previewPath();
 
-        return response()->file($path, ['Cache-Control' => 'public, max-age=86400']);
+        return response()->file($path, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'public, max-age='.Covers::BROWSER_CACHE]);
     }
 
-    /** Reinhören per HTML5-Audio (BinaryFileResponse unterstützt Range-Anfragen). */
-    public function audio(Track $track)
+    /** Hintergrundvorgang anhalten (Abgleich, Prüfung der Kombis, MusicBrainz-Daten) */
+    public function stopActivity(string $key): JsonResponse
+    {
+        match ($key) {
+            'lookup' => LookupArtists::stop(),
+            CheckComboNames::KEY => CheckComboNames::stop(),
+            MusicBrainzData::ACTIVITY => MusicBrainzData::stop(),
+            ConfirmClearArtists::KEY => ConfirmClearArtists::stop(),
+            CheckRecordings::KEY => CheckRecordings::stop(),
+            AskClaudeTextRepairs::KEY => AskClaudeTextRepairs::stop(),
+            MeasureReplayGain::KEY => MeasureReplayGain::stop(),
+            MeasureFingerprints::KEY => MeasureFingerprints::stop(),
+            WriteChanges::KEY => WriteChanges::stop(),
+            default => abort(404),
+        };
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** Abspielen: Datei mit Range-Unterstützung (Springen im Lied). */
+    public function audio(Track $track): BinaryFileResponse
     {
         abort_unless(is_file($track->path), 404);
-        $mime = match ($track->ext) {
-            'mp3' => 'audio/mpeg',
-            'flac' => 'audio/flac',
-            'm4a' => 'audio/mp4',
-            'ogg', 'opus' => 'audio/ogg',
-            'wav' => 'audio/wav',
-            default => 'application/octet-stream',
-        };
+        $types = ['mp3' => 'audio/mpeg', 'flac' => 'audio/flac', 'm4a' => 'audio/mp4', 'ogg' => 'audio/ogg', 'opus' => 'audio/ogg', 'wav' => 'audio/wav', 'aiff' => 'audio/aiff', 'wma' => 'audio/x-ms-wma'];
 
-        return response()->file($track->path, ['Content-Type' => $mime]);
+        return response()->file($track->path, ['Content-Type' => $types[$track->ext] ?? 'application/octet-stream']);
     }
 
-    /** Datei aus dem Papierkorb abspielen bzw. anzeigen (nur innerhalb des Papierkorb-Ordners). */
-    public function trashFile(Request $request, Trash $trash)
+    /** Fortschritt und Anzahl je Bereich (Abfrage aus der Oberfläche). */
+    public function activity(): JsonResponse
     {
-        $path = $trash->root().'/'.ltrim((string) $request->query('f'), '/');
-        abort_unless(is_file($path) && $trash->contains($path), 404);
-        $mime = match (strtolower(pathinfo($path, PATHINFO_EXTENSION))) {
-            'mp3' => 'audio/mpeg', 'flac' => 'audio/flac', 'm4a' => 'audio/mp4', 'ogg', 'opus' => 'audio/ogg', 'wav' => 'audio/wav',
-            'jpg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', default => 'application/octet-stream',
-        };
-
-        return response()->file($path, ['Content-Type' => $mime]);
-    }
-
-    public function tmpCover(Request $request)
-    {
-        $name = basename((string) $request->query('f'));
-        $path = storage_path('app/private/tmp/'.$name);
-        abort_unless(preg_match('/^cover-[\w-]+\.jpg$/', $name) && is_file($path), 404);
-
-        return response()->file($path);
+        return response()->json(['activities' => Activity::visible(), 'counts' => Locations::counts() + ['artists' => Artist::count(), 'albums' => SplitAlbums::total(), 'misc' => app(TextRepairs::class)->count(), 'changes' => TagChange::count()]]);
     }
 }

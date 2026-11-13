@@ -27,10 +27,10 @@ USAGE
 ensure_setup() {
   [ -f .env ] || cp .env.example .env
   mkdir -p storage/app
-  [ -f database/database.sqlite ] || touch database/database.sqlite
+  "${COMPOSE[@]}" up -d db
   if [ ! -d vendor ]; then "${COMPOSE[@]}" run --rm --no-deps app composer install; fi
   grep -q '^APP_KEY=base64' .env || "${COMPOSE[@]}" run --rm --no-deps app php artisan key:generate
-  "${COMPOSE[@]}" run --rm --no-deps app php artisan migrate --force
+  "${COMPOSE[@]}" run --rm app php artisan migrate --force
 }
 
 cmd="${1:-help}"; shift || true
@@ -48,7 +48,7 @@ case "$cmd" in
   shell)    "${COMPOSE[@]}" exec app bash ;;
   artisan)  "${COMPOSE[@]}" exec app php artisan "$@" ;;
   composer) "${COMPOSE[@]}" run --rm --no-deps app composer "$@" ;;
-  test)     "${COMPOSE[@]}" run --rm --no-deps app php artisan test "$@" ;;
+  test)     "${COMPOSE[@]}" run --rm -e DB_DATABASE=musicwiz_test app php artisan test "$@" ;;
   setup)    "${COMPOSE[@]}" build; ensure_setup ;;
   *)        usage ;;
 esac

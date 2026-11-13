@@ -2,16 +2,10 @@
 
 namespace App\Providers;
 
-use App\Models\Artist;
-use App\Models\ArtistAlias;
-use App\Models\ArtistSplit;
-use App\Support\ArtistDirectory;
-use App\Support\ArtistNames;
-use App\Support\Chat\AnthropicChatModel;
-use App\Support\Chat\ChatModel;
-use App\Support\DataVersion;
-use App\Support\Lookup;
-use App\Support\Settings;
+use App\Support\ArtistCredits;
+use App\Support\GenreTree;
+use App\Support\Lookup\Client;
+use App\Support\SortNames;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -21,17 +15,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // eine Instanz je Anfrage: „Aktuelle Daten laden“ (Lookup::$fresh) gilt dann auch für alle Helfer, die nachschlagen
-        $this->app->scoped(Lookup::class);
-        // Künstlerverzeichnis einmal je Anfrage bzw. Job laden – vorher holte z. B. PathBuilder::folderName() pro Titel
-        // ein neues und las alle Künstler und Schreibweisen erneut (bei großem Verzeichnis zehntausende Abfragen);
-        // nach Änderungen leert flush() die gemeinsame Instanz
-        $this->app->scoped(ArtistDirectory::class);
-        // Einstellungen ebenso: app(Compilations::class) u. Ä. in Schleifen lasen sonst pro Aufruf die Tabelle neu
-        // (Namensliste/Profile über die ganze Lib: zwei Abfragen pro Titel); set() leert den Zwischenspeicher
-        $this->app->scoped(Settings::class);
-        // Assistent: Claude über das Anthropic-SDK (in Tests durch eine Attrappe ersetzt)
-        $this->app->bind(ChatModel::class, AnthropicChatModel::class);
+        // Genrebaum einmal je Anfrage bzw. Job laden (nach Änderungen: forget())
+        $this->app->singleton(GenreTree::class);
+        // je Anfrage bzw. Job einmal: Entscheidungen und bestätigte Namen nicht bei jeder Tag-Änderung neu laden
+        $this->app->scoped(ArtistCredits::class);
+        // Sortiernamen: eigene Einträge und Artikel einmal je Anfrage bzw. Job (nach Änderungen: forget())
+        $this->app->scoped(SortNames::class);
+        // ein Client je Anfrage bzw. Auftrag: alle Dienste teilen ihn (Tempo, „frisch fragen“)
+        $this->app->scoped(Client::class);
     }
 
     /**
@@ -39,15 +30,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Verzeichnis geändert: Versionszähler hoch, und die gemeinsame Instanz lädt beim nächsten Zugriff neu
-        $changed = function () {
-            DataVersion::bumpDirectory();
-            ArtistDirectory::invalidate();
-            ArtistNames::flushProtected(); // geschützte Namen und gemerkte Trennungen neu laden
-        };
-        foreach ([Artist::class, ArtistAlias::class, ArtistSplit::class] as $model) {
-            $model::saved($changed);
-            $model::deleted($changed);
-        }
+        // Uploads (Cover, Interpretenbilder) bis 50 MB – passend zu upload_max_filesize im Dockerfile
+        config(['livewire.temporary_file_upload.rules' => ['required', 'file', 'max:51200']]);
     }
 }

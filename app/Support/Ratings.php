@@ -2,63 +2,63 @@
 
 namespace App\Support;
 
-use App\Models\Album;
-use App\Models\Operation;
-use App\Models\Track;
-use Illuminate\Support\Collection;
-use RuntimeException;
-
 /**
- * Bewertungen (1–5 Sterne, 0 = keine) – stehen in den Dateien (MP3: POPM, FLAC: RATING) und werden als Aktion über den
- * OperationRunner geschrieben (Verlauf, rückgängig machbar). Ein Album bewerten setzt alle seine Titel.
+ * Bewertungen: 1–5 Sterne (null = keine), wie in 0.3.x. In der Datei: MP3 POPM wie MediaMonkey/Windows (1★=1, 2★=64,
+ * 3★=128, 4★=196, 5★=255), FLAC/OGG und M4A RATING 0–100 (20 je Stern; manche Programme schreiben 1–5), WMA
+ * WM/SharedUserRating (1, 25, 50, 75, 99). Bewertet wird nur in der Datenbank (wie jede Tag-Änderung).
  */
 class Ratings
 {
-    public static function label(int $stars): string
-    {
-        return $stars ? str_repeat('★', $stars) : 'keine Bewertung';
-    }
+    /** Absender des eigenen POPM-Frames (wie 0.3.x) – wird beim Lesen bevorzugt */
+    public const POPM_EMAIL = 'no@email';
 
-    public function track(Track $track, int $stars): ?Operation
+    /** Sterne aus den rohen Tags der Datei (null = keine Bewertung) */
+    public static function fromRawTags(array $raw): ?int
     {
-        return $this->write(collect([$track]), $stars, 'Bewertung '.self::label($this->clamp($stars)).': '.trim($track->artist.' – '.$track->title, ' –'));
-    }
-
-    public function album(Album $album, int $stars): ?Operation
-    {
-        return $this->write($album->tracks()->get(), $stars, 'Album bewertet '.self::label($this->clamp($stars)).': '.$album->title);
-    }
-
-    /** Durchschnitt der bewerteten Titel je Album (album_id => Sterne, z. B. 3.5). */
-    public static function albumAverages(?Collection $albumIds = null, ?string $location = null): array
-    {
-        return Track::whereNotNull('rating')
-            ->when($albumIds !== null, fn ($q) => $q->whereIn('album_id', $albumIds))
-            ->when($location !== null, fn ($q) => $q->where('location', $location))
-            ->selectRaw('album_id, avg(rating) as r')->groupBy('album_id')->pluck('r', 'album_id')
-            ->map(fn ($r) => round((float) $r, 1))->all();
-    }
-
-    private function write(Collection $tracks, int $stars, string $description): ?Operation
-    {
-        $stars = $this->clamp($stars);
-        $tracks = $tracks->filter(fn (Track $t) => TagTool::canWrite($t->path) && (int) $t->rating !== $stars);
-        if ($tracks->isEmpty()) {
-            return null;
+        $upper = array_change_key_case($raw, CASE_UPPER);
+        // MP3: „POPM:<email>“ mit Wert „<email>: <0–255> (gespielt n)“ – eigener Frame zuerst
+        $popm = array_filter($upper, fn ($key) => str_starts_with($key, 'POPM'), ARRAY_FILTER_USE_KEY);
+        uksort($popm, fn ($a, $b) => ($b === 'POPM:'.strtoupper(self::POPM_EMAIL)) <=> ($a === 'POPM:'.strtoupper(self::POPM_EMAIL)));
+        foreach ($popm as $values) {
+            foreach ((array) $values as $v) {
+                if (preg_match('/:\s*(\d+)\s*(\(|$)/', (string) $v, $m)) {
+                    return self::fromPopm((int) $m[1]);
+                }
+            }
         }
-        // sofort anzeigen; der Neu-Scan nach der Aktion bestätigt (bzw. korrigiert bei einem Fehler)
-        Track::whereIn('id', $tracks->pluck('id'))->update(['rating' => $stars ?: null]);
-
-        return OperationRunner::dispatch('rating', $description,
-            $tracks->map(fn (Track $t) => ['type' => 'apply', 'path' => $t->path, 'tags' => ['rating' => $stars]])->values()->all());
-    }
-
-    private function clamp(int $stars): int
-    {
-        if ($stars < 0 || $stars > 5) {
-            throw new RuntimeException('Bewertung muss zwischen 0 und 5 liegen.');
+        foreach (['RATING', '----:COM.APPLE.ITUNES:RATING'] as $key) {
+            foreach ((array) ($upper[$key] ?? []) as $v) {
+                if (is_numeric($v = trim((string) $v))) {
+                    return self::clamp((float) $v <= 5 ? (float) $v : (float) $v / 20);
+                }
+            }
+        }
+        foreach ((array) ($upper['WM/SHAREDUSERRATING'] ?? []) as $v) {
+            if (is_numeric($v = trim((string) $v))) {
+                return (int) $v <= 0 ? null : self::clamp(1 + (float) $v / 25);
+            }
         }
 
-        return $stars;
+        return null;
+    }
+
+    public static function fromPopm(int $value): ?int
+    {
+        return match (true) {
+            $value <= 0 => null,
+            $value < 32 => 1,
+            $value < 96 => 2,
+            $value < 160 => 3,
+            $value < 224 => 4,
+            default => 5,
+        };
+    }
+
+    /** 0 bzw. leer = keine Bewertung, sonst 1–5 */
+    public static function clamp(mixed $stars): ?int
+    {
+        $n = is_numeric($stars) ? (int) round((float) $stars) : 0;
+
+        return $n <= 0 ? null : min($n, 5);
     }
 }

@@ -2,140 +2,153 @@
 
 namespace App\Support;
 
-use App\Models\Album;
+use App\Models\Artist;
+use App\Models\FolderImage;
 use App\Models\Track;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
-use RuntimeException;
+use Illuminate\Support\Facades\Process;
 
+/**
+ * Cover eines Lieds: eingebettet, sonst Bild im Ordner (cover/folder/front) – verkleinert und zwischengespeichert.
+ * Name der Kopie: Lied bzw. Bild mit Stand (Pfad, Änderungszeit, Größe) – ändert sich die Datei, entsteht eine neue,
+ * die alte räumt prune() nach dem Einlesen weg.
+ */
 class Covers
 {
-    public function __construct(private TagTool $tagTool) {}
+    public const SIZES = [64, 300, 600];
+
+    /** so lange darf der Browser Cover mit Versionszusatz behalten (ändert sich das Cover, ändert sich die Adresse) */
+    public const BROWSER_CACHE = 60 * 86400;
+
+    /** @var array<int, string> Lied => Version (je Anfrage gemerkt) */
+    private static array $versions = [];
 
     /**
-     * Woher ein fehlendes eingebettetes Cover kommt: aus einem Track, der schon eins hat (wie in der Anzeige),
-     * sonst aus der Cover-Datei im Ordner. Nur Datenbank, kein Zugriff aufs Share.
-     *
-     * @param  iterable<Track>  $tracks
+     * Adresse des Covers mit Versionszusatz (Dateistand und neu gesetztes Cover) – darf lange zwischengespeichert werden.
+     * Mit Lied-Objekt ohne Abfrage, sonst eine kurze Abfrage je Lied.
      */
-    public static function embedSource(Album $album, iterable $tracks): ?string
+    public static function url(Track|int $track, int $size = 300, bool $fileOnly = false): string
     {
-        foreach ($tracks as $t) {
-            if ($t->cover_embedded) {
-                return $t->path;
-            }
+        $id = $track instanceof Track ? $track->id : $track;
+        if ($track instanceof Track && array_key_exists('mtime', $track->getAttributes()) && array_key_exists('cover', $track->getAttributes())) {
+            self::$versions[$id] = self::version($track);
         }
+        self::$versions[$id] ??= ($t = Track::select(['id', 'mtime', 'size', 'cover'])->find($id)) ? self::version($t) : '0';
 
-        // Cover-Datei nur, wenn der Scan sie als Bild lesen konnte (sonst fehlt die Größe)
-        return $album->cover_file && $album->cover_size ? $album->cover_file : null;
+        return route('cover', array_filter([$id, $size, 'datei' => $fileOnly ? 1 : null, 'v' => self::$versions[$id]]));
     }
 
-    /**
-     * Tracks ohne eingebettetes Cover, die sich beschreiben lassen.
-     *
-     * @param  iterable<Track>  $tracks
-     * @return list<Track>
-     */
-    public static function missingEmbedded(iterable $tracks): array
+    private static function version(Track $t): string
     {
-        $out = [];
-        foreach ($tracks as $t) {
-            if (! $t->cover_embedded && $t->writable) {
-                $out[] = $t;
-            }
-        }
-
-        return $out;
+        return substr(md5($t->mtime.'|'.$t->size.'|'.$t->cover), 0, 10);
     }
 
-    /** Vorschaubild eines Albums: eingebettetes Cover, sonst cover.jpg im Ordner. */
-    public function albumThumb(Album $album, int $size): ?string
+    /** Pfad des verkleinerten Covers oder null (kein Cover); $fileOnly: das aus der Datei, auch wenn ein neues gesetzt ist */
+    public function thumbnail(Track $track, int $size, bool $fileOnly = false): ?string
     {
-        $size = max(64, min(1200, $size));
-        $cache = 'covers/album-'.$album->id.'-'.($album->updated_at?->timestamp ?? 0).'-'.$size.'.jpg';
-        if (Storage::exists($cache)) {
-            return Storage::path($cache);
+        // neu gesetztes Cover (noch nicht in der Datei) – außer das aus der Datei ist gefragt
+        if (! $fileOnly && $track->cover && ($file = app(CoverStore::class)->thumbnail($track->cover, $size))) {
+            return $file;
         }
-        Storage::makeDirectory('covers');
-
-        $source = null;
-        $tmp = null;
-        $track = $album->tracks()->where('cover_embedded', true)->first();
-        if ($track && is_file($track->path)) {
-            $tmp = Storage::path('covers/tmp-'.bin2hex(random_bytes(4)));
-            if ($this->tagTool->extractCover($track->path, $tmp)) {
-                $source = $tmp;
-            }
+        $size = in_array($size, self::SIZES, true) ? $size : 300;
+        $dir = config('musicwiz.cover_cache');
+        $key = sha1($track->path.'|'.$track->mtime.'|'.$track->size);
+        $target = $dir.'/'.$key.'-'.$size.'.jpg';
+        $none = $dir.'/'.$key.'.none';
+        if (is_file($target)) {
+            return $target;
         }
-        if (! $source && $album->cover_file && is_file($album->cover_file)) {
-            $source = $album->cover_file;
-        }
-        if (! $source) {
+        if (is_file($none) && filemtime($none) > time() - 3600) {
             return null;
         }
-        $ok = $this->resize($source, Storage::path($cache), $size);
-        if ($tmp) {
-            @unlink($tmp);
+        @mkdir($dir, 0775, true);
+        $source = $this->source($track, $dir.'/'.$key.'.src');
+        if (! $source) {
+            touch($none);
+
+            return null;
+        }
+        $ok = self::resize($source, $target, $size);
+        if (str_ends_with($source, '.src')) {
+            @unlink($source);
         }
 
-        return $ok ? Storage::path($cache) : $source;
+        return $ok ? $target : null;
     }
 
-    /** Hochgeladenes Bild als JPEG ablegen (max. 1500 px). Gibt den absoluten Pfad zurück. */
-    public function normalizeUpload(string $path, string $dir = 'tmp', int $max = 1500): string
+    /**
+     * Zwischengespeicherte Kopien löschen, auf die nichts mehr verweist: Lieder und Bilder im Ordner, die es nicht mehr
+     * (oder nur in anderem Stand) gibt, Interpretenbilder gelöschter Interpreten, liegengebliebene Zwischendateien.
+     * Neu gesetzte Cover: solange ein Lied oder eine Änderung darauf verweist (CoverStore::referenced).
+     *
+     * @return int Zahl der gelöschten Dateien
+     */
+    public static function prune(): int
     {
-        Storage::makeDirectory($dir);
-        $target = Storage::path($dir.'/cover-'.now()->format('YmdHis').'-'.bin2hex(random_bytes(4)).'.jpg');
-        if (! $this->resize($path, $target, $max, false)) {
-            throw new RuntimeException('Bild konnte nicht gelesen werden (kein JPEG/PNG/WebP/GIF?).');
+        $dir = (string) config('musicwiz.cover_cache');
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return 0;
+        }
+        $keep = [];
+        foreach (Track::select(['path', 'mtime', 'size'])->cursor() as $t) {
+            $keep[sha1($t->path.'|'.$t->mtime.'|'.$t->size)] = true;
+        }
+        foreach (FolderImage::select(['path', 'mtime', 'size'])->cursor() as $i) {
+            $keep['folder-'.sha1($i->path.'|'.$i->mtime.'|'.$i->size)] = true;
+        }
+        $artists = Artist::pluck('id')->flip();
+        $store = CoverStore::referenced();
+        $removed = 0;
+        foreach ($entries as $entry) {
+            $path = $dir.'/'.$entry;
+            if (! is_file($path)) {
+                continue;
+            }
+            $stale = match (true) {
+                (bool) preg_match('/^artist-(\d+)-/', $entry, $m) => ! isset($artists[(int) $m[1]]),
+                (bool) preg_match('/^store-([0-9a-f]{40})-/', $entry, $m) => ! isset($store[$m[1]]),
+                (bool) preg_match('/^(folder-[0-9a-f]{40})-\d+\.jpg$/', $entry, $m) => ! isset($keep[$m[1]]),
+                (bool) preg_match('/^([0-9a-f]{40})(-\d+\.jpg|\.none)$/', $entry, $m) => ! isset($keep[$m[1]]),
+                // Zwischendatei beim Auslesen (abgebrochen)
+                str_ends_with($entry, '.src') => filemtime($path) < time() - 3600,
+                default => false,
+            };
+            if ($stale && @unlink($path)) {
+                $removed++;
+            }
         }
 
-        return $target;
+        return $removed;
     }
 
-    public function resize(string $source, string $target, int $max, bool $square = false): bool
+    private function source(Track $track, string $tmp): ?string
+    {
+        if ($track->has_cover && is_file($track->path)) {
+            $result = Process::timeout(30)->run(['python3', base_path('tools/tagreader.py'), 'cover', $track->path, $tmp]);
+            if ($result->successful() && (json_decode($result->output(), true)['ok'] ?? false) && is_file($tmp)) {
+                return $tmp;
+            }
+        }
+        foreach (@scandir($track->dir) ?: [] as $entry) {
+            if (preg_match('/^(cover|folder|front)\.(jpe?g|png)$/i', $entry)) {
+                return $track->dir.'/'.$entry;
+            }
+        }
+
+        return null;
+    }
+
+    public static function resize(string $source, string $target, int $size): bool
     {
         $data = @file_get_contents($source);
-        $img = $data !== false ? @imagecreatefromstring($data) : false;
+        $img = $data ? @imagecreatefromstring($data) : false;
         if (! $img) {
             return false;
         }
-        $w = imagesx($img);
-        $h = imagesy($img);
-        $scale = min(1, $max / max($w, $h));
-        $nw = max(1, (int) round($w * $scale));
-        $nh = max(1, (int) round($h * $scale));
-        $out = imagecreatetruecolor($nw, $nh);
-        imagefill($out, 0, 0, imagecolorallocate($out, 255, 255, 255));
-        imagecopyresampled($out, $img, 0, 0, 0, 0, $nw, $nh, $w, $h);
-        $ok = imagejpeg($out, $target, 88);
-        imagedestroy($img);
-        imagedestroy($out);
+        [$w, $h] = [imagesx($img), imagesy($img)];
+        $scale = min(1, $size / max($w, $h));
+        $out = imagescale($img, max(1, (int) round($w * $scale)), max(1, (int) round($h * $scale)), IMG_BICUBIC);
 
-        return $ok;
-    }
-
-    /** Bild aus einer URL laden (Künstlerbilder, Cover-Kandidaten). */
-    public function download(string $url, string $dir = 'tmp'): string
-    {
-        $url = trim($url);
-        if (! preg_match('#^https?://#i', $url) || ! filter_var($url, FILTER_VALIDATE_URL)) {
-            throw new RuntimeException('Bitte eine gültige http(s)-URL angeben.');
-        }
-        $response = Http::timeout(20)->withHeaders(['User-Agent' => Lookup::userAgent()])->get($url);
-        if (! $response->successful()) {
-            throw new RuntimeException('Download fehlgeschlagen ('.$response->status().')');
-        }
-        if (strlen($response->body()) > 25 * 1024 * 1024) {
-            throw new RuntimeException('Bild ist größer als 25 MB.');
-        }
-        Storage::makeDirectory($dir);
-        $raw = Storage::path($dir.'/dl-'.bin2hex(random_bytes(6)));
-        file_put_contents($raw, $response->body());
-        try {
-            return $this->normalizeUpload($raw, $dir);
-        } finally {
-            @unlink($raw);
-        }
+        return $out && imagejpeg($out, $target, 85);
     }
 }

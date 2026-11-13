@@ -1,4 +1,4 @@
-# Entwicklung: Code wird eingebunden, Musik-Basis zeigt auf ./demofiles
+# Entwicklung: Code wird eingebunden, Musik liegt in ./demofiles
 # Start/Stopp über ./dev.sh
 x-app: &app
   build:
@@ -13,11 +13,36 @@ x-app: &app
     - ./:/app
     - ./demofiles:/music
   environment:
-    MUSIC_BASE: /music
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
+    DB_CONNECTION: mariadb
+    DB_HOST: db
+    DB_PORT: 3306
+    DB_DATABASE: musicwiz
+    DB_USERNAME: musicwiz
+    DB_PASSWORD: musicwiz
+  depends_on:
+    db:
+      condition: service_healthy
 
 services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: musicwiz
+      MARIADB_USER: musicwiz
+      MARIADB_PASSWORD: musicwiz
+      MARIADB_ROOT_PASSWORD: musicwiz-root
+    volumes:
+      - dbdata:/var/lib/mysql
+      # zweite Datenbank für die Tests
+      - ./docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${DB_PORT_HOST:-3307}:3306"
+
   app:
     <<: *app
     healthcheck:
@@ -29,33 +54,30 @@ services:
     ports:
       - "${APP_PORT:-8000}:8080"
 
+  # Einlesen (und später Schreiben) im Hintergrund – listen statt work: Codeänderungen greifen ohne Neustart
   queue:
     <<: *app
     healthcheck:
       disable: true
-    # listen statt work: Codeänderungen greifen ohne Neustart
-    # nur Dateiaktionen (genau ein Worker: strikt nacheinander)
     command: ["php", "artisan", "queue:listen", "--queue=default", "--sleep=1", "--tries=1", "--timeout=0"]
-    # beim Stoppen die laufende Aktion zu Ende bringen lassen statt sie nach 10 s hart abzubrechen
-    stop_grace_period: 2m
-    depends_on: [app]
+    stop_grace_period: 30s
 
-  # Recherche (Nachschlagen, Künstler übernehmen, Audiodaten prüfen) – eigener Worker, hält Dateiaktionen nicht auf
-  research:
+  # Abgleich der Interpreten (MusicBrainz, Spotify …) – eigener Worker, damit Einlesen nie wartet;
+  # „lookup-now“ (einzelner Interpret) kommt vor dem nächsten Paket des großen Abgleichs dran
+  lookup:
     <<: *app
     healthcheck:
       disable: true
-    command: ["php", "artisan", "queue:listen", "--queue=research", "--sleep=1", "--tries=1", "--timeout=0"]
-    stop_grace_period: 1m
-    depends_on: [app]
+    command: ["php", "artisan", "queue:listen", "--queue=lookup-now,lookup", "--sleep=1", "--tries=1", "--timeout=0"]
+    stop_grace_period: 30s
 
-  # YouTube-Downloads laufen getrennt, damit sie andere Aktionen nicht aufhalten
-  downloads:
+  # Vorschaubilder des Abgleichs – eigener Worker, damit der Abgleich nicht auf Bild-Downloads wartet
+  images:
     <<: *app
     healthcheck:
       disable: true
-    command: ["php", "artisan", "queue:listen", "--queue=downloads", "--sleep=1", "--tries=1", "--timeout=0"]
-    depends_on: [app]
+    command: ["php", "artisan", "queue:listen", "--queue=images", "--sleep=1", "--tries=1", "--timeout=0"]
+    stop_grace_period: 30s
 
   assets:
     image: node:22-bookworm-slim
@@ -63,3 +85,6 @@ services:
     volumes:
       - ./:/app
     command: ["sh", "-c", "npm install --no-audit --no-fund && npx vite build --watch"]
+
+volumes:
+  dbdata:

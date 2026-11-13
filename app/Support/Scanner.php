@@ -2,912 +2,400 @@
 
 namespace App\Support;
 
-use App\Models\Album;
-use App\Models\DiscSet;
-use App\Models\Leftover;
+use App\Jobs\LookupArtists;
+use App\Jobs\MeasureFingerprints;
+use App\Models\Artist;
+use App\Models\FolderImage;
+use App\Models\TagChange;
 use App\Models\Track;
-use Illuminate\Support\Facades\Cache;
+use App\Support\Lookup\Client;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Symfony\Component\Process\Process;
 
 /**
- * Liest Inbox, Lib und Blackhole per Knopf ein (jeder Bereich für sich): gedrosselt und inkrementell (unveränderte Dateien werden übersprungen).
+ * Einlesen eines Bereichs: der Tag-Leser (tools/tagreader.py) durchläuft den Ordner und liest nur neue bzw. geänderte
+ * Dateien – parallel. Hier landen die Ergebnisse paketweise in der Datenbank. Felder, die in der Datenbank bearbeitet
+ * wurden (tag_changes), bleiben erhalten; die rohen Tags zeigen immer den Stand der Datei.
  */
 class Scanner
 {
-    public const STATUS_KEY = 'musicwiz.scan';
+    private const BATCH = 500;
 
-    /** Zähler: Index geändert (Titel gespeichert/entfernt, Alben gebildet) – für sekundengenaue Versionsvergleiche */
-    public const INDEX_BUMP = 'musicwiz.index-bump';
+    /** Stand des Tag-Lesers: Lieder mit älterem Stand werden einmal komplett neu gelesen (2: Cover-Daten, 3: mehrere Interpreten) */
+    public const READ_VERSION = 3;
 
-    /** Abbruch angefordert (wird zwischen zwei Ordnern bzw. Lesepaketen geprüft) */
-    public const CANCEL_KEY = 'musicwiz.scan.cancel';
+    /** @var array<int, true> Interpreten der gelesenen Lieder */
+    private array $touchedArtists = [];
 
-    /** Scan abbrechen: bis dahin Gelesenes bleibt, der nächste Scan macht dort weiter. */
-    public function requestCancel(): void
+    /** @return array{files: int, read: int, removed: int, errors: int, kept_missing: int, folders: int, moved: int} */
+    public function scan(string $location): array
     {
-        if ($this->status()['running'] ?? false) {
-            Cache::put(self::CANCEL_KEY, true, now()->addHours(6));
-            $this->status(['phase' => 'wird abgebrochen …']);
+        $root = Locations::root($location);
+        $label = Locations::LABELS[$location].' einlesen';
+        Activity::start('scan', $label);
+        // abgebrochene Datei-Aktionen abgleichen, bevor Fehlendes entfernt wird (sonst gingen Verlauf und ID verloren)
+        app(FileMover::class)->recover();
+        $artistsBefore = Artist::count();
+
+        // älterer Stand des Tag-Lesers bzw. beim letzten Mal nicht lesbar: als geändert melden (mtime -1), damit sie neu
+        // gelesen und trotzdem erkannt werden
+        $known = [];
+        foreach (Track::where('location', $location)->select(['path', 'mtime', 'size', 'read_version', 'error', 'file_id'])->cursor() as $t) {
+            $known[$t->path] = [$t->read_version >= self::READ_VERSION && $t->error === null ? (int) $t->mtime : -1, (int) $t->size, $t->file_id];
         }
-    }
-
-    public function cancelRequested(): bool
-    {
-        return Cache::has(self::CANCEL_KEY);
-    }
-
-    /** Vor einem neuen Scan: alte Abbruch-Anforderung vergessen. */
-    public static function clearCancel(): void
-    {
-        Cache::forget(self::CANCEL_KEY);
-    }
-
-    /** Status nach einem Abbruch (Index unvollständig: nichts entfernt, keine Automatiken). */
-    public function markCancelled(int $read = 0, int $total = 0): array
-    {
-        self::clearCancel();
-        $result = ['files' => 0, 'read' => $read, 'removed' => 0, 'held' => 0, 'unreadable' => 0, 'cancelled' => true];
-        $this->status(['running' => false, 'phase' => 'abgebrochen', 'finished_at' => now()->toIso8601String(), 'result' => $result,
-            'cancelled' => ['read' => $read, 'total' => $total]]);
-
-        return $result;
-    }
-
-    /** Dateien pro Lesepaket (werden auf mehrere Tag-Tool-Prozesse verteilt, siehe scan_workers) */
-    private const BATCH = 80;
-
-    /** Alben je Schreib-Transaktion beim Bilden der Alben (kurze Sperren, andere Prozesse kommen dazwischen) */
-    private const ALBUM_CHUNK = 50;
-
-    /** Ordner pro Abfrage beim Neubilden der Alben (SQLite bricht bei zu langen OR-Ketten ab) */
-    private const SCOPE_CHUNK = 100;
-
-    /** Fehlen mehr als so viele bekannte Dateien (und mehr als 20 %), wird erst nach Rückfrage entfernt */
-    private const MASS_REMOVAL = 50;
-
-    /** @var list<string> Ordner, die beim letzten Durchlauf nicht lesbar waren */
-    private array $unreadable = [];
-
-    /** @var array<string, string> Ordner => Grund, warum er nicht lesbar war */
-    private array $unreadableReasons = [];
-
-    /**
-     * Verständlicher Grund für einen Ordner, den scandir() nicht öffnen konnte. Bei fehlender Berechtigung mit Besitzer
-     * und Rechten des Ordners und dem Benutzer, unter dem MusicWiz läuft – dann sieht man den Unterschied sofort.
-     */
-    public static function unreadableReason(string $dir, ?string $error): string
-    {
-        $raw = trim((string) preg_replace('/^.*:\s*/', '', (string) $error));
-        $map = [
-            'Permission denied' => 'keine Berechtigung',
-            'Operation not permitted' => 'keine Berechtigung',
-            'No such file or directory' => 'nicht (mehr) vorhanden',
-            'Not a directory' => 'kein Ordner',
-            'File name too long' => 'Pfad zu lang',
-            'Input/output error' => 'Lesefehler (Share bzw. Netzwerk)',
-            'Stale file handle' => 'Verbindung zum Share veraltet – neu einhängen',
-            'Invalid argument' => 'ungültige Zeichen im Namen?',
-            'Too many open files' => 'zu viele offene Dateien',
-        ];
-        $reason = $map[$raw] ?? ($raw !== '' ? $raw : 'unbekannter Fehler');
-        if ($reason === 'keine Berechtigung' && ($st = @stat($dir)) !== false) {
-            $owner = $st['uid'].':'.$st['gid'].', Rechte '.substr(sprintf('%o', $st['mode']), -3);
-            $me = function_exists('posix_geteuid') ? ' – MusicWiz läuft als '.posix_geteuid().':'.posix_getegid() : '';
-            $reason .= ' (gehört '.$owner.$me.')';
+        $knownImages = [];
+        foreach (FolderImage::where('location', $location)->select(['path', 'mtime', 'size'])->cursor() as $i) {
+            $knownImages[$i->path] = [(int) $i->mtime, (int) $i->size];
         }
 
-        return $reason;
-    }
+        $process = new Process(['python3', base_path('tools/tagreader.py'), 'scan']);
+        $process->setTimeout(null);
+        $process->setInput(json_encode([
+            'roots' => [$root],
+            'known' => (object) $known,
+            'known_images' => (object) $knownImages,
+            'extensions' => config('musicwiz.audio_extensions'),
+            'workers' => config('musicwiz.scan_workers'),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $process->start();
 
-    /** @var array<string, list<string>> Cover-Dateien je Ordner aus dem Durchlauf (spart ein zweites scandir pro Album) */
-    private array $coverNames = [];
-
-    /** Pause pro gelesenem Ordner in Mikrosekunden (schont das Share) */
-    private int $dirPause = 0;
-
-    public function __construct(private Settings $settings, private TagReader $reader) {}
-
-    /** @return list<string> */
-    public function roots(string $location): array
-    {
-        $roots = $location === 'inbox'
-            ? [$this->settings->inbox()]
-            : array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categoriesIn($location));
-
-        return array_values(array_unique(array_filter($roots, 'is_dir')));
-    }
-
-    /** Alle eingestellten Wurzeln, auch wenn sie gerade nicht erreichbar sind. */
-    private function configuredRoots(): array
-    {
-        return array_values(array_unique(array_map(fn ($r) => rtrim($r, '/'), [
-            $this->settings->inbox(),
-            ...array_map(fn ($c) => $this->settings->categoryRoot($c), $this->settings->categories()),
-        ])));
-    }
-
-    /**
-     * Eingestellte Wurzel, unter der laut Index Musik liegt, die aber fehlt oder leer ist – meist ist das Share nicht
-     * eingehängt. Aktionen darauf würden sonst ins leere Mount-Verzeichnis schreiben (Dateien später unter dem Share versteckt).
-     *
-     * @param  list<string|null>|null  $paths  nur Wurzeln prüfen, unter denen einer dieser Pfade liegt
-     */
-    public function unreachableRoot(?array $paths = null): ?string
-    {
-        foreach ($this->configuredRoots() as $root) {
-            if ($root === '' || ($paths !== null && ! collect($paths)->contains(fn ($p) => $p && str_starts_with($p.'/', $root.'/')))) {
-                continue;
-            }
-            if (! FileOps::hasEntries($root) && Track::where('path', 'like', $root.'/%')->exists()) {
-                return $root;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param  bool  $allowMassRemoval  auch entfernen, wenn auffällig viele bekannte Dateien fehlen (nach Rückfrage)
-     */
-    public function scan(string $location, bool $allowMassRemoval = false): array
-    {
-        $this->status(['running' => true, 'location' => $location, 'phase' => 'Ordner lesen', 'done' => 0, 'total' => 0, 'started_at' => now()->toIso8601String(),
-            'error' => null, 'held' => null, 'unreadable' => null, 'unreadable_count' => null, 'unreadable_reasons' => null, 'unreadable_summary' => null,
-            'auto_skipped' => null, 'cancelled' => null]);
-
-        // Fehlt eine Wurzel, unter der schon Dateien erfasst sind (Share weg, Mount fehlt), nichts anfassen
-        foreach ($this->configuredRoots() as $root) {
-            if (! is_dir($root) && Track::where('location', $location)->where('path', 'like', $root.'/%')->exists()) {
-                throw new RuntimeException('Ordner nicht erreichbar: '.$root.' – Scan abgebrochen, der Index bleibt unverändert.');
-            }
-        }
-        $roots = $this->roots($location);
-
-        $files = [];
-        $leftovers = [];
-        $this->unreadable = [];
-        $this->unreadableReasons = [];
-        $this->coverNames = [];
-        $this->dirPause = $this->throttle() / 2;
-        try {
-            foreach ($roots as $root) {
-                $this->walk($root, $files, $leftovers);
-            }
-        } catch (ScanCancelled) {
-            $this->dirPause = 0;
-
-            return $this->markCancelled(); // beim Durchgehen der Ordner: noch nichts geändert
-        }
-        $this->dirPause = 0;
-
-        $existing = Track::where('location', $location)->get(['id', 'path', 'mtime', 'size'])->keyBy('path');
-        // Tracks, die in einem anderen Bereich erfasst waren (z. B. vorher Inbox), mitnehmen
-        $changed = [];
-        foreach ($files as $path => $stat) {
-            $known = $existing[$path] ?? null;
-            if (! $known || $known->mtime !== $stat['mtime'] || $known->size !== $stat['size']) {
-                $changed[] = $path;
-            }
-        }
-
-        $throttle = $this->throttle();
-        $total = count($changed);
-        $this->status(['phase' => 'Tags lesen', 'total' => $total, 'files' => count($files)]);
-        $readDirs = [];
-        foreach (array_chunk($changed, self::BATCH) as $i => $chunk) {
-            if ($this->cancelRequested()) {
-                // Gelesenes behalten und dafür Alben bilden; nichts entfernen (Index unvollständig)
-                $this->status(['phase' => 'Alben bilden (abgebrochen)']);
-                $this->rebuildAlbums(null, array_keys($readDirs));
-
-                return $this->markCancelled(min($total, $i * self::BATCH), $total);
-            }
-            $this->store($location, $this->reader->readMany($chunk), $files);
-            foreach ($chunk as $p) {
-                $readDirs[dirname($p)] = true;
-            }
-            $this->status(['done' => min($total, ($i + 1) * self::BATCH), 'current' => basename(dirname(end($chunk)))]);
-            if ($throttle) {
-                usleep($throttle * count($chunk));
-            }
-        }
-
-        // Verschwundene Dateien entfernen – aber nicht unterhalb von Ordnern, die gerade nicht lesbar waren
-        $gone = array_values(array_filter($existing->keys()->diff(array_keys($files))->all(),
-            fn ($p) => ! $this->underAny($p, $this->unreadable)));
-        $held = null;
-        if (! $allowMassRemoval && count($gone) > self::MASS_REMOVAL && count($gone) > 0.2 * count($existing)) {
-            $held = ['location' => $location, 'count' => count($gone), 'known' => count($existing)];
-            $gone = [];
-        }
-        foreach (array_chunk($gone, 500) as $chunk) {
-            Track::whereIn('path', $chunk)->delete();
-            Cache::increment(self::INDEX_BUMP);
-        }
-
-        // Reste nur im Bestand merken (Aufräumen gilt nur dort); alte Inbox-Einträge fallen dabei weg
-        $this->storeLeftovers($roots, $location === 'library' ? $leftovers : []);
-        $this->status(['phase' => 'Alben bilden']);
-        $this->rebuildAlbums($location);
-
-        $this->coverNames = [];
-
-        self::clearCancel(); // kam der Abbruch erst ganz am Ende, ist der Scan trotzdem vollständig
-        $result = ['files' => count($files), 'read' => $total, 'removed' => count($gone), 'held' => $held['count'] ?? 0, 'unreadable' => count($this->unreadable)];
-        $this->status(['running' => false, 'phase' => 'fertig', 'finished_at' => now()->toIso8601String(), 'result' => $result,
-            'held' => $held, 'unreadable' => $this->unreadable ? array_slice($this->unreadable, 0, 20) : null,
-            'unreadable_count' => count($this->unreadable),
-            'unreadable_reasons' => $this->unreadable ? array_slice($this->unreadableReasons, 0, 20, true) : null,
-            // Gründe zusammengefasst über alle Ordner (z. B. „keine Berechtigung“ × 18)
-            'unreadable_summary' => $this->unreadable ? array_count_values(array_map(fn ($r) => preg_replace('/\s*\(.*$/', '', $r), $this->unreadableReasons)) : null]);
-
-        return $result;
-    }
-
-    /** Eingestellte Drossel pro Datei in Mikrosekunden. */
-    private function throttle(): int
-    {
-        return max(0, (int) $this->settings->get('scan_throttle_ms')) * 1000;
-    }
-
-    private function underAny(string $path, array $dirs): bool
-    {
-        foreach ($dirs as $d) {
-            if (str_starts_with($path, $d.'/')) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Einzelne Pfade neu einlesen (nach Verschieben/Schreiben). Nicht vorhandene Pfade werden entfernt.
-     *
-     * @param  list<string>  $paths
-     */
-    public function rescanPaths(array $paths): void
-    {
-        $audio = config('musicwiz.audio_extensions');
-        $paths = array_values(array_unique(array_filter($paths, fn ($p) => in_array(strtolower(pathinfo($p, PATHINFO_EXTENSION)), $audio, true))));
-        $dirs = [];
-        // exakte Schreibweise prüfen: "Titel.MP3" gilt nach dem Umbenennen in "Titel.mp3" als verschwunden
-        $listings = [];
-        $existing = array_values(array_filter($paths, fn ($p) => is_file($p) && FileOps::existsExact($p, $listings)));
-        unset($listings);
-        $missing = array_values(array_diff($paths, $existing));
-
-        // Ist die Wurzel eines fehlenden Pfads gerade nicht erreichbar, ist die Datei nicht weg – das Share ist weg
-        $roots = $this->configuredRoots();
-        foreach ($missing as $p) {
-            foreach ($roots as $root) {
-                if (str_starts_with($p, $root.'/') && ! is_dir($root)) {
-                    throw new RuntimeException('Ordner nicht erreichbar: '.$root.' – Index nicht angepasst.');
-                }
-            }
-        }
-
-        foreach (array_chunk($paths, 500) as $chunk) {
-            foreach (Track::whereIn('path', $chunk)->get(['dir']) as $t) {
-                $dirs[$t->dir] = true;
-            }
-        }
-        foreach (array_chunk($missing, 500) as $chunk) {
-            Track::whereIn('path', $chunk)->delete();
-            Cache::increment(self::INDEX_BUMP);
-        }
-        foreach (array_chunk($existing, self::BATCH) as $chunk) {
-            $byLocation = [];
-            foreach ($chunk as $p) {
-                $byLocation[$this->settings->locationOf($p)][] = $p;
-                $dirs[dirname($p)] = true;
-            }
-            foreach ($byLocation as $location => $list) {
-                $stats = [];
-                foreach ($list as $p) {
-                    clearstatcache(true, $p);
-                    $stats[$p] = ['mtime' => filemtime($p), 'size' => filesize($p)];
-                }
-                $this->store($location, $this->reader->readMany($list), $stats);
-            }
-            // gleiche Drossel wie beim Scan: große Aktionen lesen sonst Tausende Dateien am Stück
-            if ($throttle = $this->throttle()) {
-                usleep($throttle * count($chunk));
-            }
-        }
-        $this->rebuildAlbums(null, array_keys($dirs));
-    }
-
-    /** Pfade im Index nach Umbenennen eines Ordners anpassen (nur Schreibweise o. Ä.). */
-    public function renameDirInIndex(string $old, string $new): void
-    {
-        Cache::increment(self::INDEX_BUMP);
-        $swap = fn (?string $p) => $p !== null && ($p === $old || str_starts_with($p, $old.'/')) ? $new.substr($p, strlen($old)) : $p;
-        DB::transaction(function () use ($old, $swap) {
-            foreach (Track::where('path', 'like', $old.'/%')->get() as $t) {
-                if (str_starts_with($t->path, $old.'/')) {
-                    Track::whereKey($t->id)->update(['path' => $swap($t->path), 'dir' => $swap($t->dir)]);
-                }
-            }
-            foreach (Album::where('dir', 'like', $old.'%')->get() as $a) {
-                if ($a->dir === $old || str_starts_with($a->dir, $old.'/')) {
-                    Album::whereKey($a->id)->update(['dir' => $swap($a->dir), 'dirs' => $a->dirs ? json_encode(array_map($swap, $a->dirs), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null,
-                        'cover_file' => $swap($a->cover_file)]);
-                }
-            }
-            foreach (Leftover::where('path', 'like', $old.'%')->get() as $l) {
-                if ($l->path === $old || str_starts_with($l->path, $old.'/')) {
-                    $l->update(['path' => $swap($l->path)]);
-                }
-            }
-        });
-    }
-
-    public function status(?array $merge = null): array
-    {
-        $current = Cache::get(self::STATUS_KEY, []);
-        if ($merge !== null) {
-            $current = array_merge($current, $merge);
-            Cache::forever(self::STATUS_KEY, $current);
-        }
-
-        return $current;
-    }
-
-    /**
-     * Ordner rekursiv lesen. Merkt Reste: Junk-Dateien, leere Ordner, Ordner ohne eine einzige Musikdatei
-     * (z. B. nur ein liegengebliebenes Folder.jpg) und kaputte Namen wie "-Interpret@1-".
-     *
-     * @return array{content: bool, audio: bool}
-     */
-    private function walk(string $dir, array &$files, array &$leftovers): array
-    {
-        $audioExt = config('musicwiz.audio_extensions');
-        $junk = config('musicwiz.junk_files');
-        error_clear_last();
-        $entries = @scandir($dir);
-        if ($entries === false) {
-            $this->unreadable[] = $dir;
-            $this->unreadableReasons[$dir] = self::unreadableReason($dir, error_get_last()['message'] ?? null);
-
-            return ['content' => true, 'audio' => true]; // nicht lesbar: lieber nichts melden
-        }
-        if ($this->dirPause) {
-            usleep($this->dirPause);
-        }
-        if ($this->cancelRequested()) {
-            throw new ScanCancelled;
-        }
-        $this->coverNames[$dir] = array_values(array_filter($entries, fn ($e) => (bool) preg_match('/^(cover|folder|front)\./i', $e)));
-        $content = false;
-        $audio = false;
-        $directAudio = false;
-        foreach ($entries as $entry) {
-            if ($entry === '.' || $entry === '..') {
-                continue;
-            }
-            $path = $dir.'/'.$entry;
-            // eine Abfrage pro Eintrag (übers Netzwerk ist jede ein Hin und Zurück): Art, Größe, Änderungszeit
-            $st = @lstat($path);
-            $type = $st ? $st['mode'] & 0170000 : 0;
-            if ($type === 0120000) { // Verknüpfung
-                $content = $audio = true;
-
-                continue;
-            }
-            if ($type === 0040000) {
-                $sub = $this->walk($path, $files, $leftovers);
-                $content = $content || $sub['content'];
-                $audio = $audio || $sub['audio'];
-
-                continue;
-            }
-            // hängengebliebene Umbenennung („Lied.MP3.musicwiz-tmp“): das ist die echte Musikdatei – nie als Rest wegräumen,
-            // unter „Leere Ordner und Reste“ wird sie zurückbenannt
-            if (str_ends_with($entry, FileOps::RENAME_SUFFIX)
-                && in_array(strtolower(pathinfo(substr($entry, 0, -strlen(FileOps::RENAME_SUFFIX)), PATHINFO_EXTENSION)), $audioExt, true)) {
-                $content = $audio = true;
-                $leftovers[$path] = 'interrupted';
-
-                continue;
-            }
-            // Zwischendatei eines abgebrochenen Tag-Schreibens: das Original ist unverändert, die Kopie ist ein Rest
-            if (in_array($entry, $junk, true) || str_starts_with($entry, '._') || str_ends_with($entry, TagTool::WRITE_SUFFIX)) {
-                $leftovers[$path] = 'junk';
-
-                continue;
-            }
-            $content = true;
-            if (in_array(strtolower(pathinfo($entry, PATHINFO_EXTENSION)), $audioExt, true)) {
-                $audio = $directAudio = true;
-                $files[$path] = ['mtime' => (int) ($st['mtime'] ?? 0), 'size' => (int) ($st['size'] ?? 0)];
-            }
-        }
-        if ($directAudio) {
-            // Unterordner mit Extras (z. B. albumart_backup, Scans) in einem Album gehören zum Album – kein Rest
-            foreach ($leftovers as $p => $kind) {
-                if ($kind === 'no_music' && dirname($p) === $dir) {
-                    unset($leftovers[$p]);
-                }
-            }
-        }
-        if (! $content || ! $audio) {
-            // nur den obersten betroffenen Ordner melden – darunterliegende Reste sind darin enthalten
-            foreach (array_keys($leftovers) as $p) {
-                if (str_starts_with($p, $dir.'/')) {
-                    unset($leftovers[$p]);
-                }
-            }
-            $leftovers[$dir] = $content ? 'no_music' : 'empty_dir';
-        } elseif (preg_match('/^-.*@\d+-$|^-Interpret-$/', basename($dir))) {
-            $leftovers[$dir] = 'bad_dir';
-        }
-
-        return ['content' => $content, 'audio' => $audio];
-    }
-
-    /** Wurzeln, unterhalb derer nach Resten gesucht wird (nur Kategorie-Ordner – Aufräumen gilt nur im Bestand). */
-    private function leftoverRoots(): array
-    {
-        return $this->roots('library');
-    }
-
-    /**
-     * Reste nach einer Aktion neu prüfen: betroffene Ordner samt Geschwistern (Künstler-Ebene).
-     *
-     * @param  list<string>  $paths  berührte Dateien
-     */
-    public function refreshLeftovers(array $paths): void
-    {
-        $roots = $this->leftoverRoots();
-        $starts = [];
-        foreach ($paths as $p) {
-            $dir = dirname(dirname($p)); // Künstlerordner
-            while ($dir !== '/' && ! is_dir($dir)) {
-                $dir = dirname($dir);
-            }
-            $root = collect($roots)->first(fn ($r) => $dir === $r || str_starts_with($dir.'/', $r.'/'));
-            if (! $root) {
-                continue;
-            }
-            $starts[$dir] = $root;
-        }
-        // verschachtelte Startpunkte zusammenfassen
-        $dirs = array_keys($starts);
-        sort($dirs);
-        $unique = [];
-        foreach ($dirs as $d) {
-            if (! collect($unique)->contains(fn ($u) => str_starts_with($d.'/', $u.'/'))) {
-                $unique[] = $d;
-            }
-        }
-        foreach ($unique as $dir) {
-            $files = [];
-            $left = [];
-            $this->walk($dir, $files, $left);
-            Leftover::where('path', $dir)->orWhere('path', 'like', $dir.'/%')->delete();
-            $now = now();
-            foreach ($left as $path => $kind) {
-                if (! in_array($path, $roots, true)) {
-                    Leftover::updateOrCreate(['path' => $path], ['kind' => $kind, 'updated_at' => $now]);
-                }
-            }
-        }
-        // Reste, die es nicht mehr gibt – nur dort nachsehen, wo die Aktion etwas angefasst hat
-        // (unterhalb der neu durchlaufenen Ordner ist schon alles aktuell; früher: file_exists auf jeden Rest im Bestand)
-        $near = [];      // berührte Pfade und ihre Ordner
-        $ancestors = []; // alle Ordner oberhalb davon
-        foreach ($paths as $p) {
-            $near[$p] = $near[dirname($p)] = true;
-            for ($d = $p; $d !== '/' && $d !== '.' && ! isset($ancestors[$d]); $d = dirname($d)) {
-                $ancestors[$d] = true;
-            }
-        }
-        foreach (Leftover::all() as $l) {
-            // Rest liegt über einem berührten Pfad oder darunter
-            $related = isset($ancestors[$l->path]);
-            for ($d = dirname($l->path); ! $related && $d !== '/' && $d !== '.'; $d = dirname($d)) {
-                $related = isset($near[$d]);
-            }
-            if ($related && ! file_exists($l->path)) {
-                $l->delete();
-            }
-        }
-    }
-
-    private function store(string $location, array $read, array $stats): void
-    {
-        $now = now();
-        $rows = [];
-        // Lesefehler bei einer Datei, die schon mit gültigen Daten im Index steht: alte Werte behalten, nur den Fehler
-        // vermerken und beim nächsten Scan neu lesen (mtime 0). Sonst würde ein kurzer Share-Aussetzer Tags und Länge
-        // löschen – und Aufräumen hielte die Datei für defekt bzw. das Album für uneinheitlich.
-        $failed = array_keys(array_filter($read, fn ($a) => $a['read_failed'] ?? false));
-        $keep = $failed ? Track::whereIn('path', $failed)->where('duration', '>=', 0.1)->pluck('path')->flip()->all() : [];
-        foreach (array_keys($keep) as $path) {
-            Track::where('path', $path)->update([
-                'error' => 'Zuletzt nicht lesbar, bisherige Werte behalten: '.($read[$path]['error'] ?? 'Lesefehler'),
-                'mtime' => 0,
-                'updated_at' => $now,
-            ]);
-        }
-        foreach ($read as $path => $attrs) {
-            unset($attrs['read_failed']);
-            if (isset($keep[$path])) {
-                continue;
-            }
-            $row = $attrs + [
-                'location' => $location,
-                'path' => $path,
-                'dir' => dirname($path),
-                'filename' => basename($path),
-                'ext' => strtolower(pathinfo($path, PATHINFO_EXTENSION)),
-                'size' => $stats[$path]['size'] ?? 0,
-                'mtime' => $stats[$path]['mtime'] ?? 0,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ];
-            foreach (['artists', 'albumartists', 'genres'] as $k) {
-                $row[$k] = json_encode($row[$k], JSON_UNESCAPED_UNICODE);
-            }
-            $rows[] = $row;
-        }
-        if ($rows) {
-            $columns = array_diff(array_keys($rows[0]), ['path', 'created_at']);
-            Track::upsert($rows, ['path'], $columns);
-            Cache::increment(self::INDEX_BUMP);
-            // Datei mit Vormerkung neu gelesen: der Zwilling behält die vorgemerkten Werte, der Dateistand wird nachgeführt
-            PendingChanges::reapply(array_column($rows, 'path'));
-        }
-    }
-
-    private function storeLeftovers(array $roots, array $leftovers): void
-    {
-        foreach ($roots as $root) {
-            Leftover::where('path', 'like', $root.'/%')->delete();
-        }
-        $now = now();
-        $rows = [];
-        foreach ($leftovers as $path => $kind) {
-            if (in_array($path, $roots, true)) {
-                continue; // leere Wurzelordner sind kein Rest
-            }
-            $rows[] = ['path' => $path, 'kind' => $kind, 'created_at' => $now, 'updated_at' => $now];
-        }
-        foreach (array_chunk($rows, 300) as $chunk) {
-            Leftover::upsert($chunk, ['path'], ['kind', 'updated_at']);
-        }
-    }
-
-    /** Alben bilden: ein Album = ein Ordner; Unterordner wie "CD1"/"Disc 2" gehören zum übergeordneten Album. */
-    public static function albumDir(string $dir): string
-    {
-        return preg_match('/^(cd|disc|disk)\s*\d+$/i', basename($dir)) ? dirname($dir) : $dir;
-    }
-
-    /**
-     * @param  list<string>|null  $dirs  nur diese Track-Ordner neu berechnen
-     */
-    public function rebuildAlbums(?string $location, ?array $dirs = null): void
-    {
-        $query = Track::query();
-        if ($location) {
-            $query->where('location', $location);
-        }
-        $scope = null;
-        if ($dirs !== null) {
-            $scope = array_map([self::class, 'albumDir'], $dirs);
-            // Inbox: Geschwister-Ordner mit einbeziehen, damit Mehrfach-CDs vollständig zusammengefasst werden
-            foreach ($scope as $d) {
-                if ($this->settings->isInInbox(dirname($d).'/')) {
-                    $scope[] = dirname($d);
-                }
-            }
-            $scope = array_values(array_unique($scope));
-        }
-
-        // in Blöcken abfragen: eine OR-Kette über Hunderte Ordner sprengt SQLite ("Expression tree is too large")
-        $tracks = [];
-        foreach ($scope === null ? [null] : array_chunk($scope, self::SCOPE_CHUNK) as $chunk) {
-            $q = clone $query;
-            if ($chunk !== null) {
-                $q->where(fn ($w) => $this->whereInDirs($w, $chunk));
-            }
-            foreach ($q->cursor() as $track) {
-                $tracks[$track->id] = $track;
-            }
-        }
-        ksort($tracks);
-        $groups = [];
-        foreach ($tracks as $track) {
-            $groups[self::albumDir($track->dir)][] = $track;
-        }
-        unset($tracks);
-        $sets = $this->discSets($groups);
-        // in kleinen Paketen schreiben: eine Transaktion über alle Alben (samt Cover-Suche übers Netzwerk) sperrte die
-        // Datenbank so lange, dass andere Prozesse mit "database is locked" aufgaben
-        foreach (array_chunk($sets, self::ALBUM_CHUNK) as $chunk) {
-            $prepared = array_map(fn ($set) => [$set, $this->albumAttributes($set['dirs'][0], $set['tracks'], $set['dirs'], $set['disc_map'] ?? [])], $chunk);
-            Cache::increment(self::INDEX_BUMP);
-            DB::transaction(function () use ($prepared) {
-                foreach ($prepared as [$set, $attributes]) {
-                    $album = Album::updateOrCreate(['dir' => $set['dirs'][0]], $attributes);
-                    // nur Titel anfassen, deren Zuordnung sich ändert (sonst schrieb jeder Scan alle Titel neu)
-                    $ids = array_map(fn ($t) => $t->id, array_filter($set['tracks'], fn ($t) => (int) $t->album_id !== $album->id));
-                    foreach (array_chunk($ids, 500) as $part) {
-                        Track::whereIn('id', $part)->update(['album_id' => $album->id]);
-                    }
-                }
-            });
-        }
-
-        // Alben ohne Tracks entfernen
-        if ($scope !== null) {
-            foreach (array_chunk($scope, self::SCOPE_CHUNK) as $chunk) {
-                Album::query()->whereDoesntHave('tracks')->where(fn ($w) => $this->whereInDirs($w, $chunk))->delete();
-            }
-        } else {
-            $orphans = Album::query()->whereDoesntHave('tracks');
-            if ($location) {
-                $orphans->where('location', $location);
-            }
-            $orphans->delete();
-        }
-    }
-
-    /** Ordner samt Unterordnern (Spalte "dir"). */
-    private function whereInDirs($query, array $dirs): void
-    {
-        foreach ($dirs as $d) {
-            $query->orWhere('dir', $d)->orWhere('dir', 'like', $d.'/%');
-        }
-    }
-
-    /** "Bravo Hits, Vol. 39, Disc 2" -> 2 */
-    public static function discFromName(?string $name): ?int
-    {
-        return preg_match('/(?:^|[\s,;:\-\(\[])(?:cd|disc|disk)\s*0*(\d{1,2})\s*[\)\]]?\s*$/i', trim((string) $name), $m) ? (int) $m[1] : null;
-    }
-
-    /** "Bravo Hits, Vol. 39, Disc 2" -> "Bravo Hits, Vol. 39" */
-    public static function stripDisc(?string $name): string
-    {
-        return trim(preg_replace('/[\s,;:\-]*[\(\[]?\s*(?:cd|disc|disk)\s*0*\d{1,2}\s*[\)\]]?\s*$/i', '', trim((string) $name)));
-    }
-
-    /** Vergleichsschlüssel für Albumnamen: ohne CD-Angabe, Satzzeichen, Leerzeichen; "1956-65" = "1956-1965". */
-    public static function albumKey(?string $album): string
-    {
-        $s = self::stripDisc($album);
-        $s = preg_replace_callback('/\b(\d{2})(\d{2})\s*[-–\/]\s*(\d{2})\b(?!\d)/u', fn ($m) => $m[1].$m[2].'-'.$m[1].$m[3], $s);
-
-        return preg_replace('/[^a-z0-9]+/', '', strtolower(ArtistNames::stripAccents((string) $s))) ?? '';
-    }
-
-    /** Fast gleich: identische Zahlen, Buchstaben unterscheiden sich höchstens um 2 Zeichen. */
-    public static function similarAlbumKeys(string $a, string $b): bool
-    {
-        if (preg_replace('/\D/', '', $a) !== preg_replace('/\D/', '', $b)) {
-            return false;
-        }
-        $la = preg_replace('/\d/', '', $a);
-        $lb = preg_replace('/\d/', '', $b);
-
-        return min(strlen($la), strlen($lb)) >= 8 && levenshtein($la, $lb) <= 2;
-    }
-
-    /**
-     * Inbox: Geschwister-Ordner einer Mehrfach-CD zu einem Album zusammenfassen.
-     * Bedingung: gleicher Elternordner, gleicher Albumname (ohne CD-Angabe), gleicher Album-Interpret,
-     * jeder Teil mit eigener, unterschiedlicher CD-Nummer (aus Ordnername, Albumname oder Tag).
-     *
-     * @param  array<string, list<Track>>  $groups
-     * @return list<array{dirs: list<string>, tracks: list<Track>}>
-     */
-    private function discSets(array $groups): array
-    {
-        $mode = function (array $values) {
-            $values = array_filter($values, fn ($v) => $v !== null && $v !== '');
-            if (! $values) {
-                return null;
-            }
-            $c = array_count_values(array_map('strval', $values));
-            arsort($c);
-
-            return (string) array_key_first($c);
-        };
-        $candidates = [];
-        $out = [];
-        // Von Hand zusammengeführte CDs haben Vorrang
-        foreach (DiscSet::all() as $set) {
-            $members = array_values(array_filter($set->members, fn ($m) => isset($groups[$m['dir']])));
-            if (count($members) < 2) {
-                continue;
-            }
-            usort($members, fn ($a, $b) => $a['disc'] <=> $b['disc']);
-            $out[] = [
-                'dirs' => array_column($members, 'dir'),
-                'tracks' => array_merge(...array_map(fn ($m) => $groups[$m['dir']], $members)),
-                'disc_map' => array_combine(array_column($members, 'dir'), array_map('intval', array_column($members, 'disc'))),
-            ];
-            foreach ($members as $m) {
-                unset($groups[$m['dir']]);
-            }
-        }
-        foreach ($groups as $dir => $tracks) {
-            if ($tracks[0]->location !== 'inbox') {
-                $out[] = ['dirs' => [$dir], 'tracks' => $tracks];
-
-                continue;
-            }
-            $album = $mode(array_map(fn ($t) => $t->album, $tracks)) ?? basename($dir);
-            $disc = self::discFromName(basename($dir)) ?? self::discFromName($album);
-            if ($disc === null) {
-                $tagDisc = (int) $mode(array_map(fn ($t) => (int) $t->disc, $tracks));
-                $total = (int) $mode(array_map(fn ($t) => (int) $t->disctotal, $tracks));
-                $disc = $total > 1 && $tagDisc > 0 ? $tagDisc : null;
-            }
-            $scope = dirname($dir).'|'.mb_strtolower((string) $mode(array_map(fn ($t) => $t->albumartist, $tracks)));
-            $candidates[$scope][] = ['dir' => $dir, 'tracks' => $tracks, 'disc' => $disc, 'key' => self::albumKey($album)];
-        }
-
-        foreach ($candidates as $parts) {
-            // 1) gleiche Schlüssel bündeln
-            $clusters = [];
-            foreach ($parts as $p) {
-                $clusters[$p['key']][] = $p;
-            }
-            // 2) fast gleiche Schlüssel zusammenführen: gleiche Zahlen, max. 2 Buchstaben Unterschied, keine doppelten CD-Nummern
-            $keys = array_keys($clusters);
-            foreach ($keys as $i => $a) {
-                foreach (array_slice($keys, $i + 1) as $b) {
-                    if (! isset($clusters[$a], $clusters[$b]) || ! self::similarAlbumKeys($a, $b)) {
-                        continue;
-                    }
-                    $discsA = array_column($clusters[$a], 'disc');
-                    $discsB = array_column($clusters[$b], 'disc');
-                    if (in_array(null, [...$discsA, ...$discsB], true) || array_intersect($discsA, $discsB)) {
-                        continue;
-                    }
-                    array_push($clusters[$a], ...$clusters[$b]);
-                    unset($clusters[$b]);
-                }
-            }
-            foreach ($clusters as $cluster) {
-                $discs = array_column($cluster, 'disc');
-                $mergeable = count($cluster) > 1 && ! in_array(null, $discs, true) && count(array_unique($discs)) === count($discs);
-                if (! $mergeable) {
-                    foreach ($cluster as $p) {
-                        $out[] = ['dirs' => [$p['dir']], 'tracks' => $p['tracks']];
-                    }
-
+        $stats = ['files' => 0, 'read' => 0, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0];
+        $batch = [];
+        $done = 0;
+        $images = [];
+        $buffer = '';
+        $missingRoots = [];
+        foreach ($process->getIterator(Process::ITER_SKIP_ERR) as $chunk) {
+            $buffer .= $chunk;
+            while (($pos = strpos($buffer, "\n")) !== false) {
+                $line = substr($buffer, 0, $pos);
+                $buffer = substr($buffer, $pos + 1);
+                $msg = json_decode($line, true);
+                if (! is_array($msg)) {
                     continue;
                 }
-                usort($cluster, fn ($x, $y) => $x['disc'] <=> $y['disc']);
-                $out[] = ['dirs' => array_column($cluster, 'dir'), 'tracks' => array_merge(...array_column($cluster, 'tracks')),
-                    'disc_map' => array_combine(array_column($cluster, 'dir'), array_column($cluster, 'disc'))];
+                switch ($msg['type']) {
+                    case 'walk':
+                        $stats['files'] = $msg['files'];
+                        $stats['read'] = $msg['read'];
+                        $missingRoots = $msg['missing_roots'];
+                        Activity::progress('scan', 0, $msg['read'], $label.' – '.number_format($msg['read'], 0, ',', '.').' von '.number_format($msg['files'], 0, ',', '.').' Dateien neu oder geändert');
+                        break;
+                    case 'moved':
+                        $stats['moved'] += $this->moved($location, $msg) ? 1 : 0;
+                        break;
+                    case 'ids':
+                        $this->storeFileIds($msg['items']);
+                        break;
+                    case 'track':
+                        $batch[] = $msg;
+                        $stats['errors'] += empty($msg['ok']) ? 1 : 0;
+                        if (count($batch) >= self::BATCH) {
+                            $this->store($location, $batch);
+                            $done += count($batch);
+                            $batch = [];
+                            Activity::progress('scan', $done);
+                        }
+                        break;
+                    case 'image':
+                        $images[] = $msg;
+                        break;
+                    case 'deleted':
+                        if ($batch) {
+                            $this->store($location, $batch);
+                            $done += count($batch);
+                            $batch = [];
+                            Activity::progress('scan', $done);
+                        }
+                        $stats = $this->removeMissing($msg['paths'], count($known), $stats);
+                        $this->storeImages($location, $images, $msg['images'] ?? []);
+                        break;
+                }
             }
         }
+        $process->wait();
+        if (! $process->isSuccessful()) {
+            Activity::finish('scan', $label.': Fehler beim Lesen');
+            throw new RuntimeException('Tag-Leser: '.trim($process->getErrorOutput()));
+        }
 
-        return $out;
+        $newArtists = Artist::count() - $artistsBefore;
+        // erst die Schreibweise bereinigen (doppelte Leerzeichen, Bindestriche …), dann die Namensregeln
+        app(TextCleanup::class)->apply();
+        app(NameRules::class)->apply();
+        app(ArtistCredits::class)->apply();
+        // Sortiernamen: Eindeutiges selbst eintragen (umgedrehte Namen, fehlende Sortiernamen)
+        if (config('musicwiz.sortnames_auto')) {
+            app(SortNames::class)->apply();
+        }
+        app(ArtistGenres::class)->syncIds(array_keys($this->touchedArtists));
+        // zu breite Genres („Rock/Pop“) auch aus neu eingelesenen Liedern entfernen
+        app(GenreCleanup::class)->apply();
+        // Lieder ohne Kategorie vorbelegen (nach den Schreibweisen: „Various Artists“ macht ein Album zum Sampler)
+        if (config('musicwiz.category_fill')) {
+            app(Categories::class)->fill();
+        }
+        $this->touchedArtists = [];
+        Client::prune();
+        // neu gesetzte Cover ohne Verweis, dann Cover-Kopien von Liedern und Bildern, die es so nicht mehr gibt
+        CoverStore::prune();
+        Covers::prune();
+        // leere Ordner (nur Systemdateien) entfernen – nicht, wenn der Bereich nicht erreichbar ist oder auffällig viel fehlt
+        if (! $missingRoots && ! $stats['kept_missing']) {
+            $stats['folders'] = app(FileMover::class)->removeEmptyFolders($location);
+        }
+        $message = $missingRoots
+            ? $label.': Ordner nicht erreichbar ('.implode(', ', $missingRoots).') – nichts entfernt'
+            : $label.': '.number_format($stats['files'], 0, ',', '.').' Lieder, '.$stats['read'].' neu gelesen'
+                .($stats['moved'] ? ', '.$stats['moved'].' umbenannt erkannt' : '')
+                .($stats['removed'] ? ', '.$stats['removed'].' entfernt' : '')
+                .($stats['folders'] ? ', '.$stats['folders'].' leere Ordner gelöscht' : '')
+                .($stats['errors'] ? ', '.$stats['errors'].' nicht lesbar' : '')
+                .($newArtists ? ', '.$newArtists.' neue Interpreten' : '')
+                .($stats['kept_missing'] ? ' – '.$stats['kept_missing'].' fehlende Dateien NICHT entfernt (Share eingehängt?)' : '');
+        Activity::finish('scan', $message);
+        // neue Lieder der Inbox: Fingerabdruck im Hintergrund (Lib und Blackhole nur auf Knopfdruck)
+        if ($location === 'inbox' && config('musicwiz.fingerprint_inbox')) {
+            MeasureFingerprints::start(['inbox']);
+        }
+        // neue bzw. noch nicht abgeglichene Interpreten im Hintergrund abgleichen
+        if (config('musicwiz.lookup_auto') && in_array($location, ['library', 'inbox'], true)) {
+            LookupArtists::start();
+        }
+
+        return $stats;
     }
 
-    /** Werte eines Albums (inkl. Cover-Suche auf dem Share) – ohne zu schreiben, damit das außerhalb der Sperre läuft. */
-    private function albumAttributes(string $dir, array $tracks, array $dirs = [], array $discMap = []): array
+    /**
+     * Nach dem Schreiben: frisch gelesene Dateien übernehmen – dasselbe Lied (gleicher Pfad), Audio unverändert, also
+     * bleibt auch die gemessene Lautheit.
+     */
+    public function refresh(string $location, array $results): void
     {
-        $mode = function (array $values) {
-            $values = array_filter($values, fn ($v) => $v !== null && $v !== '');
-            if (! $values) {
-                return null;
-            }
-            $counts = array_count_values($values);
-            arsort($counts);
-
-            return (string) array_key_first($counts);
-        };
-        $pluck = fn ($k) => array_map(fn ($t) => is_scalar($t->{$k}) ? (string) $t->{$k} : null, $tracks);
-
-        $location = $tracks[0]->location;
-        $category = $location !== 'inbox'
-            ? ($this->settings->categoryForPath($dir.'/')['name'] ?? null)
-            : ($this->settings->category($mode($pluck('category')) ?? $mode($pluck('comment')))['name'] ?? null);
-        $isCompilation = (bool) ($this->settings->category($category)['compilation'] ?? false)
-            || count(array_filter($tracks, fn ($t) => $t->compilation)) > count($tracks) / 2;
-
-        $folderArtist = $mode(array_map(fn ($t) => PathBuilder::folderArtist($t->tags()), $tracks));
-        $albumartist = $mode($pluck('albumartist'));
-        if (! $albumartist) {
-            $artists = array_unique(array_filter($pluck('artist')));
-            $albumartist = count($artists) === 1 ? reset($artists) : null;
+        foreach (array_chunk($results, self::BATCH) as $chunk) {
+            $this->store($location, $chunk, true);
         }
-        $genres = [];
-        foreach ($tracks as $t) {
-            foreach ($t->genres ?? [] as $g) {
-                $genres[$g] = ($genres[$g] ?? 0) + 1;
-            }
-        }
-        arsort($genres);
+        app(ArtistGenres::class)->syncIds(array_keys($this->touchedArtists));
+        $this->touchedArtists = [];
+    }
 
-        [$coverFile, $fileSize] = [null, null];
-        foreach ($dirs ?: [$dir] as $d) {
-            [$coverFile, $fileSize] = self::findCoverFile($d, $this->coverNames[$d] ?? null);
-            if ($coverFile) {
-                break;
+    /** Ein Paket Leseergebnisse speichern (neu bzw. aktualisieren). */
+    private function store(string $location, array $results, bool $sameAudio = false): void
+    {
+        $now = now();
+        $rows = [];
+        foreach ($results as $r) {
+            $rows[sha1($r['path'])] = $this->row($location, $r, $now);
+        }
+        // in der Datenbank bearbeitete Felder behalten (die Datei hat noch den alten Stand)
+        $existing = Track::whereIn('path_hash', array_keys($rows))->get(['id', 'path_hash', 'size', 'loudness', 'loudness_peak', ...array_keys(Track::EDITABLE)])->keyBy('id');
+        // gemessene Lautheit (ReplayGain) behalten, solange die Datei gleich groß ist – sonst neu messen
+        $kept = $existing->keyBy('path_hash');
+        foreach ($rows as $hash => $row) {
+            $same = isset($kept[$hash]) && ($sameAudio || (int) $kept[$hash]->size === (int) $row['size']);
+            $rows[$hash]['loudness'] = $same ? $kept[$hash]->loudness : null;
+            $rows[$hash]['loudness_peak'] = $same ? $kept[$hash]->loudness_peak : null;
+        }
+        // bekanntes Lied gerade nicht lesbar (Datei wird geschrieben, Netz weg): nur den Fehler vermerken, die Tags bleiben –
+        // beim nächsten Einlesen wird es wieder gelesen
+        foreach ($rows as $hash => $row) {
+            if ($row['error'] !== null && isset($kept[$hash])) {
+                Track::where('path_hash', $hash)->update(['error' => $row['error'], 'size' => $row['size'], 'mtime' => $row['mtime'], 'scanned_at' => $now, 'updated_at' => $now]);
+                unset($rows[$hash]);
             }
         }
-        $embedded = array_values(array_filter($tracks, fn ($t) => $t->cover_embedded));
-        $coverSize = $embedded ? $embedded[0]->cover_size : $fileSize;
-
-        $letter = null;
-        if (! $isCompilation && $folderArtist) {
-            $letter = app(PathBuilder::class)->letter($folderArtist);
+        if (! $rows) {
+            return;
         }
+        if ($existing->isNotEmpty()) {
+            $edited = TagChange::whereIn('track_id', $existing->keys())->select(['track_id', 'field'])->distinct()->get();
+            foreach ($edited as $e) {
+                $track = $existing[$e->track_id];
+                if (array_key_exists($e->field, $rows[$track->path_hash])) {
+                    $rows[$track->path_hash][$e->field] = $track->getRawOriginal($e->field);
+                }
+            }
+        }
+        $update = array_values(array_diff(array_keys(reset($rows)), ['path_hash', 'created_at']));
+        DB::transaction(fn () => Track::upsert(array_values($rows), ['path_hash'], $update));
+        // mit dem Künstlerverzeichnis verbinden (unbekannte Namen werden als Künstler angelegt)
+        $tracks = Track::whereIn('path_hash', array_keys($rows))->get(ArtistLinker::COLUMNS);
+        app(ArtistLinker::class)->link($tracks->all());
+        // Genres dieser Interpreten am Ende des Einlesens neu verknüpfen
+        foreach (DB::table('track_artist')->whereIn('track_id', $tracks->pluck('id'))->pluck('artist_id') as $id) {
+            $this->touchedArtists[$id] = true;
+        }
+    }
+
+    public function row(string $location, array $r, $now): array
+    {
+        $path = $r['path'];
+        $dir = dirname($path);
+        $albumDir = self::albumDir($dir);
+        $core = $r['core'] ?? [];
+        $info = $r['info'] ?? [];
+        $str = fn ($v, $max = 512) => ($v = trim((string) $v)) === '' ? null : mb_substr($v, 0, $max);
+        $int = fn ($v) => ($n = (int) preg_replace('/\D.*$/', '', trim((string) $v))) > 0 ? min($n, 65535) : null;
 
         return [
             'location' => $location,
-            'category' => $category,
-            'title' => count($dirs) > 1
-                ? self::stripDisc($mode(array_map(fn ($t) => $t->album, array_filter($tracks, fn ($t) => $t->dir === $dir))) ?? $mode($pluck('album')) ?? basename($dir))
-                : ($mode($pluck('album')) ?? basename($dir)),
-            'dirs' => count($dirs) > 1 ? $dirs : null,
-            'disc_map' => count($dirs) > 1 && $discMap ? $discMap : null,
-            'albumartist' => $albumartist,
-            'folder_artist' => $isCompilation ? null : $folderArtist,
-            'letter' => $letter,
-            'year' => PathBuilder::year($mode($pluck('year')) ?? '') ?: null,
-            'genres' => array_slice(array_keys($genres), 0, 4),
-            'is_compilation' => $isCompilation,
-            'track_count' => count($tracks),
-            'duration' => (int) array_sum(array_map(fn ($t) => $t->duration ?? 0, $tracks)),
-            'cover_file' => $coverFile,
-            'cover_embedded' => (bool) $embedded,
-            'cover_size' => $coverSize,
+            'path' => $path,
+            'path_hash' => sha1($path),
+            'dir' => $dir,
+            'album_dir' => $albumDir,
+            'album_hash' => self::albumHash($location, $albumDir),
+            'filename' => mb_substr(basename($path), 0, 512),
+            'ext' => strtolower(pathinfo($path, PATHINFO_EXTENSION)),
+            'size' => (int) $r['size'],
+            'mtime' => (int) $r['mtime'],
+            'file_id' => $r['fid'] ?? null,
+            'format' => $info['format'] ?? null,
+            'duration' => $info['duration'] ?? null,
+            'bitrate' => $info['bitrate'] ?? null,
+            'sample_rate' => $info['sample_rate'] ?? null,
+            'channels' => $info['channels'] ?? null,
+            'bits' => $info['bits'] ?? null,
+            'has_cover' => (bool) ($info['has_cover'] ?? false),
+            'cover_width' => self::dimension($info['cover']['width'] ?? null),
+            'cover_height' => self::dimension($info['cover']['height'] ?? null),
+            'cover_phash' => $info['cover']['phash'] ?? null,
+            'error' => empty($r['ok']) ? mb_substr((string) ($r['error'] ?? 'nicht lesbar'), 0, 512) : null,
+            'title' => $str($core['title'] ?? ''),
+            'artist' => $str($core['artist'] ?? ''),
+            'album' => $str($core['album'] ?? ''),
+            'albumartist' => $str($core['albumartist'] ?? ''),
+            'artists' => $str($core['artists'] ?? '', 1024),
+            'albumartists' => $str($core['albumartists'] ?? '', 1024),
+            'track' => $int($core['track'] ?? ''),
+            'track_total' => $int($core['track_total'] ?? ''),
+            'disc' => $int($core['disc'] ?? ''),
+            'disc_total' => $int($core['disc_total'] ?? ''),
+            'year' => $str($core['year'] ?? '', 32),
+            'genre' => $str($core['genre'] ?? '', 255),
+            'comment' => $str($core['comment'] ?? '', 65000),
+            'compilation' => (bool) ($core['compilation'] ?? false),
+            'category' => Categories::fromRawTags($r['tags'] ?? []),
+            'rating' => Ratings::fromRawTags($r['tags'] ?? []),
+            ...SortNames::fromRawTags($r['tags'] ?? []),
+            ...ReplayGain::fromRawTags($r['tags'] ?? []),
+            ...SplitAlbums::fromRawTags($r['tags'] ?? []),
+            'fingerprint' => Fingerprints::fromRawTags($r['tags'] ?? []),
+            'fingerprint_failed_at' => null,
+            'tags' => json_encode($r['tags'] ?? (object) [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE),
+            'scanned_at' => $now,
+            'read_version' => self::READ_VERSION,
+            'created_at' => $now,
+            'updated_at' => $now,
         ];
     }
 
-    /** Alle Cover-Dateien (cover.*, folder.*, front.*) im Ordner. */
-    public static function coverFiles(string $dir): array
+    /**
+     * Außerhalb umbenannt bzw. verschoben (gleiche Datei-ID): den Eintrag mitziehen – gleiche ID, Verlauf, Änderungen
+     * und Verknüpfungen bleiben. Ist das alte Album danach leer, wandern seine Prüfungen mit.
+     */
+    private function moved(string $location, array $msg): bool
     {
-        return array_values(array_map(fn ($e) => $dir.'/'.$e, array_filter(@scandir($dir) ?: [],
-            fn ($e) => (bool) preg_match('/^(cover|folder|front)\.(jpe?g|png)$/i', $e))));
+        $track = Track::where('path_hash', sha1($msg['from']))->first();
+        if (! $track || Track::where('path_hash', sha1($msg['to']))->exists()) {
+            return false;
+        }
+        $old = $track->album_hash;
+        $dir = dirname($msg['to']);
+        $albumDir = self::albumDir($dir);
+        $track->update(['path' => $msg['to'], 'path_hash' => sha1($msg['to']), 'dir' => $dir, 'album_dir' => $albumDir,
+            'album_hash' => self::albumHash($location, $albumDir), 'filename' => mb_substr(basename($msg['to']), 0, 512),
+            'ext' => strtolower(pathinfo($msg['to'], PATHINFO_EXTENSION)), 'file_id' => $msg['fid'] ?? null]);
+        if ($old !== $track->album_hash && ! Track::where('album_hash', $old)->exists()) {
+            FileMover::followHash($old, $track->album_hash);
+        }
+
+        return true;
+    }
+
+    /** Datei-IDs nachtragen (ohne die Dateien neu zu lesen) */
+    private function storeFileIds(array $items): void
+    {
+        foreach (array_chunk($items, 1000) as $chunk) {
+            $case = implode(' ', array_fill(0, count($chunk), 'WHEN ? THEN ?'));
+            $bindings = [];
+            foreach ($chunk as [$path, $fid]) {
+                array_push($bindings, sha1($path), $fid);
+            }
+            DB::update('UPDATE tracks SET file_id = CASE path_hash '.$case.' END WHERE path_hash IN ('.implode(',', array_fill(0, count($chunk), '?')).')',
+                [...$bindings, ...array_map(fn ($i) => sha1($i[0]), $chunk)]);
+        }
+    }
+
+    /** Bilder im Ordner (cover/folder/front): neue bzw. geänderte speichern, verschwundene entfernen */
+    private function storeImages(string $location, array $images, array $deleted): void
+    {
+        $now = now();
+        $rows = array_map(fn ($i) => [
+            'location' => $location,
+            'path' => $i['path'],
+            'path_hash' => sha1($i['path']),
+            'dir' => dirname($i['path']),
+            'dir_hash' => sha1(dirname($i['path'])),
+            'size' => (int) $i['size'],
+            'mtime' => (int) $i['mtime'],
+            'width' => self::dimension($i['cover']['width'] ?? null),
+            'height' => self::dimension($i['cover']['height'] ?? null),
+            'phash' => $i['cover']['phash'] ?? null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ], $images);
+        foreach (array_chunk($rows, self::BATCH) as $chunk) {
+            FolderImage::upsert($chunk, ['path_hash'], ['location', 'dir', 'dir_hash', 'size', 'mtime', 'width', 'height', 'phash', 'updated_at']);
+        }
+        foreach (array_chunk($deleted, self::BATCH) as $chunk) {
+            FolderImage::whereIn('path_hash', array_map('sha1', $chunk))->delete();
+        }
+    }
+
+    private static function dimension(mixed $v): ?int
+    {
+        return is_numeric($v) && $v > 0 ? min((int) $v, 65535) : null;
+    }
+
+    /** Bekannte Dateien, die es nicht mehr gibt, entfernen – außer es fehlen auffällig viele (Share nicht eingehängt?). */
+    private function removeMissing(array $paths, int $known, array $stats): array
+    {
+        if (! $paths) {
+            return $stats;
+        }
+        if (count($paths) > 20 && count($paths) > $known * config('musicwiz.scan_max_missing')) {
+            $stats['kept_missing'] = count($paths);
+
+            return $stats;
+        }
+        foreach (array_chunk($paths, self::BATCH) as $chunk) {
+            $stats['removed'] += Track::whereIn('path_hash', array_map('sha1', $chunk))->delete();
+        }
+
+        return $stats;
     }
 
     /**
-     * @param  list<string>|null  $entries  Ordnerinhalt, falls schon bekannt (aus dem Scan-Durchlauf)
-     * @return array{0:?string, 1:?int}
+     * Album-Ordner einer CD: Unterordner „CD1“/„Disc 2“ gehören zum Ordner darüber, Geschwister wie „Hits, Disc 1“ und
+     * „Hits, Disc 2“ (auch „Hits CD1“, „Hits (CD 2)“, „Hits - Disk 3“, „Hits [CD2]“) zum Album „Hits“.
      */
-    public static function findCoverFile(string $dir, ?array $entries = null): array
+    public static function albumDir(string $dir): string
     {
-        $preferred = ['cover.jpg', 'cover.jpeg', 'cover.png', 'folder.jpg', 'folder.jpeg', 'folder.png', 'front.jpg', 'front.png'];
-        $entries ??= @scandir($dir) ?: [];
-        $byLower = [];
-        foreach ($entries as $e) {
-            $byLower[strtolower($e)] = $e;
+        $name = basename($dir);
+        if (preg_match('/^(cd|disc|disk)\s*\d+$/i', $name)) {
+            return dirname($dir);
         }
-        foreach ($preferred as $name) {
-            if (isset($byLower[$name])) {
-                $path = $dir.'/'.$byLower[$name];
-
-                return [$path, self::imageSize($path)];
-            }
+        if (preg_match('/^(.*?\S)[\s,._-]*[(\[]?\s*(cd|disc|disk)\s*\d+\s*[)\]]?$/iu', $name, $m)) {
+            return dirname($dir).'/'.rtrim($m[1], ' ,.-_');
         }
 
-        return [null, null];
+        return $dir;
     }
 
-    /** Kürzere Seite eines Bildes; das Bild wird nur gelesen, wenn es sich seit dem letzten Mal geändert hat. */
-    private static function imageSize(string $path): ?int
+    /** Gruppierung nach Album: gleicher Album-Ordner, Groß/klein egal („Just The Best“ / „Just the Best“) */
+    public static function albumHash(string $location, string $albumDir): string
     {
-        $stat = @stat($path);
-        if (! $stat) {
-            return null;
-        }
-
-        return Cache::remember('image-size:'.md5($path.'|'.$stat['mtime'].'|'.$stat['size']), now()->addDays(30), function () use ($path) {
-            $size = @getimagesize($path);
-
-            return $size ? min($size[0], $size[1]) : null;
-        });
+        return sha1($location.'|'.mb_strtolower($albumDir));
     }
 }

@@ -1,73 +1,59 @@
 <?php
 
-// Startwerte für die Einstellungen. Gepflegt wird alles auf der Einstellungsseite (SQLite);
-// diese Werte greifen nur, solange dort nichts gespeichert ist.
 return [
-    'base' => env('MUSIC_BASE', '/music'),
-    'inbox' => env('MUSIC_INBOX', '/music/inbox'),
-    'trash' => env('MUSIC_TRASH', '/music/_papierkorb'),
-    'artist_images' => env('MUSIC_ARTIST_IMAGES', '/music/_artists'),
-
-    // feste Kategorien je Bereich (Lib, Blackhole): Name = Wert im Kommentar-Tag, Zielordner unter der Basis, Muster
-    'categories' => [
-        'lib' => ['name' => 'LIB', 'folder' => 'library/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
-        'lib_compilation' => ['name' => 'LIB COMPILATION', 'folder' => 'library/sampler', 'pattern' => '{album_buchstabe}/{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
-        'blackhole' => ['name' => 'BLACKHOLE', 'folder' => 'blackhole/artists', 'pattern' => '{buchstabe}/{ordner_interpret}/{album} ({jahr})/{nr} - {titel}.{ext}'],
-        'blackhole_compilation' => ['name' => 'BLACKHOLE COMPILATION', 'folder' => 'blackhole/sampler', 'pattern' => '{album_buchstabe}/{album} ({jahr})/{nr} - {interpret} - {titel}.{ext}'],
+    // Die vier Bereiche: je ein Ordner, getrennt einlesbar
+    'locations' => [
+        'inbox' => env('MUSIC_INBOX', '/music/inbox'),
+        'library' => env('MUSIC_LIBRARY', '/music/library'),
+        'blackhole' => env('MUSIC_BLACKHOLE', '/music/blackhole'),
+        'trash' => env('MUSIC_TRASH', '/music/_papierkorb'),
     ],
 
-    'no_album' => 'Kein Album',
-    'non_letter_folder' => '0-9',
-    'compilation_artist' => 'Various Artists',
-    'replace_colon' => '-',
-    'replace_slash' => '-',
-    'id3_version' => 4,
-    'scan_throttle_ms' => (int) env('MUSIC_SCAN_THROTTLE_MS', 15),
-    // gleichzeitige Leseprozesse beim Scan (übers Netzwerk deutlich schneller; 1 = nacheinander)
-    'scan_workers' => (int) env('MUSIC_SCAN_WORKERS', 4),
-    // Pause vor dem zweiten Leseversuch einer Datei, die nicht lesbar war (Share kurz weg)
-    'read_retry_ms' => (int) env('MUSIC_READ_RETRY_MS', 500),
-    'small_cover_px' => 300,
+    // Zwischenspeicher: verkleinerte Cover/Interpretenbilder und Vorschauen aus dem Abgleich (Tests: eigene Ordner)
+    'cover_cache' => storage_path('app/covers'),
+    // neu gesetzte Cover im Original (bis sie in die Dateien geschrieben werden)
+    'cover_store' => storage_path('app/cover-store'),
+    'preview_dir' => storage_path('app/artist-previews'),
 
-    // Aufräum-Automatiken: [prüfung => [kategorie|'_other' => true]] – standardmäßig alles aus
-    'auto_cleanup' => [],
+    // Künstlerbilder (Dateiname = Künstlername, z. B. „a-ha.jpg“)
+    'artist_images' => env('MUSIC_ARTIST_IMAGES', '/music/_artists'),
 
-    // Pause zwischen MusicBrainz-Abfragen in Sekunden (MusicBrainz erlaubt etwa eine pro Sekunde)
-    'mb_pause' => 1.1,
-    // Pause zwischen Spotify-Abfragen in Sekunden (Spotify nennt keine feste Grenze, sperrt bei zu vielen per 429)
-    'spotify_pause' => 0.5,
-    // so lange werden Antworten von MusicBrainz, Discogs, Deezer und Fanart.tv zwischengespeichert (Tage)
-    'lookup_cache_days' => (int) env('MUSIC_LOOKUP_CACHE_DAYS', 90),
+    // Verschieben immer selbst kopieren (wie zwischen Shares) – nur für Tests
+    'copy_moves' => false,
 
-    'discogs_token' => env('DISCOGS_TOKEN', ''),
-    'spotify_client_id' => env('SPOTIFY_CLIENT_ID', ''),
-    'spotify_client_secret' => env('SPOTIFY_CLIENT_SECRET', ''),
-    'audiodb_key' => env('AUDIODB_KEY', ''),
-    'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
-    'chat_model' => env('MUSICWIZ_CHAT_MODEL', 'claude-opus-5-5'),
-    'fanart_key' => env('FANART_KEY', ''),
-    // AcoustID (Titel per Fingerabdruck erkennen): kostenloser Anwendungs-Schlüssel von https://acoustid.org/new-application
-    'acoustid_key' => env('ACOUSTID_KEY', ''),
-    // Inbox beobachten: neue Dateien automatisch einlesen (nur lesen) – standardmäßig aus
-    'inbox_watch' => false,
-    'inbox_watch_seconds' => 60,
-    // Qobuz-Shop für „Bei Qobuz suchen“ (Land-Sprache wie in der Qobuz-Adresse)
-    'qobuz_store' => env('QOBUZ_STORE', 'de-de'),
-    // Umgedrehte Namen richtig herum: off | articles („Crystals, The“ → „The Crystals“) | persons (auch „Berry, Chuck“ → „Chuck Berry“)
-    'invert_names' => 'articles',
-    // Artikel, die im Sortiernamen (ARTISTSORT/ALBUMARTISTSORT) nach hinten wandern: „The Beatles“ → „Beatles, The“
-    'sort_articles' => 'The, Die',
+    // nur MP3 und FLAC – andere Formate werden nicht eingelesen
+    'audio_extensions' => ['mp3', 'flac'],
 
-    'tagtool' => env('MUSIC_TAGTOOL', base_path('tools/tagtool.py')),
-    // YouTube-Download (yt-dlp, braucht ffmpeg)
-    'ytdlp' => env('MUSIC_YTDLP', 'yt-dlp'),
-    // Grenzen gegen Drosselung/Sperre: Pause zwischen Videos (zufällig min–max s), zwischen Anfragen (s),
-    // Bandbreite (MB/s) und Titel pro Tag – jeweils 0 = aus
-    'yt_sleep_min' => 5,
-    'yt_sleep_max' => 15,
-    'yt_sleep_requests' => 1,
-    'yt_rate_mb' => 5,
-    'yt_daily_limit' => 100,
-    'audio_extensions' => ['mp3', 'flac', 'm4a', 'ogg', 'opus', 'wma', 'wav', 'aiff'],
-    'junk_files' => ['.DS_Store', 'DS_Store', 'Thumbs.db', 'desktop.ini', '._.DS_Store'],
+    // parallele Leseprozesse beim Einlesen (übers Netzwerk ruhig mehr als CPU-Kerne)
+    'scan_workers' => (int) env('MUSIC_SCAN_WORKERS', 8),
+
+    // Abgleich der Interpreten: Abfragen je Minute und Dienst (Rate-Limits der Dienste – lieber zu vorsichtig)
+    'lookup_rates' => [
+        'musicbrainz' => (int) env('LOOKUP_RATE_MUSICBRAINZ', 55),  // Regel: höchstens 1 je Sekunde
+        'spotify' => (int) env('LOOKUP_RATE_SPOTIFY', 100),         // kein festes Limit, bei 429 gilt Retry-After
+        'discogs' => (int) env('LOOKUP_RATE_DISCOGS', 50),          // 60 je Minute mit Token
+        'audiodb' => (int) env('LOOKUP_RATE_AUDIODB', 120),
+        'fanart' => (int) env('LOOKUP_RATE_FANART', 60),
+        'lastfm' => (int) env('LOOKUP_RATE_LASTFM', 200),           // Regel: im Schnitt höchstens 5 je Sekunde
+        'images' => (int) env('LOOKUP_RATE_IMAGES', 240),           // Vorschaubilder von den Bild-Servern
+        'coverartarchive' => (int) env('LOOKUP_RATE_COVERARTARCHIVE', 60),
+        'deezer' => (int) env('LOOKUP_RATE_DEEZER', 50),            // Regel: 50 je 5 Sekunden – vorsichtig
+        'itunes' => (int) env('LOOKUP_RATE_ITUNES', 20),            // Regel: ca. 20 je Minute
+    ],
+    // nach dem Einlesen automatisch abgleichen (Tests: aus)
+    'lookup_auto' => (bool) env('LOOKUP_AUTO', true),
+    // nach dem Einlesen Lieder ohne Kategorie vorbelegen (System-Änderung; Tests: aus, außer im Kategorie-Test)
+    'category_fill' => (bool) env('CATEGORY_FILL', true),
+    // nach dem Einlesen eindeutige Sortiernamen selbst eintragen (System-Änderung; Tests: aus, außer im Sortiernamen-Test)
+    'sortnames_auto' => (bool) env('SORTNAMES_AUTO', true),
+    // nach dem Einlesen der Inbox Fingerabdrücke der neuen Lieder ermitteln (Tests: aus, außer im Fingerabdruck-Test)
+    'fingerprint_inbox' => (bool) env('FINGERPRINT_INBOX', true),
+    // erneut abgleichen nach … Tagen (gefunden / nicht gefunden)
+    'lookup_refresh_days' => 90,
+    // MusicBrainz-Dumps (Einstellungen › MusicBrainz): Verzeichnis mit LATEST und je Stand artist/release-group.tar.xz
+    'musicbrainz_dumps' => env('MUSICBRAINZ_DUMPS', 'https://data.metabrainz.org/pub/musicbrainz/data/json-dumps/'),
+    'lookup_retry_days' => 30,
+
+    // Fehlen beim Einlesen mehr als dieser Anteil der bekannten Dateien, wird nichts entfernt (Share nicht eingehängt?)
+    'scan_max_missing' => 0.3,
 ];

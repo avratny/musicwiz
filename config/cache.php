@@ -49,8 +49,7 @@ return [
 
         'file' => [
             'driver' => 'file',
-            // im Betrieb auf das gemeinsame Datenverzeichnis, damit App und Worker denselben Stand sehen (Scan, Downloads)
-            'path' => env('CACHE_FILE_PATH', storage_path('framework/cache/data')),
+            'path' => storage_path('framework/cache/data'),
             'lock_path' => storage_path('framework/cache/locks'),
         ],
 

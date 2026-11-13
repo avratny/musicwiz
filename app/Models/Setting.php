@@ -8,11 +8,9 @@ class Setting extends Model
 {
     protected $primaryKey = 'key';
 
-    public $incrementing = false;
-
     protected $keyType = 'string';
 
-    protected $guarded = [];
+    public $incrementing = false;
 
-    protected $casts = ['value' => 'json'];
+    protected $guarded = [];
 }

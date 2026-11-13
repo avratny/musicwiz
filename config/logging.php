@@ -65,20 +65,19 @@ return [
             'replace_placeholders' => true,
         ],
 
+        // Tests (phpunit.xml): eigene Datei, damit sie das Protokoll der Entwicklung nicht vermischen
+        'testing' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/testing.log'),
+            'level' => 'debug',
+            'replace_placeholders' => true,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),
             'level' => env('LOG_LEVEL', 'debug'),
             'max_files' => env('LOG_DAILY_DAYS', 14),
-            'replace_placeholders' => true,
-        ],
-
-        // Betrieb: zusätzlich zu stderr in den Datenordner (übersteht Container-Updates), lesbar über /api/logs
-        'app_file' => [
-            'driver' => 'daily',
-            'path' => storage_path('app/logs/musicwiz.log'),
-            'level' => env('LOG_LEVEL', 'debug'),
-            'days' => env('LOG_DAILY_DAYS', 7),
             'replace_placeholders' => true,
         ],
 

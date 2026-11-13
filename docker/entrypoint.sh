@@ -9,7 +9,7 @@ if [ "$(id -u)" = "0" ]; then
     PUID="${PUID:-1000}"
     PGID="${PGID:-1000}"
     mkdir -p storage/app/logs storage/framework/cache storage/framework/sessions storage/framework/views storage/logs
-    chown -R "$PUID:$PGID" storage bootstrap/cache /data /config /usr/local/bin/yt-dlp
+    chown -R "$PUID:$PGID" storage bootstrap/cache /data /config
     # PGID auch als Zusatzgruppe: Netzwerk-Shares (NFS mit sec=sys, SMB) prüfen die Gruppenliste – mit leerer Liste
     # wurden Ordner, die nur der Gruppe gehören (z. B. 3001:0, Rechte 770), als „keine Berechtigung“ abgewiesen.
     # Weitere Gruppen bei Bedarf über PGROUPS (z. B. "100,1001").
@@ -25,10 +25,6 @@ if [ -z "${APP_KEY:-}" ]; then
     APP_KEY="$(cat "$KEYFILE")"
     export APP_KEY
 fi
-
-DB="${DB_DATABASE:-/app/storage/app/musicwiz.sqlite}"
-mkdir -p "$(dirname "$DB")"
-[ -f "$DB" ] || touch "$DB"
 
 # Datenbank nur im App-Container aktualisieren (Worker warten darauf, sonst laufen Migrationen doppelt)
 if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
