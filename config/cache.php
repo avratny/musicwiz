@@ -49,8 +49,9 @@ return [
 
         'file' => [
             'driver' => 'file',
-            'path' => storage_path('framework/cache/data'),
-            'lock_path' => storage_path('framework/cache/locks'),
+            // im Betrieb im gemeinsamen Datenordner, damit App und Worker denselben Stand sehen (z. B. „Anhalten“)
+            'path' => env('CACHE_FILE_PATH', storage_path('framework/cache/data')),
+            'lock_path' => env('CACHE_FILE_PATH', storage_path('framework/cache/locks')),
         ],
 
         'storage' => [

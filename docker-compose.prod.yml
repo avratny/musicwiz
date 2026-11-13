@@ -13,6 +13,8 @@ x-env: &env
   PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512M}
   PHP_MAX_EXECUTION_TIME: ${PHP_MAX_EXECUTION_TIME:-120}
   MUSIC_SCAN_WORKERS: ${MUSIC_SCAN_WORKERS:-4}
+  # Schnittstelle /api (Analyse und Aktionen von außen, z. B. eine KI) – leer = offen, gesetzt = nur mit Token
+  API_TOKEN: ${API_TOKEN:-}
   # Datenbank (eigener Container „db“)
   DB_CONNECTION: mariadb
   DB_HOST: db

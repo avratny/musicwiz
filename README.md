@@ -45,9 +45,27 @@ Ordner per `.env`: `MUSIC_INBOX`, `MUSIC_LIBRARY`, `MUSIC_BLACKHOLE`, `MUSIC_TRA
 | `MUSIC_SHARE` | Musik-Share auf dem Host → `/music` (darin `library/`, `blackhole/`, `_papierkorb/`, `_artists/`) |
 | `INBOX_SHARE` | Inbox-Share auf dem Host → `/inbox` |
 | `DB_PASSWORD`, `DB_ROOT_PASSWORD` | Passwörter der MariaDB (Daten unter `./db` im Stack-Ordner) |
+| `API_TOKEN` | optional: Token für die Schnittstelle `/api` (z. B. `openssl rand -hex 24`); leer = Schnittstelle ohne Token offen |
 | `PUID`, `PGID`, `PGROUPS` | Besitzer der Musikdateien bzw. zusätzliche Gruppen fürs Share |
 | `MUSIC_LIBRARY`, `MUSIC_BLACKHOLE`, `MUSIC_TRASH`, `MUSIC_INBOX` | andere Ordner im Container (optional) |
 
 Container: `db`, `app` (Oberfläche, migriert beim Start), `queue` (Einlesen, Schreiben, ReplayGain, Fingerabdrücke –
 genau einer), `lookup` (Abgleich der Interpreten), `images` (Vorschaubilder). Schlüssel, Cover-Speicher und Logs
 liegen unter `./data`.
+
+## Schnittstelle (`/api`)
+
+Zum Nachsehen und Handeln von außen (z. B. eine KI): `GET /api` listet ohne Token alle Aufrufe sowie jede Seite mit ihren
+Aktionen und Parametern. Standardmäßig ohne Token; ist `API_TOKEN` gesetzt, braucht alles andere
+`Authorization: Bearer <API_TOKEN>`.
+
+- Lesen: Status (Vorgänge, Warteschlangen, fehlgeschlagene Jobs), Protokoll, Lieder, Änderungen, Interpreten, Nur-Lese-SQL.
+- Tags ändern bzw. zurücksetzen wie von Hand (Grund im Änderungsprotokoll, nur in der Datenbank).
+- `/api/ui/{seite}`: Seite aufbauen, Eigenschaften setzen, Aktionen aufrufen – derselbe Code wie ein Klick. Zurück
+  kommen Stand, Meldungen und die Seite als Text. Zugangsdaten werden nie herausgegeben.
+
+```sh
+curl 'http://nas:8000/api/ui/track-table?mount[slug]=inbox'
+curl -H 'Content-Type: application/json' http://nas:8000/api/ui/write-page \
+     -d '{"call": [{"method": "write", "params": [null]}]}'
+```

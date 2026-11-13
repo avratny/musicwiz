@@ -56,4 +56,7 @@ return [
 
     // Fehlen beim Einlesen mehr als dieser Anteil der bekannten Dateien, wird nichts entfernt (Share nicht eingehängt?)
     'scan_max_missing' => 0.3,
+
+    // Schnittstelle /api (Analyse und Aktionen von außen) – ohne Token offen, mit Token nur mit Token
+    'api_token' => env('API_TOKEN'),
 ];
