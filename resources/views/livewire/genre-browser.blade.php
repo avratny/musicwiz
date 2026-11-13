@@ -68,8 +68,29 @@
                 </thead>
                 <tbody>
                     @forelse ($unmapped as $u)
+                        @if (isset($u['done']))
+                            {{-- gerade erledigt: bleibt grün mit Haken an seinem Platz --}}
+                            <tr wire:key="um-done-{{ md5($u['value']) }}" class="bg-emerald-500/10"
+                                x-data x-init="$el.animate([{ backgroundColor: 'rgb(16 185 129 / 0.35)' }, { backgroundColor: 'rgb(16 185 129 / 0.10)' }], { duration: 900 })">
+                                <td class="border-b border-emerald-500/30 py-2 pr-3 text-emerald-200">
+                                    <div class="flex items-center gap-2">
+                                        <svg class="size-4 shrink-0 text-emerald-300" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></svg>
+                                        <span>{{ $u['value'] }}</span>
+                                    </div>
+                                </td>
+                                <td colspan="4" class="border-b border-emerald-500/30 py-2 pl-6 text-xs text-emerald-300/90">{{ $u['done'] }}</td>
+                            </tr>
+                            @continue
+                        @endif
                         <tr wire:key="um-{{ md5($u['value']) }}" class="align-top">
-                            <td class="border-b border-zinc-800/70 py-2 pr-3 text-zinc-200">{{ $u['value'] }}</td>
+                            <td class="border-b border-zinc-800/70 py-2 pr-3 text-zinc-200">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    {{-- ohne Rückfrage: unten unter „Wird entfernt“ zurücknehmbar --}}
+                                    <button class="whitespace-nowrap rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/25" wire:click="ignore(@js($u['value']))"
+                                            wire:loading.attr="disabled" title="Nicht zuordnen, sondern aus den Liedern entfernen – bleibt kein Genre, kommt das Hauptgenre des Interpreten hinein (zurücknehmbar unter „Wird entfernt“)">zu breit – entfernen</button>
+                                    <span>{{ $u['value'] }}</span>
+                                </div>
+                            </td>
                             <td class="border-b border-zinc-800/70 py-2 text-right tabular-nums text-zinc-400">{{ $u['tracks'] ?: '' }}</td>
                             <td class="border-b border-zinc-800/70 py-2 text-right tabular-nums text-zinc-400">{{ $u['artists'] ?: '' }}</td>
                             <td class="border-b border-zinc-800/70 py-2 pl-6">
@@ -91,9 +112,6 @@
                                 @else
                                     <div class="flex items-center gap-3">
                                         <button class="text-xs font-medium text-accent hover:underline" wire:click="startMap(@js($u['value']))">anderes Genre …</button>
-                                        <button class="text-xs font-medium text-amber-300 hover:underline" wire:click="ignore(@js($u['value']))"
-                                                data-confirm-title="Genre zu breit" data-confirm-ok="Entfernen" data-confirm="„{{ $u['value'] }}“ ist zu breit: aus den Liedern entfernen – bleibt sonst kein Genre, kommt das Hauptgenre des Interpreten hinein (nur in der Datenbank, als System-Änderung). Fortfahren?"
-                                                title="Nicht zuordnen, sondern entfernen – lieber kein Genre oder das des Interpreten">zu breit – entfernen</button>
                                     </div>
                                 @endif
                             </td>

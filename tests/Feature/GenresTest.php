@@ -147,7 +147,8 @@ class GenresTest extends TestCase
 
         $page = Livewire::test(GenreBrowser::class)->set('tab', 'unmapped')->assertSee('Rock/Pop');
         $page->call('startMap', 'Rock/Pop')->set('mapQuery', 'rock')->assertSee('Rock')
-            ->call('mapTo', $this->genre('Rock')->id)->assertSee('„Rock/Pop“ → Rock')->assertDontSee('zuordnen …');
+            ->call('mapTo', $this->genre('Rock')->id)->assertSee('„Rock/Pop“ → Rock')->assertDontSee('zuordnen …')
+            ->assertSeeHtml('um-done-'.md5('Rock/Pop'))->assertSee('zugeordnet → Rock');
 
         $this->assertTrue(DB::table('artist_genre')->where(['artist_id' => Artist::where('name', 'X')->value('id'), 'genre_id' => $this->genre('Rock')->id])->exists(), 'neu verknüpft');
     }
@@ -161,7 +162,8 @@ class GenresTest extends TestCase
         app(Scanner::class)->scan('library');
 
         $page = Livewire::test(GenreBrowser::class)->set('tab', 'unmapped')->assertSee('Rock/Pop')->assertSee('zu breit – entfernen');
-        $page->call('ignore', 'Rock/Pop')->assertSee('3 Lieder angepasst')->assertSee('Wird entfernt (zu breit)');
+        $page->call('ignore', 'Rock/Pop')->assertSee('3 Lieder angepasst')->assertSee('Wird entfernt (zu breit)')
+            ->assertSeeHtml('um-done-'.md5('Rock/Pop'))->assertSee('zu breit – wird entfernt, 3 Lieder angepasst');   // Zeile bleibt grün stehen
 
         $this->assertSame(['Eins' => 'Trance', 'Zwei' => 'Electronic', 'Drei' => 'Pop', 'Vier' => null], Track::orderBy('path')->pluck('genre', 'title')->all());
         $this->assertSame(3, TagChange::where('source', 'system')->where('field', 'genre')->where('reason', 'like', '%zu breit%')->count());

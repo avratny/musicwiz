@@ -45,6 +45,12 @@ class GenreBrowser extends Component
 
     public ?string $message = null;
 
+    /** Nicht zugeordnet: gerade erledigte Werte bleiben grün mit Meldung stehen (Wert => Meldung) */
+    public array $done = [];
+
+    /** Nicht zugeordnet: feste Reihenfolge der Zeilen, damit Erledigtes an seinem Platz bleibt */
+    public array $order = [];
+
     public ?string $error = null;
 
     public function open(int $id): void
@@ -212,6 +218,7 @@ class GenreBrowser extends Component
         }
         GenreSynonym::firstOrCreate(['genre_id' => $genreId, 'synonym' => mb_substr($this->mapValue, 0, 128)]);
         $msg = '„'.$this->mapValue.'“ → '.app(GenreTree::class)->path($genreId);
+        $this->done[$this->mapValue] = 'zugeordnet → '.app(GenreTree::class)->path($genreId);
         $this->mapValue = null;
         $this->mapQuery = '';
         $this->changed($msg);
@@ -231,6 +238,7 @@ class GenreBrowser extends Component
         app(GenreTree::class)->forget();
         $n = app(GenreCleanup::class)->apply();
         $this->mapValue = null;
+        $this->done[$value] = 'zu breit – wird entfernt, '.$n.' '.($n === 1 ? 'Lied' : 'Lieder').' angepasst';
         $this->changed('„'.$value.'“ wird entfernt – '.$n.' '.($n === 1 ? 'Lied' : 'Lieder').' angepasst (siehe Änderungen).');
     }
 
@@ -321,13 +329,24 @@ class GenreBrowser extends Component
             }
         }
         $genre = $this->selected ? Genre::with(['synonyms', 'children', 'parent'])->find($this->selected) : null;
+        $unmapped = [];
+        if ($this->tab === 'unmapped') {
+            $byValue = [];
+            foreach ($artistGenres->unmapped(300) as $u) {
+                $byValue[$u['value']] = $u + ['suggestions' => app(GenreTree::class)->suggest($u['value'])];
+            }
+            // bisherige Zeilen bleiben stehen (Erledigtes grün), neue kommen hinten dazu
+            $this->order = [...array_values(array_filter($this->order, fn ($v) => isset($byValue[$v]) || isset($this->done[$v]))),
+                ...array_values(array_diff(array_keys($byValue), $this->order))];
+            $unmapped = array_map(fn ($v) => $byValue[$v] ?? ['value' => $v, 'done' => $this->done[$v]], $this->order);
+        }
 
         return view('livewire.genre-browser', [
             'byParent' => $byParent,
             'artistCounts' => $artists,
             'visible' => $visible,
             'total' => $all->count(),
-            'unmapped' => $this->tab === 'unmapped' ? array_map(fn ($u) => $u + ['suggestions' => app(GenreTree::class)->suggest($u['value'])], $artistGenres->unmapped(300)) : [],
+            'unmapped' => $unmapped,
             'ignores' => $this->tab === 'unmapped' ? GenreIgnore::orderBy('value')->get() : collect(),
             'genre' => $genre,
             'path' => $genre ? app(GenreTree::class)->path($genre->id) : null,
