@@ -6,6 +6,7 @@ use App\Models\FilePlan;
 use App\Models\TagChange;
 use App\Models\Track;
 use App\Support\Activity;
+use App\Support\ArtistImages;
 use App\Support\FileMover;
 use App\Support\Sorter;
 use App\Support\TagWriter;
@@ -104,7 +105,11 @@ class WriteChanges implements ShouldQueue
         } elseif ($this->done < $total) {
             self::dispatch($this->albums, $this->done, $this->tags, $this->moved, $this->failed);
         } else {
-            Activity::finish(self::KEY, 'Schreiben fertig: '.$summary);
+            // Interpretenbilder für Navidrome: Kopien unter MusicBrainz-ID und exaktem Namen
+            $images = app(ArtistImages::class)->sync();
+            $this->fail($images['failed']);
+            Activity::finish(self::KEY, 'Schreiben fertig: '.$summary.($images['written'] ? ', '.$images['written'].' '.($images['written'] === 1 ? 'Interpretenbild' : 'Interpretenbilder').' abgelegt' : '')
+                .($images['failed'] ? ', '.count($images['failed']).' Interpretenbilder mit Fehler' : ''));
         }
     }
 

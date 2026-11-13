@@ -66,6 +66,7 @@ class ArtistRegistry
                 $artist->update(['image' => $image]);
             }
         });
+        app(ArtistImages::class)->renamed($artist->fresh(), $old);
 
         return $this->canonicalize($artist->fresh(), 'Interpret umbenannt: '.$old.' → '.$name);
     }

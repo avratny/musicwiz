@@ -160,6 +160,27 @@ class SorterTest extends TestCase
         $this->assertSame(['inbox', 'inbox/Alt/Song.mp3', null], [$this->track('Zurück')->location, $this->rel($this->track('Zurück')), $this->track('Zurück')->move_to]);
     }
 
+    public function test_extensions_are_always_lower_case_when_writing(): void
+    {
+        $this->mp3('inbox/Cher/Believe/01 Believe.MP3', ['TIT2' => 'Believe', 'TPE1' => 'Cher', 'TALB' => 'Believe']);
+        $this->jpeg('inbox/Cher/Believe/Folder.JPG');
+        $this->mp3('inbox/Ohne/Song.Mp3', ['TIT2' => 'Ohne Kategorie', 'TPE1' => 'Wer', 'TALB' => 'Ohne']);
+        $this->mp3('inbox/Weg/Weg.MP3', ['TIT2' => 'Weg', 'TPE1' => 'Wer', 'TALB' => 'Weg']);
+        $this->scan();
+        $this->categorize('LIB', 'Believe');
+        Track::where('title', 'Weg')->update(['move_to' => 'trash']);
+
+        WriteChanges::start();
+
+        $believe = $this->track('Believe');
+        $this->assertStringEndsWith('.mp3', $believe->path);
+        $this->assertSame('library', $believe->location);
+        $this->assertFileExists($believe->dir.'/Folder.jpg', 'Bild zieht mit, Endung klein');
+        $this->assertSame('inbox/Ohne/Song.mp3', $this->rel($this->track('Ohne Kategorie')), 'bleibt, nur die Endung wird klein');
+        $this->assertFileExists($this->track('Ohne Kategorie')->path);
+        $this->assertSame('trash/inbox/Weg/Weg.mp3', $this->rel($this->track('Weg')));
+    }
+
     public function test_better_versions_from_duplicates_replace_the_worse_one_in_the_album(): void
     {
         $this->mp3('library/artists/A/ABBA/Gold (1992)/01 - Waterloo.mp3', ['TIT2' => 'Waterloo', 'TPE1' => 'ABBA', 'TALB' => 'Gold', 'TRCK' => '1', 'TDRC' => '1992', 'TXXX:MUSICWIZ_CATEGORY' => 'LIB']);

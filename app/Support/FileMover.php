@@ -417,7 +417,7 @@ class FileMover
                 if (in_array(strtolower($name), self::JUNK, true) || in_array(strtolower($file->getExtension()), $audio, true)) {
                     continue;
                 }
-                $to = $target.'/'.$name;
+                $to = Sorter::lowerExtension($target.'/'.$name);   // Endung klein („Folder.JPG“ → „Folder.jpg“)
                 if (file_exists($to)) {
                     continue; // nie überschreiben – bleibt als Rest liegen
                 }

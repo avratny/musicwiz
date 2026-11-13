@@ -73,10 +73,13 @@ class Sorter
                 $items[] = ['track' => $t, 'kind' => 'trash', 'location' => 'trash', 'to' => $this->trashPath($t), 'reason' => isset($replaced[$t->id]) ? 'durch bessere Fassung ersetzt' : (BrokenTracks::is($t) ? 'kaputt (kein Audio)' : 'Duplikat')];
             } elseif ($t->location === 'blackhole') {
                 $items[] = $t->move_to === 'inbox'
-                    ? ['track' => $t, 'kind' => 'inbox', 'location' => 'inbox', 'to' => Locations::root('inbox').'/'.$this->relative($t)]
+                    ? ['track' => $t, 'kind' => 'inbox', 'location' => 'inbox', 'to' => self::lowerExtension(Locations::root('inbox').'/'.$this->relative($t))]
                     : ['track' => $t, 'kind' => 'stay', 'location' => $t->location, 'to' => null];
             } elseif ($t->category === null || ! isset(Categories::LOCATIONS[$t->category]) || $t->location === 'trash') {
-                $items[] = ['track' => $t, 'kind' => 'stay', 'location' => $t->location, 'to' => null];
+                // bleibt an seinem Platz – nur die Dateiendung wird klein („Lied.MP3“ → „Lied.mp3“, nicht im Papierkorb)
+                $items[] = $t->location !== 'trash' && self::lowerExtension($t->path) !== $t->path
+                    ? ['track' => $t, 'kind' => 'move', 'location' => $t->location, 'to' => self::lowerExtension($t->path)]
+                    : ['track' => $t, 'kind' => 'stay', 'location' => $t->location, 'to' => null];
             } else {
                 $location = Categories::LOCATIONS[$t->category];
                 $to = Locations::root($location).'/'.$this->paths->render($this->template($t->category), $this->paths->values($t, $album));
@@ -249,13 +252,21 @@ class Sorter
     /** Ziel im Papierkorb: Bereich/relativer Pfad, belegt → „ (2)“ usw. */
     public function trashPath(Track $t): string
     {
-        $base = Locations::root('trash').'/'.$t->location.'/'.$this->relative($t);
+        $base = self::lowerExtension(Locations::root('trash').'/'.$t->location.'/'.$this->relative($t));
         $info = pathinfo($base);
         for ($n = 2, $path = $base; file_exists($path); $n++) {
             $path = $info['dirname'].'/'.$info['filename'].' ('.$n.').'.$info['extension'];
         }
 
         return $path;
+    }
+
+    /** Dateiendungen immer klein („Lied.MP3“ → „Lied.mp3“) */
+    public static function lowerExtension(string $path): string
+    {
+        $ext = pathinfo($path, PATHINFO_EXTENSION);
+
+        return $ext === '' || $ext === strtolower($ext) ? $path : substr($path, 0, -strlen($ext)).strtolower($ext);
     }
 
     private function relative(Track $t): string
