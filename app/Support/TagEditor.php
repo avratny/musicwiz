@@ -146,6 +146,9 @@ class TagEditor
         if ($field === 'rating') {
             return Ratings::clamp($value);
         }
+        if ($field === 'lyrics') {
+            return Lyrics::normalize($value);   // mehrzeilig – Zeilen bleiben
+        }
         $value = trim(preg_replace('/\s+/u', ' ', (string) $value));
         if (in_array($field, TextCleanup::FIELDS, true)) {
             $value = TextCleanup::clean($value);

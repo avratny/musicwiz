@@ -39,6 +39,7 @@ class Track extends Model
         'mb_albumid' => 'MusicBrainz-Album-ID',
         'genre' => 'Genre',
         'comment' => 'Kommentar',
+        'lyrics' => 'Songtext',      // synchronisiert (LRC) oder rein – FLAC LYRICS, MP3 USLT (Lyrics)
         'compilation' => 'Sampler',
         'rg_track_gain' => 'ReplayGain Lied',
         'rg_track_peak' => 'ReplayGain Lied-Peak',

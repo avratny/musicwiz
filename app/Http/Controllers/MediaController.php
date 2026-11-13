@@ -6,6 +6,7 @@ use App\Jobs\AskClaudeTextRepairs;
 use App\Jobs\CheckComboNames;
 use App\Jobs\CheckRecordings;
 use App\Jobs\ConfirmClearArtists;
+use App\Jobs\FetchLyrics;
 use App\Jobs\LookupArtists;
 use App\Jobs\MeasureFingerprints;
 use App\Jobs\MeasureReplayGain;
@@ -103,6 +104,7 @@ class MediaController extends Controller
             MeasureReplayGain::KEY => MeasureReplayGain::stop(),
             MeasureFingerprints::KEY => MeasureFingerprints::stop(),
             WriteChanges::KEY => WriteChanges::stop(),
+            FetchLyrics::KEY => FetchLyrics::stop(),
             default => abort(404),
         };
 

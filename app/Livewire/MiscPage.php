@@ -3,6 +3,7 @@
 namespace App\Livewire;
 
 use App\Jobs\AskClaudeTextRepairs;
+use App\Jobs\FetchLyrics;
 use App\Jobs\MeasureFingerprints;
 use App\Jobs\MeasureReplayGain;
 use App\Jobs\ScanLocation;
@@ -15,6 +16,7 @@ use App\Support\Duplicates;
 use App\Support\Fingerprints;
 use App\Support\GenreChecks;
 use App\Support\GenreTree;
+use App\Support\Lyrics;
 use App\Support\OpenCounts;
 use App\Support\ReplayGain;
 use App\Support\TextRepairAi;
@@ -38,6 +40,7 @@ use RuntimeException;
  * Sampler und Einzeltitel je Lied (GenreChecks).
  * „Akustischer Fingerabdruck“: je Bereich ermitteln (Lib und Blackhole nur auf Knopfdruck, Inbox auch nach dem
  * Einlesen) – Grundlage für Duplikate über Albumgrenzen (Fingerprints, MeasureFingerprints).
+ * „Songtexte“: von LRCLIB laden bzw. aktualisieren – Eindeutiges im Batch, sonst wählen (Lyrics, FetchLyrics).
  * „Kaputte Lieder“: lesbar, aber ohne Audio (Länge 0) – in den Papierkorb vormerken (BrokenTracks).
  * „Nicht lesbar“: Dateien, die beim Einlesen nicht gelesen werden konnten – neu lesen bzw. die Einträge aus der Datenbank
  * entfernen (die Dateien bleiben).
@@ -49,7 +52,10 @@ class MiscPage extends Component
 
     /** zweite Leiste */
     public const VIEWS = ['zeichen' => 'Zeichen & Schreibweise', 'jahr' => 'Jahr als Datum', 'replaygain' => 'ReplayGain fehlt', 'duplikate' => 'Duplikate',
-        'genre_fehlt' => 'Genre fehlt', 'genre_abweichend' => 'Genre weicht ab', 'genre_uneinheitlich' => 'Album uneinheitlich', 'fingerabdruck' => 'Akustischer Fingerabdruck', 'kaputt' => 'Kaputte Lieder', 'nicht_lesbar' => 'Nicht lesbar'];
+        'genre_fehlt' => 'Genre fehlt', 'genre_abweichend' => 'Genre weicht ab', 'genre_uneinheitlich' => 'Album uneinheitlich', 'fingerabdruck' => 'Akustischer Fingerabdruck', 'songtexte' => 'Songtexte', 'kaputt' => 'Kaputte Lieder', 'nicht_lesbar' => 'Nicht lesbar'];
+
+    /** Songtexte: Listen */
+    public const LYRICS_TABS = ['exact' => 'Eindeutig', 'choice' => 'Zur Auswahl', 'none' => 'Nicht gefunden'];
 
     /** Ansicht => Prüfung in GenreChecks */
     public const GENRE_VIEWS = ['genre_fehlt' => 'missing', 'genre_abweichend' => 'mismatch', 'genre_uneinheitlich' => 'mixed'];
@@ -61,6 +67,9 @@ class MiscPage extends Component
 
     #[Url(as: 'q', except: '')]
     public string $query = '';
+
+    #[Url(as: 'liste', except: 'exact')]
+    public string $lyricsTab = 'exact';
 
     public int $limit = self::STEP;
 
@@ -252,6 +261,40 @@ class MiscPage extends Component
         $this->dispatch('activity-started');
     }
 
+    /** Songtexte bei LRCLIB abfragen – fehlende bzw. reine ($force: auch schon abgefragte erneut), im Hintergrund */
+    public function fetchLyrics(bool $force = false): void
+    {
+        if (! FetchLyrics::start($force)) {
+            $this->error = 'Läuft schon bzw. nichts abzufragen.';
+            $this->message = null;
+
+            return;
+        }
+        $this->dispatch('activity-started');
+    }
+
+    public function takeLyrics(int $trackId, int $candidateId, bool $plain, Lyrics $lyrics): void
+    {
+        $this->attempt(fn () => $lyrics->take($trackId, $candidateId, $plain), 'Songtext übernommen – nur in der Datenbank, „Schreiben“ bringt ihn in die Datei.');
+    }
+
+    public function takeAllLyrics(Lyrics $lyrics): void
+    {
+        $this->attempt(function () use ($lyrics) {
+            $n = $lyrics->takeExact();
+            $this->message = $n.' '.($n === 1 ? 'Songtext' : 'Songtexte').' übernommen – nur in der Datenbank, „Schreiben“ bringt sie in die Dateien.';
+        });
+    }
+
+    public function dismissLyrics(int $trackId, Lyrics $lyrics): void
+    {
+        $lyrics->dismiss($trackId);
+        $this->say('Aus der Auswahl genommen – wird in '.Lyrics::RETRY_DAYS.' Tagen erneut abgefragt.');
+    }
+
+    #[On('songtexte-finished')]
+    public function lyricsFinished(): void {}
+
     /** Kaputte Lieder: in den Papierkorb vormerken – eins bzw. alle (null), ausgeführt beim Schreiben */
     public function trashBroken(?int $trackId, BrokenTracks $broken): void
     {
@@ -315,6 +358,18 @@ class MiscPage extends Component
         }
         if ($this->view === 'fingerabdruck') {
             return view('livewire.misc-page', ['counts' => $counts, 'prints' => Fingerprints::counts()])->title(self::VIEWS[$this->view].' – MusicWiz');
+        }
+        if ($this->view === 'songtexte') {
+            $this->lyricsTab = isset(self::LYRICS_TABS[$this->lyricsTab]) ? $this->lyricsTab : 'exact';
+            $found = app(Lyrics::class)->findings($this->query);
+
+            return view('livewire.misc-page', [
+                'counts' => $counts,
+                'lyricsCounts' => array_map(fn ($c) => $c->count(), $found),
+                'pendingLyrics' => Lyrics::pending()->count(),
+                'items' => $found[$this->lyricsTab]->take($this->limit),
+                'total' => $found[$this->lyricsTab]->count(),
+            ])->title(self::VIEWS[$this->view].' – MusicWiz');
         }
         if ($this->view === 'kaputt') {
             $all = $brokenTracks->findings($this->query);

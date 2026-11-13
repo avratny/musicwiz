@@ -26,6 +26,8 @@
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/></svg>
                 @elseif ($key === 'fingerabdruck')
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4"/></svg>
+                @elseif ($key === 'songtexte')
+                    <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M4 6h10M4 11h10M4 16h6"/><path d="M18 5v10"/><circle cx="16" cy="16" r="2.5"/></svg>
                 @elseif ($key === 'kaputt')
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><path d="m3 3 18 18"/></svg>
                 @elseif ($key === 'nicht_lesbar')
@@ -54,6 +56,8 @@
                     <p class="text-xs text-zinc-500">{{ $fmt($total) }} {{ $total === 1 ? 'Eintrag' : 'Einträge' }} · {{ ['missing' => 'Lieder ohne Genre', 'mismatch' => 'Genre passt nicht zum Interpreten', 'mixed' => 'Interpreten-Alben mit verschiedenen Genres'][$check] }} in Inbox und Lib</p>
                 @elseif ($view === 'fingerabdruck')
                     <p class="text-xs text-zinc-500">{{ $fmt($counts['fingerabdruck']) }} {{ $counts['fingerabdruck'] === 1 ? 'Lied' : 'Lieder' }} ohne Fingerabdruck</p>
+                @elseif ($view === 'songtexte')
+                    <p class="text-xs text-zinc-500">{{ $fmt($lyricsCounts['exact']) }} eindeutig · {{ $fmt($lyricsCounts['choice']) }} zur Auswahl · {{ $fmt($pendingLyrics) }} noch nicht abgefragt – von LRCLIB, synchronisiert bevorzugt</p>
                 @elseif ($view === 'kaputt')
                     <p class="text-xs text-zinc-500">{{ $fmt($open) }} offen{{ $total > $open ? ', '.$fmt($total - $open).' vorgemerkt' : '' }} · Dateien ohne Audio (Länge 0) in Inbox und Lib</p>
                 @elseif ($view === 'nicht_lesbar')
@@ -67,7 +71,7 @@
             @if ($view !== 'fingerabdruck')
             <div class="relative min-w-60 flex-1">
                 <svg class="pointer-events-none absolute left-2.5 top-2 size-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" wire:model.live.debounce.250ms="query" placeholder="{{ ['jahr' => 'Album, Interpret, Ordner, Jahr suchen …', 'genre_fehlt' => 'Album, Interpret, Titel oder Ordner suchen …', 'genre_abweichend' => 'Album, Interpret, Titel, Genre suchen …', 'genre_uneinheitlich' => 'Album, Interpret, Genre suchen …', 'duplikate' => 'Interpret, Titel oder Ordner suchen …', 'replaygain' => 'Album, Interpret oder Ordner suchen …', 'nicht_lesbar' => 'Pfad oder Fehler suchen …', 'kaputt' => 'Titel, Interpret, Album oder Pfad suchen …'][$view] ?? 'Wert suchen …' }}" class="field pl-8">
+                <input type="search" wire:model.live.debounce.250ms="query" placeholder="{{ ['jahr' => 'Album, Interpret, Ordner, Jahr suchen …', 'genre_fehlt' => 'Album, Interpret, Titel oder Ordner suchen …', 'genre_abweichend' => 'Album, Interpret, Titel, Genre suchen …', 'genre_uneinheitlich' => 'Album, Interpret, Genre suchen …', 'duplikate' => 'Interpret, Titel oder Ordner suchen …', 'replaygain' => 'Album, Interpret oder Ordner suchen …', 'nicht_lesbar' => 'Pfad oder Fehler suchen …', 'kaputt' => 'Titel, Interpret, Album oder Pfad suchen …', 'songtexte' => 'Titel, Interpret oder Album suchen …'][$view] ?? 'Wert suchen …' }}" class="field pl-8">
             </div>
             @endif
             @if ($view === 'replaygain')
@@ -79,6 +83,13 @@
             @elseif (isset($check) && $check === 'missing')
                 <button class="btn-primary" wire:click="takeGenreSuggestions(null)" @disabled(! $suggested)
                         data-confirm-title="Genre fehlt" data-confirm-ok="Übernehmen" data-confirm="Bei allen {{ $fmt($suggested) }} Einträgen mit Vorschlag jeweils den ersten übernehmen? Nur in der Datenbank, unter Änderungen zurücksetzbar.">Alle Vorschläge übernehmen</button>
+            @elseif ($view === 'songtexte')
+                <button class="btn" wire:click="fetchLyrics(false)" @click="$store.activity.kick()" :disabled="$store.activity.isRunning('songtexte')" @disabled(! $pendingLyrics)
+                        title="Lieder ohne Songtext bzw. nur mit reinem Text bei LRCLIB abfragen (im Hintergrund)">Songtexte laden <span class="text-xs text-zinc-500">({{ $fmt($pendingLyrics) }})</span></button>
+                <button class="btn" wire:click="fetchLyrics(true)" @click="$store.activity.kick()" :disabled="$store.activity.isRunning('songtexte')"
+                        data-confirm-title="Songtexte aktualisieren" data-confirm-ok="Aktualisieren" data-confirm="Alle Lieder ohne synchronisierten Songtext erneut bei LRCLIB abfragen – auch die schon abgefragten? Läuft im Hintergrund und dauert (etwa 1 Lied je Sekunde).">Aktualisieren</button>
+                <button class="btn-primary" wire:click="takeAllLyrics" @disabled(! $lyricsCounts['exact'])
+                        data-confirm-title="Songtexte" data-confirm-ok="Übernehmen" data-confirm="Alle {{ $fmt($lyricsCounts['exact']) }} eindeutigen Songtexte übernehmen? Nur in der Datenbank, unter Änderungen zurücksetzbar – „Schreiben“ bringt sie in die Dateien.">Alle eindeutigen übernehmen</button>
             @elseif ($view === 'kaputt')
                 <button class="btn-primary" wire:click="trashBroken(null)" @disabled(! $open)
                         data-confirm-title="Kaputte Lieder" data-confirm-ok="Vormerken" data-confirm="Alle {{ $fmt($open) }} kaputten Lieder für den Papierkorb vormerken? Ausgeführt wird beim Schreiben.">Alle in den Papierkorb</button>
@@ -345,6 +356,61 @@
                             data-confirm-title="Fingerabdrücke ermitteln" data-confirm-ok="Ermitteln" data-confirm="{{ $fmt($p['pending']) }} {{ $p['pending'] === 1 ? 'Lied' : 'Lieder' }} in {{ \App\Support\Locations::LABELS[$location] }} im Hintergrund ermitteln? Jede Datei wird einmal gelesen – das dauert.">Ermitteln</button>
                 </section>
             @endforeach
+        @elseif ($view === 'songtexte')
+            @php $dur = fn ($s) => sprintf('%d:%02d', intdiv((int) round($s), 60), (int) round($s) % 60); @endphp
+            <div class="inline-flex rounded-md border border-zinc-700 p-0.5 text-sm">
+                @foreach (\App\Livewire\MiscPage::LYRICS_TABS as $key => $label)
+                    <button wire:click="$set('lyricsTab', '{{ $key }}')"
+                            @class(['inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium', 'bg-zinc-700 text-zinc-100' => $lyricsTab === $key, 'text-zinc-400 hover:text-zinc-200' => $lyricsTab !== $key])>
+                        {{ $label }}
+                        <span @class(['rounded-full px-1.5 text-xs tabular-nums', 'bg-amber-500/15 text-amber-300' => $key !== 'none' && $lyricsCounts[$key] > 0, 'text-zinc-500' => $key === 'none' || $lyricsCounts[$key] === 0])>{{ $fmt($lyricsCounts[$key]) }}</span>
+                    </button>
+                @endforeach
+            </div>
+            @forelse ($items as $i)
+                @php $t = $i['track']; @endphp
+                <section wire:key="lyrics-{{ $lyricsTab }}-{{ $t->id }}" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+                    <div class="flex items-start gap-4 px-4 py-3">
+                        <div class="min-w-0 flex-1">
+                            <div class="truncate font-medium">{{ $t->title }} <span class="font-normal text-zinc-400">– {{ $t->artist }}</span></div>
+                            <div class="mt-0.5 truncate text-xs text-zinc-500" title="{{ $t->path }}">{{ \App\Support\Locations::LABELS[$t->location] ?? $t->location }} · {{ $t->album ?: 'ohne Album' }} · {{ $dur($t->duration) }}
+                                @if ($t->lyrics) · <span class="text-zinc-400">jetzt: {{ \App\Support\Lyrics::summary($t->lyrics) }}</span>@endif</div>
+                        </div>
+                        @if ($lyricsTab === 'choice')
+                            <button class="btn shrink-0 py-0.5 text-xs" wire:click="dismissLyrics({{ $t->id }})" title="Kein Kandidat passt – aus der Auswahl nehmen">Keiner passt</button>
+                        @endif
+                    </div>
+                    @if ($lyricsTab === 'none')
+                        <div class="border-t border-zinc-800 px-4 py-2 text-xs text-zinc-500">{{ $i['lookup']->status === 'instrumental' ? 'Laut LRCLIB instrumental' : 'Nichts gefunden' }} – abgefragt {{ $i['lookup']->fetched_at->diffForHumans() }}, erneut nach {{ \App\Support\Lyrics::RETRY_DAYS }} Tagen</div>
+                    @endif
+                    @foreach ($i['candidates'] as $c)
+                        @php $diff = $c['duration'] - (float) $t->duration; $fits = abs($diff) <= \App\Support\Lyrics::TOLERANCE; @endphp
+                        <div wire:key="lyrics-{{ $t->id }}-{{ $c['id'] }}" class="border-t border-zinc-800 px-4 py-2.5" x-data="{ show: false }">
+                            <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                <span @class(['shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', 'bg-emerald-500/15 text-emerald-300' => $c['synced'], 'bg-zinc-700/60 text-zinc-300' => ! $c['synced']])>{{ $c['synced'] ? 'synchronisiert' : 'reiner Text' }}</span>
+                                <span class="min-w-0 flex-1 truncate text-sm">
+                                    {{ $c['artist'] }} – {{ $c['title'] }} <span class="text-zinc-500">· {{ $c['album'] ?: 'ohne Album' }} ·</span>
+                                    <span @class(['tabular-nums', 'text-zinc-400' => $fits, 'text-amber-300' => ! $fits])>{{ $dur($c['duration']) }}@if (! $fits) ({{ $diff > 0 ? '+' : '' }}{{ (int) round($diff) }} s)@endif</span>
+                                </span>
+                                <button class="shrink-0 text-xs text-zinc-400 hover:text-zinc-100" @click="show = !show" x-text="show ? 'Text ausblenden' : 'Text zeigen'"></button>
+                                @if ($c['synced'] && $c['plain'])
+                                    <button class="btn shrink-0 py-0.5 text-xs" wire:click="takeLyrics({{ $t->id }}, {{ $c['id'] }}, true)" title="Nur den Text ohne Zeitstempel übernehmen">nur rein</button>
+                                @endif
+                                <button @class(['shrink-0 py-0.5 text-xs', 'btn-primary' => $loop->first, 'btn' => ! $loop->first]) wire:click="takeLyrics({{ $t->id }}, {{ $c['id'] }}, false)">Übernehmen</button>
+                            </div>
+                            <pre x-show="show" x-cloak class="mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap rounded bg-zinc-950 p-3 font-sans text-xs leading-relaxed text-zinc-300">{{ \App\Support\Lyrics::text($c) }}</pre>
+                        </div>
+                    @endforeach
+                </section>
+            @empty
+                <div class="py-16 text-center text-zinc-500">{{ $query ? 'Nichts gefunden.' : ['exact' => ($pendingLyrics ? 'Nichts Eindeutiges – noch '.$fmt($pendingLyrics).' Lieder nicht abgefragt („Songtexte laden“).' : 'Nichts Eindeutiges offen.'), 'choice' => 'Nichts zur Auswahl.', 'none' => 'Keine Lieder ohne Treffer.'][$lyricsTab] }}</div>
+            @endforelse
+            @if ($items->isNotEmpty() && $lyricsTab !== 'none')
+                <p class="text-xs text-zinc-500">Übernehmen ändert nur die Datenbank (unter Änderungen zurücksetzbar) – in die Dateien kommt der Songtext beim Schreiben (FLAC: LYRICS, MP3: USLT), Navidrome zeigt ihn an.</p>
+            @endif
+            @if ($total > $items->count())
+                <div class="py-4 text-center"><button class="btn" wire:click="more">Mehr laden</button></div>
+            @endif
         @elseif ($view === 'kaputt')
             @forelse ($items as $i)
                 @php $t = $i['track']; @endphp

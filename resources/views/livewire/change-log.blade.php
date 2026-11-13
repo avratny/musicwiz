@@ -6,7 +6,7 @@
 
         return '<button class="flex items-center gap-1 uppercase hover:text-zinc-100" wire:click="sortBy(\''.$key.'\')">'.e($label).' '.$arrow.'</button>';
     };
-    $value = fn ($field, $v) => $v === null || $v === '' ? '∅' : ($field === 'compilation' ? ($v === '1' ? 'ja' : 'nein') : $v);
+    $value = fn ($field, $v) => $v === null || $v === '' ? '∅' : ($field === 'compilation' ? ($v === '1' ? 'ja' : 'nein') : ($field === 'lyrics' ? 'Songtext: '.\App\Support\Lyrics::summary($v) : $v));
     $fieldLabel = fn ($f) => $f === 'track_total' ? 'Titel gesamt' : ($f === 'disc_total' ? 'CDs gesamt' : ($labels[$f] ?? $f));
     $badge = fn ($source) => '<span class="rounded px-1.5 py-0.5 text-xs font-medium '.($source === 'manual' ? 'bg-blue-500/15 text-blue-300' : 'bg-amber-500/15 text-amber-300').'">'.($source === 'manual' ? 'manuell' : 'System').'</span>';
 @endphp

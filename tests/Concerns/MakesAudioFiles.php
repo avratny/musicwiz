@@ -79,7 +79,7 @@ trait MakesAudioFiles
         $script = <<<'PY'
 import json, sys
 from mutagen.flac import FLAC
-from mutagen.id3 import ID3, ID3NoHeaderError, Frames, TXXX, COMM, APIC, POPM
+from mutagen.id3 import ID3, ID3NoHeaderError, Frames, TXXX, COMM, APIC, POPM, USLT
 path, kind, fields = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
 if kind == "flac":
     f = FLAC(path)
@@ -98,6 +98,8 @@ else:
             t.add(TXXX(encoding=3, desc=k[5:], text=v if isinstance(v, list) else [v]))
         elif k == "COMM":
             t.add(COMM(encoding=3, lang="eng", desc="", text=[v]))
+        elif k == "USLT":
+            t.add(USLT(encoding=3, lang="eng", desc="", text=v))
         elif k == "POPM":
             t.add(POPM(email="no@email", rating=int(v), count=0))
         elif k == "APIC":

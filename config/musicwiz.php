@@ -39,6 +39,7 @@ return [
         'coverartarchive' => (int) env('LOOKUP_RATE_COVERARTARCHIVE', 60),
         'deezer' => (int) env('LOOKUP_RATE_DEEZER', 50),            // Regel: 50 je 5 Sekunden – vorsichtig
         'itunes' => (int) env('LOOKUP_RATE_ITUNES', 20),            // Regel: ca. 20 je Minute
+        'lrclib' => (int) env('LOOKUP_RATE_LRCLIB', 60),            // frei, ohne festes Limit – Songtexte
     ],
     // nach dem Einlesen automatisch abgleichen (Tests: aus)
     'lookup_auto' => (bool) env('LOOKUP_AUTO', true),

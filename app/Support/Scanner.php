@@ -23,7 +23,7 @@ class Scanner
     private const BATCH = 500;
 
     /** Stand des Tag-Lesers: Lieder mit älterem Stand werden einmal komplett neu gelesen (2: Cover-Daten, 3: mehrere Interpreten) */
-    public const READ_VERSION = 3;
+    public const READ_VERSION = 4;   // 4: Songtexte
 
     /** @var array<int, true> Interpreten der gelesenen Lieder */
     private array $touchedArtists = [];
@@ -274,6 +274,7 @@ class Scanner
             'year' => $str($core['year'] ?? '', 32),
             'genre' => $str($core['genre'] ?? '', 255),
             'comment' => $str($core['comment'] ?? '', 65000),
+            'lyrics' => Lyrics::normalize($core['lyrics'] ?? null),
             'compilation' => (bool) ($core['compilation'] ?? false),
             'category' => Categories::fromRawTags($r['tags'] ?? []),
             'rating' => Ratings::fromRawTags($r['tags'] ?? []),

@@ -141,6 +141,11 @@ class TagWriter
 
                 continue;
             }
+            if ($c->field === 'lyrics') {
+                $fields[] = ['label' => Track::EDITABLE['lyrics'], 'old' => Lyrics::summary($c->old_value), 'new' => Lyrics::summary($track->lyrics) ?: 'entfernen', 'diff' => null];
+
+                continue;
+            }
             [$old, $new] = [$text($c->old_value), $text($track->getAttribute($c->field))];
             $fields[] = ['label' => Track::EDITABLE[$c->field] ?? $c->field, 'old' => $old, 'new' => $new,
                 'diff' => $old !== '' && $new !== '' ? TextDiff::bounds($old, $new) : null];

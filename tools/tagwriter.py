@@ -8,7 +8,7 @@ JSON aus: {"path": ..., "ok": true, "mode": "inplace"|"copy", "read": {...}} bzw
 Format wie ein Lied beim Einlesen (tagreader.py scan).
 Nur Felder, die in "tags" vorkommen, werden geändert; leere Werte (null / "") löschen das Feld. Feldnamen wie in der
 Datenbank: title artist artists album albumartist albumartists artistsort albumartistsort track track_total disc
-disc_total year releasedate mb_albumid genre comment compilation rating (1–5, leer = keine) category
+disc_total year releasedate mb_albumid genre comment lyrics compilation rating (1–5, leer = keine) category
 rg_track_gain rg_track_peak rg_album_gain rg_album_peak. Listen (artists, albumartists, genre) mit „; “ getrennt.
 
 Zwei Wege – entschieden, bevor irgendetwas geschrieben wird (mutagen fragt vor dem Schreiben nach dem Padding):
@@ -27,7 +27,7 @@ import sys
 
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import (ID3, ID3NoHeaderError, APIC, COMM, POPM, TALB, TCMP, TCON, TDRC, TDRL, TIT2, TPE1, TPE2,
-                         TPOS, TRCK, TSO2, TSOP, TXXX)
+                         TPOS, TRCK, TSO2, TSOP, TXXX, USLT)
 from mutagen.mp3 import MP3
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -82,7 +82,7 @@ FLAC_SIMPLE = {
     "track": ["TRACKNUMBER"], "track_total": ["TRACKTOTAL", "TOTALTRACKS"],
     "disc": ["DISCNUMBER"], "disc_total": ["DISCTOTAL", "TOTALDISCS"],
     "year": ["DATE"], "releasedate": ["RELEASEDATE"], "mb_albumid": ["MUSICBRAINZ_ALBUMID"],
-    "comment": ["COMMENT"], "category": ["MUSICWIZ_CATEGORY"], "fingerprint": ["ACOUSTID_FINGERPRINT"],
+    "comment": ["COMMENT"], "lyrics": ["LYRICS", "UNSYNCEDLYRICS"], "category": ["MUSICWIZ_CATEGORY"], "fingerprint": ["ACOUSTID_FINGERPRINT"],
     **{k: [v] for k, v in REPLAYGAIN.items()},
 }
 FLAC_LIST = {"artists": "ARTISTS", "albumartists": "ALBUMARTISTS", "genre": "GENRE"}
@@ -202,6 +202,16 @@ def mp3_write(path, tags, cover, padding):
         val = as_str(tags["comment"])
         if val:
             t.add(COMM(encoding=3, lang=lang, desc="", text=[val]))
+    if "lyrics" in tags:
+        # Songtext: USLT ohne Beschreibung ersetzen (synchronisiert im LRC-Format oder rein) – Navidrome liest ihn
+        lang = "eng"
+        for k in [k for k in t.keys() if k.startswith("USLT")]:
+            if t[k].desc == "":
+                lang = t[k].lang or lang
+                del t[k]
+        val = as_str(tags["lyrics"])
+        if val:
+            t.add(USLT(encoding=3, lang=lang, desc="", text=val))
     for key, desc in (("artists", "ARTISTS"), ("albumartists", "ALBUMARTISTS")):
         if key in tags:
             set_txxx(desc, as_list(tags[key]))

@@ -161,6 +161,13 @@ def comment_id3(tags):
     return ""
 
 
+def lyrics_id3(tags):
+    """Songtext (USLT ohne Beschreibung bevorzugt, sonst der erste)"""
+    frames = [frame for frame in tags.values() if frame.FrameID == "USLT" and frame.text]
+    frames.sort(key=lambda f: f.desc != "")
+    return text(frames[0].text) if frames else ""
+
+
 # Mehrfach-Interpreten (ARTISTS/ALBUMARTISTS, wie Picard sie schreibt) – je Format ein anderer Schlüssel
 CREDIT_KEYS = {
     "id3": ("TXXX:ARTISTS", "TXXX:ALBUMARTISTS"),
@@ -199,7 +206,7 @@ def core_from(f, raw):
         return {
             "title": first(raw, "TIT2"), "album": first(raw, "TALB"), "track": track, "track_total": track_total,
             "disc": disc, "disc_total": disc_total, "year": first(raw, "TDRC", "TYER"),
-            "genre": "; ".join(all_values(raw, "TCON")), "comment": comment_id3(tags) if tags else "",
+            "genre": "; ".join(all_values(raw, "TCON")), "comment": comment_id3(tags) if tags else "", "lyrics": lyrics_id3(tags) if tags else "",
             "compilation": first(raw, "TCMP") == "1", "artist": people(raw, ["TPE1"]), "albumartist": people(raw, ["TPE2"]), **credits(raw, "id3"),
         }
     if isinstance(f, MP4):
@@ -208,7 +215,7 @@ def core_from(f, raw):
         return {
             "title": first(raw, "\xa9nam"), "album": first(raw, "\xa9alb"), "track": "" if track == "0" else track, "track_total": "" if track_total == "0" else track_total,
             "disc": "" if disc == "0" else disc, "disc_total": "" if disc_total == "0" else disc_total,
-            "year": first(raw, "\xa9day"), "genre": "; ".join(all_values(raw, "\xa9gen")), "comment": first(raw, "\xa9cmt"),
+            "year": first(raw, "\xa9day"), "genre": "; ".join(all_values(raw, "\xa9gen")), "comment": first(raw, "\xa9cmt"), "lyrics": first(raw, "\xa9lyr"),
             "compilation": first(raw, "cpil") in ("True", "1"), "artist": people(raw, ["\xa9ART"]), "albumartist": people(raw, ["aART"]), **credits(raw, "mp4"),
         }
     if isinstance(f, ASF):
@@ -217,7 +224,7 @@ def core_from(f, raw):
         return {
             "title": first(raw, "Title"), "album": first(raw, "WM/AlbumTitle"), "track": track, "track_total": track_total,
             "disc": disc, "disc_total": disc_total, "year": first(raw, "WM/Year"),
-            "genre": "; ".join(all_values(raw, "WM/Genre")), "comment": first(raw, "Description"),
+            "genre": "; ".join(all_values(raw, "WM/Genre")), "comment": first(raw, "Description"), "lyrics": first(raw, "WM/Lyrics"),
             "compilation": first(raw, "WM/IsCompilation") in ("True", "1"), "artist": people(raw, ["Author"]), "albumartist": people(raw, ["WM/AlbumArtist"]), **credits(raw, "asf"),
         }
     # Vorbis-Kommentare (FLAC, OGG, Opus)
@@ -228,7 +235,7 @@ def core_from(f, raw):
         "track": track, "track_total": track_total or first(raw, "TRACKTOTAL", "TOTALTRACKS"),
         "disc": disc, "disc_total": disc_total or first(raw, "DISCTOTAL", "TOTALDISCS"),
         "year": first(raw, "DATE", "YEAR"), "genre": "; ".join(all_values(raw, "GENRE")),
-        "comment": first(raw, "COMMENT", "DESCRIPTION"), "compilation": first(raw, "COMPILATION") == "1",
+        "comment": first(raw, "COMMENT", "DESCRIPTION"), "lyrics": first(raw, "LYRICS", "UNSYNCEDLYRICS"), "compilation": first(raw, "COMPILATION") == "1",
         "artist": people(raw, ["ARTIST"]), "albumartist": people(raw, ["ALBUMARTIST", "ALBUM ARTIST"]), **credits(raw, "vorbis"),
     }
 

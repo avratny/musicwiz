@@ -213,8 +213,8 @@ class TrackTable extends Component
 
             return;
         }
-        // der Fingerabdruck ist kein Formularfeld (lang, nur vom System gesetzt)
-        $fields = count($this->selection) === 1 ? array_keys(array_diff_key(Track::EDITABLE, ['fingerprint' => true])) : self::MULTI_FIELDS;
+        // Fingerabdruck und Songtext sind keine Formularfelder (lang – Songtexte unter Sonstiges › Songtexte)
+        $fields = count($this->selection) === 1 ? array_keys(array_diff_key(Track::EDITABLE, ['fingerprint' => true, 'lyrics' => true])) : self::MULTI_FIELDS;
         $form = [];
         foreach ($fields as $f) {
             $values = $tracks->map(fn ($t) => $f === 'compilation' ? (bool) $t->$f : $t->$f)->unique(fn ($v) => var_export($v, true));

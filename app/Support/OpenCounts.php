@@ -23,7 +23,7 @@ class OpenCounts
         'genres' => 'updated_at', 'genre_synonyms' => 'id', 'genre_ignores' => 'id', 'genre_exemptions' => 'id',
         'duplicate_exemption_pairs' => 'created_at', 'album_exemptions' => 'id', 'album_tracklists' => 'updated_at', 'file_plans' => 'updated_at',
         'series_patterns' => 'updated_at', 'text_repairs' => 'updated_at', 'settings' => 'updated_at', 'cover_images' => 'created_at',
-        'folder_images' => 'updated_at', 'fingerprint_scores' => null,
+        'folder_images' => 'updated_at', 'fingerprint_scores' => null, 'lyrics_lookups' => 'fetched_at',
     ];
 
     private const TTL_MINUTES = 5;
@@ -45,7 +45,7 @@ class OpenCounts
             $genres = app(GenreChecks::class);
             $counts = ['zeichen' => app(TextRepairs::class)->count(), 'jahr' => app(YearDates::class)->count(), 'replaygain' => app(ReplayGain::class)->count(),
                 'duplikate' => app(Duplicates::class)->count(), 'fingerabdruck' => Fingerprints::pending(Fingerprints::LOCATIONS)->count(),
-                'kaputt' => app(BrokenTracks::class)->count(), 'nicht_lesbar' => DB::table('tracks')->whereNotNull('error')->count()];
+                'kaputt' => app(BrokenTracks::class)->count(), 'songtexte' => app(Lyrics::class)->count(), 'nicht_lesbar' => DB::table('tracks')->whereNotNull('error')->count()];
             foreach (['genre_fehlt' => 'missing', 'genre_abweichend' => 'mismatch', 'genre_uneinheitlich' => 'mixed'] as $view => $check) {
                 $counts[$view] = $genres->count($check);
             }
