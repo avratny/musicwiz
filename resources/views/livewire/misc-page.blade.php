@@ -370,9 +370,14 @@
             @forelse ($items as $i)
                 @php $t = $i['track']; @endphp
                 <section wire:key="lyrics-{{ $lyricsTab }}-{{ $t->id }}" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
-                    <div class="flex items-start gap-4 px-4 py-3">
+                    <div class="flex items-center gap-4 px-4 py-3">
+                        <button class="group relative size-12 shrink-0" title="Anhören"
+                                @click="$store.player.play([@js(['id' => $t->id, 'title' => (string) $t->title, 'artist' => (string) $t->artist, 'cover' => $t->id, 'duration' => $t->duration])], 0)">
+                            <img src="{{ \App\Support\Covers::url($t->id, 100) }}" loading="lazy" class="size-12 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                            <span class="absolute inset-0 flex items-center justify-center rounded bg-black/50 text-lg text-white opacity-0 group-hover:opacity-100">▶</span>
+                        </button>
                         <div class="min-w-0 flex-1">
-                            <div class="truncate font-medium">{{ $t->title }} <span class="font-normal text-zinc-400">– {{ $t->artist }}</span></div>
+                            <div class="truncate font-medium" :class="$store.player.isCurrent({{ $t->id }}) && 'text-accent'">{{ $t->title }} <span class="font-normal text-zinc-400">– {{ $t->artist }}</span></div>
                             <div class="mt-0.5 truncate text-xs text-zinc-500" title="{{ $t->path }}">{{ \App\Support\Locations::LABELS[$t->location] ?? $t->location }} · {{ $t->album ?: 'ohne Album' }} · {{ $dur($t->duration) }}
                                 @if ($t->lyrics) · <span class="text-zinc-400">jetzt: {{ \App\Support\Lyrics::summary($t->lyrics) }}</span>@endif</div>
                         </div>

@@ -91,7 +91,7 @@ class MediaController extends Controller
         return response()->file($path, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'public, max-age='.Covers::BROWSER_CACHE]);
     }
 
-    /** Hintergrundvorgang anhalten (Abgleich, Prüfung der Kombis, MusicBrainz-Daten) */
+    /** Hintergrundvorgang anhalten – die Schlüssel stehen auch beim „Anhalten“-Knopf in layouts/app.blade.php */
     public function stopActivity(string $key): JsonResponse
     {
         match ($key) {

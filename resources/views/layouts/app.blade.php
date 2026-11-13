@@ -156,7 +156,7 @@
                          :style="$store.activity.percent(a) !== null && `width: ${$store.activity.percent(a)}%`"></div>
                 </div>
                 <span class="shrink-0 tabular-nums" x-show="a.running && a.total" x-text="`${(a.done ?? 0).toLocaleString('de-DE')} / ${(a.total ?? 0).toLocaleString('de-DE')}`"></span>
-                <button class="shrink-0 rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" x-show="a.running && ['lookup', 'combos', 'musicbrainz', 'eindeutig', 'zeichen'].includes(a.key)" @click="$store.activity.stop(a.key)" title="Anhalten">Anhalten</button>
+                <button class="shrink-0 rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200" x-show="a.running && ['lookup', 'combos', 'musicbrainz', 'eindeutig', 'zeichen', 'lieder', 'replaygain', 'fingerprint', 'write', 'songtexte'].includes(a.key)" @click="$store.activity.stop(a.key)" title="Anhalten">Anhalten</button>
             </div>
         </template>
     </div>
