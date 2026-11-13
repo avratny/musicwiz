@@ -19,7 +19,12 @@
             <div class="flex rounded-md border border-zinc-700 p-0.5 text-sm">
                 @foreach (['tree' => 'Baum', 'unmapped' => 'Nicht zugeordnet'] as $key => $label)
                     <button wire:click="$set('tab', '{{ $key }}')"
-                            @class(['rounded px-3 py-1 font-medium', 'bg-zinc-700 text-zinc-100' => $tab === $key, 'text-zinc-400 hover:text-zinc-200' => $tab !== $key])>{{ $label }}</button>
+                            @class(['inline-flex items-center gap-1.5 rounded px-3 py-1 font-medium', 'bg-zinc-700 text-zinc-100' => $tab === $key, 'text-zinc-400 hover:text-zinc-200' => $tab !== $key])>
+                        {{ $label }}
+                        @isset ($open[$key])
+                            <span @class(['rounded-full px-1.5 text-xs tabular-nums', 'bg-amber-500/15 text-amber-300' => $open[$key] > 0, 'text-zinc-500' => $open[$key] === 0])>{{ number_format($open[$key], 0, ',', '.') }}</span>
+                        @endisset
+                    </button>
                 @endforeach
             </div>
             @if ($tab === 'tree')

@@ -10,9 +10,11 @@ use App\Livewire\Concerns\ShowsMessages;
 use App\Models\TextRepair;
 use App\Models\Track;
 use App\Support\Activity;
+use App\Support\BrokenTracks;
 use App\Support\Duplicates;
 use App\Support\Fingerprints;
 use App\Support\GenreChecks;
+use App\Support\OpenCounts;
 use App\Support\ReplayGain;
 use App\Support\TextRepairAi;
 use App\Support\TextRepairs;
@@ -35,6 +37,7 @@ use RuntimeException;
  * Sampler und Einzeltitel je Lied (GenreChecks).
  * „Akustischer Fingerabdruck“: je Bereich ermitteln (Lib und Blackhole nur auf Knopfdruck, Inbox auch nach dem
  * Einlesen) – Grundlage für Duplikate über Albumgrenzen (Fingerprints, MeasureFingerprints).
+ * „Kaputte Lieder“: lesbar, aber ohne Audio (Länge 0) – in den Papierkorb vormerken (BrokenTracks).
  * „Nicht lesbar“: Dateien, die beim Einlesen nicht gelesen werden konnten – neu lesen bzw. die Einträge aus der Datenbank
  * entfernen (die Dateien bleiben).
  */
@@ -45,7 +48,7 @@ class MiscPage extends Component
 
     /** zweite Leiste */
     public const VIEWS = ['zeichen' => 'Zeichen & Schreibweise', 'jahr' => 'Jahr als Datum', 'replaygain' => 'ReplayGain fehlt', 'duplikate' => 'Duplikate',
-        'genre_fehlt' => 'Genre fehlt', 'genre_abweichend' => 'Genre weicht ab', 'genre_uneinheitlich' => 'Album uneinheitlich', 'fingerabdruck' => 'Akustischer Fingerabdruck', 'nicht_lesbar' => 'Nicht lesbar'];
+        'genre_fehlt' => 'Genre fehlt', 'genre_abweichend' => 'Genre weicht ab', 'genre_uneinheitlich' => 'Album uneinheitlich', 'fingerabdruck' => 'Akustischer Fingerabdruck', 'kaputt' => 'Kaputte Lieder', 'nicht_lesbar' => 'Nicht lesbar'];
 
     /** Ansicht => Prüfung in GenreChecks */
     public const GENRE_VIEWS = ['genre_fehlt' => 'missing', 'genre_abweichend' => 'mismatch', 'genre_uneinheitlich' => 'mixed'];
@@ -232,6 +235,19 @@ class MiscPage extends Component
         $this->dispatch('activity-started');
     }
 
+    /** Kaputte Lieder: in den Papierkorb vormerken – eins bzw. alle (null), ausgeführt beim Schreiben */
+    public function trashBroken(?int $trackId, BrokenTracks $broken): void
+    {
+        $n = $broken->trash($trackId);
+        $this->say($n.' '.($n === 1 ? 'Lied' : 'Lieder').' für den Papierkorb vorgemerkt – ausgeführt beim Schreiben.');
+    }
+
+    public function keepBroken(int $trackId, BrokenTracks $broken): void
+    {
+        $broken->keep($trackId);
+        $this->say('Vormerkung zurückgenommen.');
+    }
+
     /** Nicht lesbar: alle Einträge mit Fehler aus der Datenbank entfernen – die Dateien bleiben unberührt */
     public function removeErrors(): void
     {
@@ -252,14 +268,10 @@ class MiscPage extends Component
     #[On('zeichen-finished')]
     public function refreshAfterJob(): void {}
 
-    public function render(TextRepairs $repairs, TextRepairAi $ai, YearDates $years, ReplayGain $replayGain, Duplicates $duplicates, GenreChecks $genres)
+    public function render(TextRepairs $repairs, TextRepairAi $ai, YearDates $years, ReplayGain $replayGain, Duplicates $duplicates, GenreChecks $genres, BrokenTracks $brokenTracks)
     {
         $this->view = isset(self::VIEWS[$this->view]) ? $this->view : 'zeichen';
-        $counts = ['zeichen' => $repairs->count(), 'jahr' => $years->count(), 'replaygain' => $replayGain->count(), 'duplikate' => $duplicates->count(),
-            'nicht_lesbar' => Track::whereNotNull('error')->count(), 'fingerabdruck' => Fingerprints::pending(Fingerprints::LOCATIONS)->count()];
-        foreach (self::GENRE_VIEWS as $view => $check) {
-            $counts[$view] = $genres->count($check);
-        }
+        $counts = app(OpenCounts::class)->misc();
         if ($check = self::GENRE_VIEWS[$this->view] ?? null) {
             $all = $genres->findings($check, $this->query);
 
@@ -286,6 +298,16 @@ class MiscPage extends Component
         }
         if ($this->view === 'fingerabdruck') {
             return view('livewire.misc-page', ['counts' => $counts, 'prints' => Fingerprints::counts()])->title(self::VIEWS[$this->view].' – MusicWiz');
+        }
+        if ($this->view === 'kaputt') {
+            $all = $brokenTracks->findings($this->query);
+
+            return view('livewire.misc-page', [
+                'counts' => $counts,
+                'total' => $all->count(),
+                'open' => $all->where('trash', false)->count(),
+                'items' => $all->take($this->limit),
+            ])->title(self::VIEWS[$this->view].' – MusicWiz');
         }
         if ($this->view === 'nicht_lesbar') {
             $like = '%'.str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($this->query)).'%';

@@ -10,6 +10,7 @@ use App\Models\GenreSynonym;
 use App\Support\ArtistGenres;
 use App\Support\GenreCleanup;
 use App\Support\GenreTree;
+use App\Support\OpenCounts;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
@@ -347,6 +348,7 @@ class GenreBrowser extends Component
             'visible' => $visible,
             'total' => $all->count(),
             'unmapped' => $unmapped,
+            'open' => app(OpenCounts::class)->genres(),
             'ignores' => $this->tab === 'unmapped' ? GenreIgnore::orderBy('value')->get() : collect(),
             'genre' => $genre,
             'path' => $genre ? app(GenreTree::class)->path($genre->id) : null,

@@ -51,6 +51,17 @@ trait MakesAudioFiles
         return $path;
     }
 
+    /** kaputte FLAC: lesbar, aber ohne Audio (Länge 0 – wie ein abgebrochener Download) */
+    protected function emptyFlac(string $rel, array $fields = []): string
+    {
+        $path = $this->base.'/'.$rel;
+        File::ensureDirectoryExists(dirname($path));
+        Process::run(['ffmpeg', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', '0', $path])->throw();
+        $this->tag($path, 'flac', $fields);
+
+        return $path;
+    }
+
     /** Kleines JPEG (Cover), Pfad */
     protected function jpeg(string $rel = 'cover-src.jpg', int $size = 400): string
     {

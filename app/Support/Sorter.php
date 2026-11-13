@@ -70,7 +70,7 @@ class Sorter
 
         foreach ($tracks as $t) {
             if ($t->move_to === 'trash' || isset($replaced[$t->id])) {
-                $items[] = ['track' => $t, 'kind' => 'trash', 'location' => 'trash', 'to' => $this->trashPath($t), 'reason' => isset($replaced[$t->id]) ? 'durch bessere Fassung ersetzt' : 'Duplikat'];
+                $items[] = ['track' => $t, 'kind' => 'trash', 'location' => 'trash', 'to' => $this->trashPath($t), 'reason' => isset($replaced[$t->id]) ? 'durch bessere Fassung ersetzt' : (BrokenTracks::is($t) ? 'kaputt (kein Audio)' : 'Duplikat')];
             } elseif ($t->location === 'blackhole') {
                 $items[] = $t->move_to === 'inbox'
                     ? ['track' => $t, 'kind' => 'inbox', 'location' => 'inbox', 'to' => Locations::root('inbox').'/'.$this->relative($t)]

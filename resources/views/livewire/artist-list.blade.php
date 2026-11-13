@@ -34,7 +34,10 @@
                     <span class="rounded-full bg-amber-500/15 px-1.5 text-xs tabular-nums text-amber-300 hover:bg-amber-500/25" wire:click.stop="showOpen"
                           title="{{ $fmt($unconfirmed) }} unbestätigt – anzeigen">{{ $fmt($unconfirmed) }}</span>
                 @endif
-                <span class="rounded-full px-1.5 text-xs tabular-nums text-zinc-500">{{ $fmt($counts[$key]) }}</span>
+                {{-- nur Offenes: „Alle“ = unbestätigt (oben), „Verschieden“ sind getroffene Entscheidungen --}}
+                @if ($key !== '' && $key !== 'verschieden')
+                    <span @class(['rounded-full px-1.5 text-xs tabular-nums', 'bg-amber-500/15 text-amber-300' => $counts[$key] > 0, 'text-zinc-500' => $counts[$key] === 0])>{{ $fmt($counts[$key]) }}</span>
+                @endif
             </button>
         @endforeach
     </aside>

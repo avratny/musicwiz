@@ -21,8 +21,7 @@ use App\Support\CoverStore;
 use App\Support\Locations;
 use App\Support\Lookup\ArtistPreviews;
 use App\Support\MusicBrainzData;
-use App\Support\SplitAlbums;
-use App\Support\TextRepairs;
+use App\Support\OpenCounts;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
@@ -122,6 +121,6 @@ class MediaController extends Controller
     /** Fortschritt und Anzahl je Bereich (Abfrage aus der Oberfläche). */
     public function activity(): JsonResponse
     {
-        return response()->json(['activities' => Activity::visible(), 'counts' => Locations::counts() + ['artists' => Artist::count(), 'albums' => SplitAlbums::total(), 'misc' => app(TextRepairs::class)->count(), 'changes' => TagChange::count()]]);
+        return response()->json(['activities' => Activity::visible(), 'counts' => Locations::counts() + app(OpenCounts::class)->nav() + ['changes' => TagChange::count()]]);
     }
 }

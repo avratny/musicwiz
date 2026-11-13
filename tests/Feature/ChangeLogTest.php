@@ -7,6 +7,7 @@ use App\Models\Artist;
 use App\Models\TagChange;
 use App\Models\Track;
 use App\Support\ArtistRegistry;
+use App\Support\ArtistTools;
 use App\Support\Scanner;
 use App\Support\TagEditor;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -67,7 +68,8 @@ class ChangeLogTest extends TestCase
     public function test_navigation_shows_the_number_of_changes(): void
     {
         $this->get('/lib')->assertSeeInOrder(['Protokoll', 'Änderungen', '3']);
-        $this->getJson('/activity')->assertJsonPath('counts.changes', 3)->assertJsonPath('counts.artists', 2);
+        $this->getJson('/activity')->assertJsonPath('counts.changes', 3)
+            ->assertJsonPath('counts.artists', array_sum(array_diff_key(ArtistTools::counts(), ['' => 0, 'verschieden' => 0])));   // nur Offenes
     }
 
     public function test_revert_one_field_back_to_the_file(): void

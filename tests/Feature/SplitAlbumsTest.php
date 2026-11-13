@@ -149,8 +149,8 @@ class SplitAlbumsTest extends TestCase
 
         $this->get('/alben?ansicht=getrennt')->assertOk()->assertSee('Auseinandergerissen')->assertSee('Greatest Hits');
         $this->get('/interpreten')->assertOk()->assertDontSee('Auseinandergerissen');
-        Livewire::test(AlbumList::class, ['check' => 'getrennt'])->assertSee('Inbox')->assertViewHas('counts', fn ($c) => [$c[''], $c['getrennt']] === [1, 1])
-            ->set('query', 'nichts')->assertSee('Nichts gefunden.')->assertViewHas('counts', fn ($c) => [$c[''], $c['getrennt']] === [1, 1]);
+        Livewire::test(AlbumList::class, ['check' => 'getrennt'])->assertSee('Inbox')->assertViewHas('counts', fn ($c) => ! isset($c['']) && $c['getrennt'] === 1)
+            ->set('query', 'nichts')->assertSee('Nichts gefunden.')->assertViewHas('counts', fn ($c) => $c['getrennt'] === 1);
     }
 
     public function test_alle_alben_mit_markierung_und_sprung_zur_pruefung(): void
@@ -166,7 +166,7 @@ class SplitAlbumsTest extends TestCase
 
         $page = $this->get('/alben')->assertOk()->assertSeeInOrder(['Hits', 'auseinandergerissen', 'Gold', 'ABBA', '1992', 'Lib', 'Bravo', NameRules::VARIOUS]);
         // Blackhole zählt nicht
-        Livewire::test(AlbumList::class)->assertViewHas('counts', fn ($c) => [$c[''], $c['getrennt']] === [3, 1])
+        Livewire::test(AlbumList::class)->assertViewHas('counts', fn ($c) => ! isset($c['']) && $c['getrennt'] === 1)
             ->set('query', 'abba')->assertSee('Gold')->assertDontSee('Bravo')->assertViewHas('total', 1)
             ->call('showSplit', Track::where('album', 'Hits')->value('album_hash'))
             ->assertSet('check', 'getrennt')->assertSet('query', 'Hits')->assertSee('unterschiedlich geschrieben');

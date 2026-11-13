@@ -7,6 +7,7 @@ use App\Models\Track;
 use App\Support\AlbumCovers;
 use App\Support\AlbumSeries;
 use App\Support\IncompleteAlbums;
+use App\Support\OpenCounts;
 use App\Support\SamplerFlags;
 use App\Support\SortNames;
 use App\Support\SplitAlbums;
@@ -203,10 +204,8 @@ class AlbumList extends Component
     public function render(SplitAlbums $albums, AlbumCovers $covers, SamplerFlags $flags, SortNames $sorts, IncompleteAlbums $incomplete, AlbumSeries $series)
     {
         $this->check = isset(self::CHECKS[$this->check]) ? $this->check : '';
-        $coverCounts = $covers->counts();
-        $counts = ['' => SplitAlbums::total(), 'getrennt' => $albums->count(),
-            'cover-verschieden' => $coverCounts['different'], 'cover-klein' => $coverCounts['small'], 'sampler' => $flags->count(),
-            'sortiernamen' => collect($sorts->open())->pluck('album_hash')->unique()->count(), 'unvollstaendig' => $incomplete->count(), 'serien' => $series->count()];
+        // nur Offenes – „Alle“ ist keine Prüfung
+        $counts = app(OpenCounts::class)->albums();
         $view = match (true) {
             $this->check === '' => $this->allAlbums($albums),
             $this->check === 'sampler' => $flags->albums($this->query, $this->limit),

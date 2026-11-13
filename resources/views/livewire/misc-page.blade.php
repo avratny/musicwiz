@@ -26,6 +26,8 @@
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 2H2v10l9.3 9.3a1 1 0 0 0 1.4 0l8.6-8.6a1 1 0 0 0 0-1.4z"/><circle cx="7" cy="7" r="1.5"/></svg>
                 @elseif ($key === 'fingerabdruck')
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-9 2 6 2-3h4"/></svg>
+                @elseif ($key === 'kaputt')
+                    <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><path d="m3 3 18 18"/></svg>
                 @elseif ($key === 'nicht_lesbar')
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M10 13l4 4m0-4-4 4"/></svg>
                 @elseif ($key === 'jahr')
@@ -52,6 +54,8 @@
                     <p class="text-xs text-zinc-500">{{ $fmt($total) }} {{ $total === 1 ? 'Eintrag' : 'Einträge' }} · {{ ['missing' => 'Lieder ohne Genre', 'mismatch' => 'Genre passt nicht zum Interpreten', 'mixed' => 'Interpreten-Alben mit verschiedenen Genres'][$check] }} in Inbox und Lib</p>
                 @elseif ($view === 'fingerabdruck')
                     <p class="text-xs text-zinc-500">{{ $fmt($counts['fingerabdruck']) }} {{ $counts['fingerabdruck'] === 1 ? 'Lied' : 'Lieder' }} ohne Fingerabdruck</p>
+                @elseif ($view === 'kaputt')
+                    <p class="text-xs text-zinc-500">{{ $fmt($open) }} offen{{ $total > $open ? ', '.$fmt($total - $open).' vorgemerkt' : '' }} · Dateien ohne Audio (Länge 0) in Inbox und Lib</p>
                 @elseif ($view === 'nicht_lesbar')
                     <p class="text-xs text-zinc-500">{{ $fmt($total) }} {{ $total === 1 ? 'Datei' : 'Dateien' }}, die beim Einlesen nicht gelesen werden konnten</p>
                 @elseif ($view === 'jahr')
@@ -63,7 +67,7 @@
             @if ($view !== 'fingerabdruck')
             <div class="relative min-w-60 flex-1">
                 <svg class="pointer-events-none absolute left-2.5 top-2 size-4 text-zinc-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-                <input type="search" wire:model.live.debounce.250ms="query" placeholder="{{ ['jahr' => 'Album, Interpret, Ordner, Jahr suchen …', 'genre_fehlt' => 'Album, Interpret, Titel oder Ordner suchen …', 'genre_abweichend' => 'Album, Interpret, Titel, Genre suchen …', 'genre_uneinheitlich' => 'Album, Interpret, Genre suchen …', 'duplikate' => 'Interpret, Titel oder Ordner suchen …', 'replaygain' => 'Album, Interpret oder Ordner suchen …', 'nicht_lesbar' => 'Pfad oder Fehler suchen …'][$view] ?? 'Wert suchen …' }}" class="field pl-8">
+                <input type="search" wire:model.live.debounce.250ms="query" placeholder="{{ ['jahr' => 'Album, Interpret, Ordner, Jahr suchen …', 'genre_fehlt' => 'Album, Interpret, Titel oder Ordner suchen …', 'genre_abweichend' => 'Album, Interpret, Titel, Genre suchen …', 'genre_uneinheitlich' => 'Album, Interpret, Genre suchen …', 'duplikate' => 'Interpret, Titel oder Ordner suchen …', 'replaygain' => 'Album, Interpret oder Ordner suchen …', 'nicht_lesbar' => 'Pfad oder Fehler suchen …', 'kaputt' => 'Titel, Interpret, Album oder Pfad suchen …'][$view] ?? 'Wert suchen …' }}" class="field pl-8">
             </div>
             @endif
             @if ($view === 'replaygain')
@@ -75,6 +79,9 @@
             @elseif (isset($check) && $check === 'missing')
                 <button class="btn-primary" wire:click="takeGenreSuggestions(null)" @disabled(! $suggested)
                         data-confirm-title="Genre fehlt" data-confirm-ok="Übernehmen" data-confirm="Bei allen {{ $fmt($suggested) }} Einträgen mit Vorschlag jeweils den ersten übernehmen? Nur in der Datenbank, unter Änderungen zurücksetzbar.">Alle Vorschläge übernehmen</button>
+            @elseif ($view === 'kaputt')
+                <button class="btn-primary" wire:click="trashBroken(null)" @disabled(! $open)
+                        data-confirm-title="Kaputte Lieder" data-confirm-ok="Vormerken" data-confirm="Alle {{ $fmt($open) }} kaputten Lieder für den Papierkorb vormerken? Ausgeführt wird beim Schreiben.">Alle in den Papierkorb</button>
             @elseif ($view === 'nicht_lesbar')
                 <button class="btn" wire:click="rereadErrors" @click="$store.activity.kick()" :disabled="$store.activity.isRunning('scan')" @disabled(! $counts['nicht_lesbar'])
                         title="Die betroffenen Bereiche einlesen – nicht lesbare Dateien werden dabei immer neu versucht">Neu lesen</button>
@@ -330,6 +337,36 @@
                             data-confirm-title="Fingerabdrücke ermitteln" data-confirm-ok="Ermitteln" data-confirm="{{ $fmt($p['pending']) }} {{ $p['pending'] === 1 ? 'Lied' : 'Lieder' }} in {{ \App\Support\Locations::LABELS[$location] }} im Hintergrund ermitteln? Jede Datei wird einmal gelesen – das dauert.">Ermitteln</button>
                 </section>
             @endforeach
+        @elseif ($view === 'kaputt')
+            @forelse ($items as $i)
+                @php $t = $i['track']; @endphp
+                <section wire:key="kaputt-{{ $t->id }}" @class(['flex items-center gap-4 rounded-lg border px-4 py-3', 'border-zinc-800 bg-zinc-900' => ! $i['trash'], 'border-red-500/30 bg-red-500/5' => $i['trash']])>
+                    <div class="min-w-0 flex-1">
+                        <div class="truncate font-medium">{{ $t->title ?: basename($t->path) }} @if ($t->artist)<span class="font-normal text-zinc-400">– {{ $t->artist }}</span>@endif</div>
+                        <div class="mt-0.5 truncate text-xs text-zinc-500" title="{{ $t->path }}">{{ \App\Support\Locations::LABELS[$t->location] ?? $t->location }} · {{ $t->album ?: dirname($t->path) }} · {{ basename($t->path) }}</div>
+                        <div class="mt-1 text-xs">
+                            <span class="text-red-300">kein Audio – {{ $t->durationLabel() }}, {{ $fmt((int) round($t->size / 1024)) }} KB</span>
+                            @if ($i['intact'])
+                                <span class="text-emerald-300/90"> · intakte Fassung im Album: {{ $i['intact']->track ? 'Nr. '.$i['intact']->track.' – ' : '' }}{{ basename($i['intact']->path) }}</span>
+                            @endif
+                        </div>
+                    </div>
+                    @if ($i['trash'])
+                        <span class="shrink-0 text-xs text-red-300">→ Papierkorb vorgemerkt</span>
+                        <button class="btn shrink-0 py-0.5 text-xs" wire:click="keepBroken({{ $t->id }})">Zurücknehmen</button>
+                    @else
+                        <button class="btn shrink-0" wire:click="trashBroken({{ $t->id }})">In den Papierkorb</button>
+                    @endif
+                </section>
+            @empty
+                <div class="py-16 text-center text-zinc-500">{{ $query ? 'Nichts gefunden.' : 'Keine kaputten Lieder.' }}</div>
+            @endforelse
+            @if ($items->isNotEmpty())
+                <p class="text-xs text-zinc-500">Vorgemerkt wird nur – in den Papierkorb wandern die Dateien beim Schreiben (Seite „Schreiben“).</p>
+            @endif
+            @if ($total > $items->count())
+                <div class="py-4 text-center"><button class="btn" wire:click="more">Mehr laden</button></div>
+            @endif
         @elseif ($view === 'nicht_lesbar')
             @forelse ($broken as $t)
                 <section wire:key="broken-{{ $t->id }}" class="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">

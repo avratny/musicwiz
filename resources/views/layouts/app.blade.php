@@ -1,5 +1,5 @@
 @php
-    $counts = \App\Support\Locations::counts() + ['artists' => \App\Models\Artist::count(), 'albums' => \App\Support\SplitAlbums::total(), 'misc' => app(\App\Support\TextRepairs::class)->count(), 'changes' => \App\Models\TagChange::count()];
+    $counts = \App\Support\Locations::counts() + app(\App\Support\OpenCounts::class)->nav() + ['changes' => \App\Models\TagChange::count()];
     $current = request()->route('slug');
     $icons = [
         'inbox' => 'M3 13h4l2 3h6l2-3h4M5 5h14l2 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z',
@@ -44,7 +44,8 @@
                        'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100' => ! request()->routeIs('artists')])>
                 <svg class="size-4.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>
                 <span class="flex-1">Interpreten</span>
-                <span class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-400"
+                <span class="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums" title="offen"
+                      :class="($store.activity.counts['artists'] ?? 0) > 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-zinc-800 text-zinc-400'"
                       x-data x-text="($store.activity.counts['artists'] ?? 0).toLocaleString('de-DE')">{{ number_format($counts['artists'], 0, ',', '.') }}</span>
             </a>
 
@@ -54,7 +55,8 @@
                        'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100' => ! request()->routeIs('albums')])>
                 <svg class="size-4.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/></svg>
                 <span class="flex-1">Alben</span>
-                <span class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-400"
+                <span class="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums" title="offen"
+                      :class="($store.activity.counts['albums'] ?? 0) > 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-zinc-800 text-zinc-400'"
                       x-data x-text="($store.activity.counts['albums'] ?? 0).toLocaleString('de-DE')">{{ number_format($counts['albums'], 0, ',', '.') }}</span>
             </a>
 
@@ -64,7 +66,9 @@
                        'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100' => ! request()->routeIs('genres')])>
                 <svg class="size-4.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M12 3v6m0 0H6v4m6-4h6v4M6 13v2m-2 2h4v4H4zm12 0h4v4h-4z"/></svg>
                 <span class="flex-1">Genres</span>
-                <span class="rounded-full bg-zinc-800 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-400">{{ number_format(\App\Models\Genre::where('level', 1)->count(), 0, ',', '.') }}</span>
+                <span class="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums" title="offen"
+                      :class="($store.activity.counts['genres'] ?? 0) > 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-zinc-800 text-zinc-400'"
+                      x-data x-text="($store.activity.counts['genres'] ?? 0).toLocaleString('de-DE')">{{ number_format($counts['genres'], 0, ',', '.') }}</span>
             </a>
 
             <a href="{{ route('misc') }}" wire:navigate
@@ -73,7 +77,7 @@
                        'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100' => ! request()->routeIs('misc')])>
                 <svg class="size-4.5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
                 <span class="flex-1">Sonstiges</span>
-                <span class="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums"
+                <span class="rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums" title="offen"
                       :class="($store.activity.counts['misc'] ?? 0) > 0 ? 'bg-amber-500/15 text-amber-300' : 'bg-zinc-800 text-zinc-400'"
                       x-data x-text="($store.activity.counts['misc'] ?? 0).toLocaleString('de-DE')">{{ number_format($counts['misc'], 0, ',', '.') }}</span>
             </a>

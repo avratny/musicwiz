@@ -27,7 +27,9 @@
                     <svg class="size-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18M15 4.5A9 9 0 0 1 15 19.5"/><circle cx="12" cy="12" r="2.5"/></svg>
                 @endif
                 <span class="min-w-0 flex-1 truncate leading-tight" title="{{ $label }}">{{ $label }}</span>
-                <span @class(['shrink-0 rounded-full px-1.5 text-xs tabular-nums', 'bg-amber-500/15 text-amber-300' => $key !== '' && $counts[$key] > 0, 'text-zinc-500' => $key === '' || $counts[$key] === 0])>{{ $fmt($counts[$key]) }}</span>
+                @isset ($counts[$key])
+                    <span @class(['shrink-0 rounded-full px-1.5 text-xs tabular-nums', 'bg-amber-500/15 text-amber-300' => $counts[$key] > 0, 'text-zinc-500' => $counts[$key] === 0])>{{ $fmt($counts[$key]) }}</span>
+                @endisset
             </button>
         @endforeach
     </aside>
