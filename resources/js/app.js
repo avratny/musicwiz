@@ -233,6 +233,52 @@ document.addEventListener('alpine:init', () => {
         },
     }));
 
+    // Sonstiges › Genre: eigenes Genre per Volltextsuche – jedes Wort irgendwo in Name, Pfad im Baum oder Synonym
+    // (ohne Groß/klein und Akzente). Klick oder Enter auf einen Treffer übernimmt sofort; sonst gilt der getippte Text.
+    const genreSearchText = (s) => s.toLowerCase().normalize('NFD').replace(/\p{Mn}+/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    Alpine.data('genrePicker', (key, trackId) => ({
+        q: '',
+        open: false,
+        active: 0,
+        get index() {
+            const el = document.getElementById('genre-index');
+            if (!el) return [];
+            if (el._parsed?.src !== el.textContent) el._parsed = { src: el.textContent, list: JSON.parse(el.textContent) };
+            return el._parsed.list;
+        },
+        get results() {
+            const q = genreSearchText(this.q);
+            if (q.length < 2) return [];
+            const words = q.split(' ');
+            const rank = (g) => {
+                if (g.name === q) return 0;
+                if (g.name.startsWith(q)) return 1;
+                if ((' ' + g.name).includes(' ' + words[0])) return 2;
+                if (words.every((w) => g.name.includes(w))) return 3;
+                return 4;
+            };
+            return this.index
+                .filter((g) => words.every((w) => g.text.includes(w)))
+                .map((g) => ({ ...g, rank: rank(g) }))
+                .sort((a, b) => a.rank - b.rank || a.path.length - b.path.length || a.path.localeCompare(b.path))
+                .slice(0, 15);
+        },
+        take(r) {
+            this.open = false;
+            this.q = r.value;
+            this.$wire.takeGenre(key, trackId, r.value);
+        },
+        keys(e) {
+            if (!this.open || !this.results.length) return;
+            if (e.key === 'ArrowDown') this.active = (this.active + 1) % this.results.length;
+            else if (e.key === 'ArrowUp') this.active = (this.active - 1 + this.results.length) % this.results.length;
+            else if (e.key === 'Enter') this.take(this.results[this.active] ?? this.results[0]);
+            else if (e.key === 'Escape') this.open = false;
+            else return;
+            e.preventDefault();
+        },
+    }));
+
     // Interpreten › Ähnlich: eine Gruppe – richtige Schreibweise wählen, Mitglieder ab-/anwählen, eigene Schreibweise.
     // Die oberste Gruppe (active) hört auf die Tastatur: 1–9 wählt, Enter übernimmt das Fazit, Z = zusammenführen,
     // V = verschieden, S = später.

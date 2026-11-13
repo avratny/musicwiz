@@ -179,7 +179,7 @@
                 </details>
             @endif
         @elseif (isset($check))
-            <datalist id="genre-values">@foreach ($genreValues as $v)<option value="{{ $v }}"></option>@endforeach</datalist>
+            <script type="application/json" id="genre-index">@json($genreIndex)</script>
             @forelse ($units as $u)
                 <section wire:key="genre-{{ $check }}-{{ $u['key'] }}" x-data="{ songs: @js($u['songs']) }" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
                     <div class="flex items-center gap-4 px-4 py-3">
@@ -231,8 +231,13 @@
                                                     @class(['rounded-md border px-2 py-0.5 text-sm', 'border-accent/60 bg-accent/10 text-accent hover:bg-accent/20' => $i === 0,
                                                             'border-zinc-700 text-zinc-200 hover:border-zinc-500 hover:bg-zinc-800' => $i > 0])>{{ $s['value'] }}</button>
                                         @endforeach
-                                        <form wire:submit="takeGenre(@js($u['key']), {{ $item['id'] }}, null)" class="flex min-w-60 flex-1 items-center gap-1.5">
-                                            <input type="text" list="genre-values" wire:model="custom.g{{ $u['key'] }}-{{ $item['id'] }}" placeholder="Genre …" class="field flex-1 py-0.5 text-sm">
+                                        <form wire:submit="takeGenre(@js($u['key']), {{ $item['id'] }}, null)" class="flex min-w-60 flex-1 items-center gap-1.5"
+                                              x-data="genrePicker(@js($u['key']), {{ $item['id'] }})" @keydown="keys($event)" @click.outside="open = false">
+                                            <div class="relative flex-1">
+                                                <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}-{{ $item['id'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0"
+                                                       placeholder="Genre suchen …" autocomplete="off" class="field w-full py-0.5 text-sm">
+                                                @include('livewire.partials.genre-results')
+                                            </div>
                                             <button type="submit" class="btn shrink-0 py-0.5 text-xs">Übernehmen</button>
                                         </form>
                                     </div>
@@ -274,9 +279,14 @@
                                     </div>
                                 </div>
                             @endif
-                            <form wire:submit="takeGenre(@js($u['key']), null, null)" class="flex items-center gap-3">
+                            <form wire:submit="takeGenre(@js($u['key']), null, null)" class="flex items-center gap-3"
+                                  x-data="genrePicker(@js($u['key']), null)" @keydown="keys($event)" @click.outside="open = false">
                                 <span class="w-24 shrink-0 text-xs text-zinc-500">Selbst</span>
-                                <input type="text" list="genre-values" wire:model="custom.g{{ $u['key'] }}" placeholder="Genre …" class="field flex-1">
+                                <div class="relative flex-1">
+                                    <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0"
+                                           placeholder="Genre suchen – Name, Teil davon, Oberbegriff oder Synonym …" autocomplete="off" class="field w-full">
+                                    @include('livewire.partials.genre-results')
+                                </div>
                                 <button type="submit" class="btn shrink-0">Übernehmen</button>
                             </form>
                         </div>

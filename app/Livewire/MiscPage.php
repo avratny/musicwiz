@@ -270,7 +270,7 @@ class MiscPage extends Component
                 'units' => $all->take($this->limit),
                 'suggested' => $all->filter(fn ($f) => $f['suggestions'] || collect($f['items'])->contains(fn ($i) => $i['suggestions']))->count(),
                 'exempted' => in_array($check, GenreChecks::EXEMPTIBLE, true) ? $genres->findings($check, $this->query, true) : collect(),
-                'genreValues' => $genres->values(),
+                'genreIndex' => $genres->searchIndex(),
             ])->title(self::VIEWS[$this->view].' – MusicWiz');
         }
         if ($this->view === 'duplikate') {

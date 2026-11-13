@@ -5,9 +5,11 @@ namespace Tests\Feature;
 use App\Livewire\MiscPage;
 use App\Models\Artist;
 use App\Models\Genre;
+use App\Models\GenreSynonym;
 use App\Models\TagChange;
 use App\Models\Track;
 use App\Support\GenreChecks;
+use App\Support\GenreTree;
 use App\Support\Scanner;
 use App\Support\Settings;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -134,5 +136,18 @@ class GenreChecksTest extends TestCase
         $page->set('view', 'genre_uneinheitlich')->call('takeGenre', $this->hash('Mixed'), null, 'Pop');
         $this->assertSame(['Pop'], Track::where('album', 'Mixed')->pluck('genre')->unique()->values()->all());
         $page->call('takeGenre', $this->hash('Mixed'), null, ' ; ')->assertSee('Bitte ein Genre angeben.');
+    }
+
+    public function test_search_index_covers_name_path_and_synonyms_without_accents(): void
+    {
+        $synthpop = Genre::where('name', 'Synthpop')->firstOrFail();
+        GenreSynonym::create(['genre_id' => $synthpop->id, 'synonym' => 'Électro-Pop']);
+
+        $entry = collect(app(GenreChecks::class)->searchIndex())->firstWhere('name', 'synthpop');
+        $this->assertSame(app(GenreTree::class)->path($synthpop->id), $entry['path']);
+        $this->assertStringContainsString('electro pop', $entry['text']);
+        $this->assertStringContainsString(mb_strtolower(explode(' › ', $entry['path'])[0]), $entry['text'], 'Oberbegriff im Suchtext');
+
+        Livewire::test(MiscPage::class)->set('view', 'genre_abweichend')->assertSeeHtml('id="genre-index"')->assertSeeHtml('genrePicker(');
     }
 }

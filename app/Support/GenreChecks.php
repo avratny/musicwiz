@@ -148,13 +148,32 @@ class GenreChecks
         return $root === null || $root === $genreId ? $name : $name.'; '.$this->name($root);
     }
 
-    /** alle Werte zum Auswählen (je Genre im Baum) */
-    public function values(): array
+    /**
+     * Suche beim eigenen Genre (Volltext): je Genre der Wert zum Übernehmen, sein Pfad im Baum und der Suchtext aus Pfad
+     * und Synonymen – klein, ohne Akzente, Zeichen als Leerzeichen (gleich normalisiert wie die Eingabe im Browser).
+     *
+     * @return list<array{value: string, name: string, path: string, text: string}>
+     */
+    public function searchIndex(): array
     {
-        $values = array_map(fn ($id) => $this->value((int) $id), DB::table('genres')->pluck('id')->all());
-        sort($values, SORT_NATURAL | SORT_FLAG_CASE);
+        $synonyms = DB::table('genre_synonyms')->get(['genre_id', 'synonym'])->groupBy('genre_id');
+        $out = [];
+        foreach (DB::table('genres')->pluck('id') as $id) {
+            $path = $this->tree->path((int) $id);
+            $out[] = ['value' => $this->value((int) $id), 'name' => self::searchText($this->name((int) $id)), 'path' => $path,
+                'text' => self::searchText($path.' '.($synonyms[$id] ?? collect())->pluck('synonym')->implode(' '))];
+        }
+        usort($out, fn ($a, $b) => strnatcasecmp($a['path'], $b['path']));
 
-        return array_values(array_unique($values));
+        return $out;
+    }
+
+    private static function searchText(string $s): string
+    {
+        $s = mb_strtolower($s);
+        $s = preg_replace('/\p{Mn}+/u', '', \Normalizer::normalize($s, \Normalizer::FORM_D) ?: $s);
+
+        return trim(preg_replace('/[^\p{L}\p{N}]+/u', ' ', $s));
     }
 
     private function write(string $check, array $ids, string $genre, bool $forget = true): int
