@@ -234,7 +234,7 @@
                                         <form wire:submit="takeGenre(@js($u['key']), {{ $item['id'] }}, null)" class="flex min-w-60 flex-1 items-center gap-1.5"
                                               x-data="genrePicker(@js($u['key']), {{ $item['id'] }})" @keydown="keys($event)" @click.outside="open = false">
                                             <div class="relative flex-1">
-                                                <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}-{{ $item['id'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0"
+                                                <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}-{{ $item['id'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0; place()"
                                                        placeholder="Genre suchen …" autocomplete="off" class="field w-full py-0.5 text-sm">
                                                 @include('livewire.partials.genre-results')
                                             </div>
@@ -283,7 +283,7 @@
                                   x-data="genrePicker(@js($u['key']), null)" @keydown="keys($event)" @click.outside="open = false">
                                 <span class="w-24 shrink-0 text-xs text-zinc-500">Selbst</span>
                                 <div class="relative flex-1">
-                                    <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0"
+                                    <input type="text" x-ref="input" wire:model="custom.g{{ $u['key'] }}" x-model="q" @focus="open = true" @input="open = true; active = 0; place()"
                                            placeholder="Genre suchen – Name, Teil davon, Oberbegriff oder Synonym …" autocomplete="off" class="field w-full">
                                     @include('livewire.partials.genre-results')
                                 </div>

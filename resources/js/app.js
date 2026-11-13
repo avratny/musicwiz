@@ -240,6 +240,22 @@ document.addEventListener('alpine:init', () => {
         q: '',
         open: false,
         active: 0,
+        pos: '',
+        init() {
+            this.$watch('open', (open) => open && this.place());
+        },
+        // unter dem Eingabefeld (fest am Fenster) – reicht der Platz unten nicht, darüber
+        place() {
+            if (!this.open || !this.$refs.input) return;
+            const r = this.$refs.input.getBoundingClientRect();
+            // unten liegen Player und Fortschrittsleiste (wie das Padding von <main>)
+            const below = window.innerHeight - (96 + Alpine.store('activity').rows * 31) - r.bottom - 8;
+            const above = r.top - 8;
+            const down = below >= 160 || below >= above;
+            const height = Math.max(80, Math.min(320, down ? below : above));
+            const top = down ? r.bottom + 4 : Math.max(8, r.top - 4 - height);
+            this.pos = `top: ${top}px; left: ${r.left}px; width: ${Math.max(r.width, 280)}px; max-height: ${height}px`;
+        },
         get index() {
             const el = document.getElementById('genre-index');
             if (!el) return [];
@@ -274,6 +290,7 @@ document.addEventListener('alpine:init', () => {
             else if (e.key === 'ArrowUp') this.active = (this.active - 1 + this.results.length) % this.results.length;
             else if (e.key === 'Enter') this.take(this.results[this.active] ?? this.results[0]);
             else if (e.key === 'Escape') this.open = false;
+            else if (e.key === 'Tab') return void (this.open = false);
             else return;
             e.preventDefault();
         },
