@@ -152,15 +152,15 @@ class GenreChecks
      * Suche beim eigenen Genre (Volltext): je Genre der Wert zum Übernehmen, sein Pfad im Baum und der Suchtext aus Pfad
      * und Synonymen – klein, ohne Akzente, Zeichen als Leerzeichen (gleich normalisiert wie die Eingabe im Browser).
      *
-     * @return list<array{value: string, name: string, path: string, text: string}>
+     * @return list<array{id: int, level: int, value: string, name: string, path: string, text: string}>
      */
     public function searchIndex(): array
     {
         $synonyms = DB::table('genre_synonyms')->get(['genre_id', 'synonym'])->groupBy('genre_id');
         $out = [];
-        foreach (DB::table('genres')->pluck('id') as $id) {
+        foreach (DB::table('genres')->pluck('level', 'id') as $id => $level) {
             $path = $this->tree->path((int) $id);
-            $out[] = ['value' => $this->value((int) $id), 'name' => self::searchText($this->name((int) $id)), 'path' => $path,
+            $out[] = ['id' => (int) $id, 'level' => (int) $level, 'value' => $this->value((int) $id), 'name' => self::searchText($this->name((int) $id)), 'path' => $path,
                 'text' => self::searchText($path.' '.($synonyms[$id] ?? collect())->pluck('synonym')->implode(' '))];
         }
         usort($out, fn ($a, $b) => strnatcasecmp($a['path'], $b['path']));

@@ -9,8 +9,9 @@ use Illuminate\Support\Facades\DB;
 /**
  * Offene Punkte je Bereich – die Badges in der Navigation (Interpreten, Alben, Genres, Sonstiges) und in den zweiten
  * Leisten zeigen nur, was noch zu bearbeiten ist (Ausgenommenes und Vorgemerktes zählt nicht). Die Prüfungen sind teuer:
- * gerechnet wird nur, wenn sich in der Datenbank etwas geändert hat (Stand aus einer günstigen Abfrage), spätestens
- * nach einigen Minuten (Änderungen ohne Zeitstempel).
+ * gerechnet wird nur, wenn sich in der Datenbank etwas geändert hat (Stand aus einer günstigen Abfrage) oder nach einer
+ * Aktion in der Oberfläche bzw. einem Hintergrundvorgang (touch – der Stand ist sekundengenau und sieht nicht alles),
+ * spätestens nach einigen Minuten.
  */
 class OpenCounts
 {
@@ -26,6 +27,14 @@ class OpenCounts
     ];
 
     private const TTL_MINUTES = 5;
+
+    private const VERSION = 'open-counts:version';
+
+    /** nach einer Änderung: beim nächsten Abruf neu rechnen */
+    public static function touch(): void
+    {
+        Cache::forever(self::VERSION, (int) Cache::get(self::VERSION, 0) + 1);
+    }
 
     private ?string $state = null;
 
@@ -77,7 +86,7 @@ class OpenCounts
 
     private function remember(string $area, Closure $compute): array
     {
-        return Cache::remember('open-counts:'.$area.':'.$this->state(), now()->addMinutes(self::TTL_MINUTES), $compute);
+        return Cache::remember('open-counts:'.$area.':'.Cache::get(self::VERSION, 0).':'.$this->state(), now()->addMinutes(self::TTL_MINUTES), $compute);
     }
 
     /** Stand der Datenbank: je Tabelle Anzahl und neuester Eintrag – eine Abfrage */

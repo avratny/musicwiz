@@ -42,8 +42,21 @@ class OpenCountsTest extends TestCase
 
         // vorgemerkt zählt nicht mehr – Zähler rechnet nach der Änderung neu (nicht aus dem Zwischenspeicher)
         app(BrokenTracks::class)->trash();
+        OpenCounts::touch();   // wie nach jeder Aktion – in derselben Sekunde ändert sich am Datenbank-Stand nichts
         $this->assertSame(0, app(OpenCounts::class)->misc()['kaputt']);
         $this->assertSame(array_sum($misc) - 1, $this->getJson('/activity')->json('counts.misc'));
         Livewire::test(MiscPage::class)->set('view', 'kaputt')->assertViewHas('counts', fn ($c) => $c['kaputt'] === 0);
+    }
+
+    public function test_an_action_in_the_page_refreshes_the_badges_at_once(): void
+    {
+        $this->flac('inbox/Rock/01.flac', ['TITLE' => 'Gut', 'ARTIST' => 'A', 'ALBUM' => 'Rock']);
+        $this->emptyFlac('inbox/Rock/02.flac', ['TITLE' => 'Leer', 'ARTIST' => 'A', 'ALBUM' => 'Rock']);
+        app(Scanner::class)->scan('inbox');
+        $page = Livewire::test(MiscPage::class)->set('view', 'kaputt')->assertViewHas('counts', fn ($c) => $c['kaputt'] === 1);
+
+        // gleiche Sekunde, Anzahl der Lieder gleich: erst die Aktion selbst sorgt fürs Neurechnen
+        $page->call('trashBroken', null)->assertViewHas('counts', fn ($c) => $c['kaputt'] === 0);
+        $this->assertSame(0, $this->getJson('/activity')->json('counts.misc') - array_sum(array_diff_key(app(OpenCounts::class)->misc(), ['kaputt' => 0])));
     }
 }

@@ -14,6 +14,7 @@ use App\Support\BrokenTracks;
 use App\Support\Duplicates;
 use App\Support\Fingerprints;
 use App\Support\GenreChecks;
+use App\Support\GenreTree;
 use App\Support\OpenCounts;
 use App\Support\ReplayGain;
 use App\Support\TextRepairAi;
@@ -180,6 +181,22 @@ class MiscPage extends Component
             $this->message = '„'.trim($genre).'“ übernommen – bei '.$n.' '.($n === 1 ? 'Lied' : 'Liedern').' (unter Änderungen zurücksetzbar).';
         });
         unset($this->custom[$field]);
+    }
+
+    /** Neues Genre anlegen (Dialog „Neues Genre“) und gleich übernehmen – für die Einheit bzw. ein Lied darin */
+    public function createGenre(string $key, ?int $trackId, string $name, ?int $parentId, GenreChecks $genres): void
+    {
+        $check = self::GENRE_VIEWS[$this->view] ?? null;
+        if (! $check) {
+            return;
+        }
+        $this->attempt(function () use ($genres, $check, $key, $trackId, $name, $parentId) {
+            $genre = app(GenreTree::class)->create($name, $parentId);
+            $value = $genres->value($genre->id);
+            $n = $genres->apply($check, $key, $trackId, $value);
+            $this->message = '„'.app(GenreTree::class)->path($genre->id).'“ angelegt und übernommen – bei '.$n.' '.($n === 1 ? 'Lied' : 'Liedern').' (unter Änderungen zurücksetzbar).';
+        });
+        unset($this->custom['g'.$key.($trackId ? '-'.$trackId : '')]);
     }
 
     /** jeweils den ersten Vorschlag übernehmen – eine Einheit bzw. alle (null) */

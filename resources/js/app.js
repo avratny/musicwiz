@@ -233,10 +233,11 @@ document.addEventListener('alpine:init', () => {
         },
     }));
 
-    // Sonstiges › Genre: eigenes Genre per Volltextsuche – jedes Wort irgendwo in Name, Pfad im Baum oder Synonym
-    // (ohne Groß/klein und Akzente). Klick oder Enter auf einen Treffer übernimmt sofort; sonst gilt der getippte Text.
+    // Genre per Volltextsuche (Sonstiges › Genre, Genres › Nicht zugeordnet, Dialog „Neues Genre“) – jedes Wort irgendwo
+    // in Name, Pfad im Baum oder Synonym (ohne Groß/klein und Akzente). Klick oder Enter auf einen Treffer übernimmt
+    // sofort: ohne opts.take als Genre der Lieder (takeGenre), sonst opts.take(treffer); opts.maxLevel begrenzt die Ebene.
     const genreSearchText = (s) => s.toLowerCase().normalize('NFD').replace(/\p{Mn}+/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-    Alpine.data('genrePicker', (key, trackId) => ({
+    Alpine.data('genrePicker', (key, trackId, opts = {}) => ({
         q: '',
         open: false,
         active: 0,
@@ -274,15 +275,20 @@ document.addEventListener('alpine:init', () => {
                 return 4;
             };
             return this.index
-                .filter((g) => words.every((w) => g.text.includes(w)))
+                .filter((g) => (!opts.maxLevel || g.level <= opts.maxLevel) && words.every((w) => g.text.includes(w)))
                 .map((g) => ({ ...g, rank: rank(g) }))
                 .sort((a, b) => a.rank - b.rank || a.path.length - b.path.length || a.path.localeCompare(b.path))
                 .slice(0, 15);
         },
         take(r) {
             this.open = false;
-            this.q = r.value;
-            this.$wire.takeGenre(key, trackId, r.value);
+            if (opts.take) {
+                this.q = r.path;
+                opts.take(r);
+            } else {
+                this.q = r.value;
+                this.$wire.takeGenre(key, trackId, r.value);
+            }
         },
         keys(e) {
             if (!this.open || !this.results.length) return;

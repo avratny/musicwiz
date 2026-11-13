@@ -187,6 +187,10 @@
             @endif
         @elseif (isset($check))
             <script type="application/json" id="genre-index">@json($genreIndex)</script>
+            @include('livewire.partials.new-genre-dialog', [
+                'submit' => '$wire.createGenre(ctx.key, ctx.trackId, name, parent)',
+                'hint' => "'Wird im Genre-Baum angelegt und gleich ' + (ctx.trackId ? 'bei diesem Lied' : 'hier') + ' übernommen.'",
+            ])
             @forelse ($units as $u)
                 <section wire:key="genre-{{ $check }}-{{ $u['key'] }}" x-data="{ songs: @js($u['songs']) }" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
                     <div class="flex items-center gap-4 px-4 py-3">
@@ -246,6 +250,8 @@
                                                 @include('livewire.partials.genre-results')
                                             </div>
                                             <button type="submit" class="btn shrink-0 py-0.5 text-xs">Übernehmen</button>
+                                            <button type="button" class="shrink-0 text-xs font-medium text-accent hover:underline"
+                                                    @click="$dispatch('new-genre', { name: q, ctx: { key: @js($u['key']), trackId: {{ $item['id'] }} } })">+ neues Genre …</button>
                                         </form>
                                     </div>
                                 </li>
@@ -295,6 +301,8 @@
                                     @include('livewire.partials.genre-results')
                                 </div>
                                 <button type="submit" class="btn shrink-0">Übernehmen</button>
+                                <button type="button" class="shrink-0 text-xs font-medium text-accent hover:underline"
+                                        @click="$dispatch('new-genre', { name: q, ctx: { key: @js($u['key']), trackId: null } })">+ neues Genre …</button>
                             </form>
                         </div>
                     @endif

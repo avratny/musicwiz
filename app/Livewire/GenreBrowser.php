@@ -8,11 +8,12 @@ use App\Models\Genre;
 use App\Models\GenreIgnore;
 use App\Models\GenreSynonym;
 use App\Support\ArtistGenres;
+use App\Support\GenreChecks;
 use App\Support\GenreCleanup;
 use App\Support\GenreTree;
 use App\Support\OpenCounts;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -40,10 +41,6 @@ class GenreBrowser extends Component
     public string $newChild = '';
 
     /** Zuordnen eines nicht zugeordneten Werts: Wert und Suche nach dem Ziel-Genre */
-    public ?string $mapValue = null;
-
-    public string $mapQuery = '';
-
     public ?string $message = null;
 
     /** Nicht zugeordnet: gerade erledigte Werte bleiben grün mit Meldung stehen (Wert => Meldung) */
@@ -211,25 +208,35 @@ class GenreBrowser extends Component
         $this->changed('„'.$g->name.'“ gelöscht.');
     }
 
-    /** Nicht zugeordneten Wert als Synonym an ein Genre hängen */
-    public function mapTo(int $genreId): void
-    {
-        if ($this->mapValue === null) {
-            return;
-        }
-        GenreSynonym::firstOrCreate(['genre_id' => $genreId, 'synonym' => mb_substr($this->mapValue, 0, 128)]);
-        $msg = '„'.$this->mapValue.'“ → '.app(GenreTree::class)->path($genreId);
-        $this->done[$this->mapValue] = 'zugeordnet → '.app(GenreTree::class)->path($genreId);
-        $this->mapValue = null;
-        $this->mapQuery = '';
-        $this->changed($msg);
-    }
-
-    /** Vorschlag übernehmen: Wert direkt als Synonym einhängen */
+    /** Nicht zugeordneten Wert als Synonym an ein Genre hängen (Vorschlag oder Suche) */
     public function assign(string $value, int $genreId): void
     {
-        $this->mapValue = $value;
-        $this->mapTo($genreId);
+        GenreSynonym::firstOrCreate(['genre_id' => $genreId, 'synonym' => mb_substr($value, 0, 128)]);
+        $path = app(GenreTree::class)->path($genreId);
+        $this->done[$value] = 'zugeordnet → '.$path;
+        $this->changed('„'.$value.'“ → '.$path);
+    }
+
+    /**
+     * Neues Genre für einen nicht zugeordneten Wert anlegen – unter $parentId (null = Hauptgenre) – und den Wert damit
+     * verknüpfen: heißt das Genre anders als der Wert, wird der Wert sein Synonym.
+     */
+    public function createAndAssign(string $value, string $name, ?int $parentId): void
+    {
+        try {
+            $genre = app(GenreTree::class)->create($name, $parentId);
+        } catch (InvalidArgumentException $e) {
+            $this->fail($e->getMessage());
+
+            return;
+        }
+        if (GenreTree::key($genre->name) !== GenreTree::key($value)) {
+            GenreSynonym::firstOrCreate(['genre_id' => $genre->id, 'synonym' => mb_substr($value, 0, 128)]);
+        }
+        app(GenreTree::class)->forget();
+        $path = app(GenreTree::class)->path($genre->id);
+        $this->done[$value] = 'neu angelegt → '.$path;
+        $this->changed('„'.$genre->name.'“ angelegt ('.$path.') und „'.$value.'“ verknüpft.');
     }
 
     /** Zu breit („Rock/Pop“): nicht zuordnen, sondern aus den Liedern entfernen */
@@ -238,7 +245,6 @@ class GenreBrowser extends Component
         GenreIgnore::firstOrCreate(['value' => mb_substr(trim($value), 0, 128)]);
         app(GenreTree::class)->forget();
         $n = app(GenreCleanup::class)->apply();
-        $this->mapValue = null;
         $this->done[$value] = 'zu breit – wird entfernt, '.$n.' '.($n === 1 ? 'Lied' : 'Lieder').' angepasst';
         $this->changed('„'.$value.'“ wird entfernt – '.$n.' '.($n === 1 ? 'Lied' : 'Lieder').' angepasst (siehe Änderungen).');
     }
@@ -249,12 +255,6 @@ class GenreBrowser extends Component
         $ignore = GenreIgnore::findOrFail($id);
         $ignore->delete();
         $this->changed('„'.$ignore->value.'“ wird nicht mehr entfernt.');
-    }
-
-    public function startMap(string $value): void
-    {
-        $this->mapValue = $value;
-        $this->mapQuery = '';
     }
 
     /** Nach jeder Änderung am Baum: Interpreten im Hintergrund neu verknüpfen */
@@ -301,15 +301,6 @@ class GenreBrowser extends Component
         }
     }
 
-    private function searchGenres(string $q): Collection
-    {
-        $tree = app(GenreTree::class);
-        $like = '%'.mb_strtolower(trim($q)).'%';
-
-        return Genre::whereRaw('LOWER(name) LIKE ?', [$like])->orWhereIn('id', GenreSynonym::whereRaw('LOWER(synonym) LIKE ?', [$like])->select('genre_id'))
-            ->orderBy('level')->limit(12)->get()->map(fn ($g) => ['id' => $g->id, 'path' => $tree->path($g->id), 'level' => $g->level]);
-    }
-
     public function render(ArtistGenres $artistGenres)
     {
         $all = Genre::withCount('synonyms')->orderBy('position')->orderBy('name')->get();
@@ -330,10 +321,12 @@ class GenreBrowser extends Component
             }
         }
         $genre = $this->selected ? Genre::with(['synonyms', 'children', 'parent'])->find($this->selected) : null;
-        $unmapped = [];
+        $unmapped = $allUnmapped = [];
         if ($this->tab === 'unmapped') {
+            // einmal rechnen: angezeigt die ersten 300, gezählt alle
+            $allUnmapped = $artistGenres->unmapped(PHP_INT_MAX);
             $byValue = [];
-            foreach ($artistGenres->unmapped(300) as $u) {
+            foreach (array_slice($allUnmapped, 0, 300) as $u) {
                 $byValue[$u['value']] = $u + ['suggestions' => app(GenreTree::class)->suggest($u['value'])];
             }
             // bisherige Zeilen bleiben stehen (Erledigtes grün), neue kommen hinten dazu
@@ -348,7 +341,8 @@ class GenreBrowser extends Component
             'visible' => $visible,
             'total' => $all->count(),
             'unmapped' => $unmapped,
-            'open' => app(OpenCounts::class)->genres(),
+            'open' => $this->tab === 'unmapped' ? ['unmapped' => count($allUnmapped)] : app(OpenCounts::class)->genres(),
+            'genreIndex' => $this->tab === 'unmapped' ? app(GenreChecks::class)->searchIndex() : [],
             'ignores' => $this->tab === 'unmapped' ? GenreIgnore::orderBy('value')->get() : collect(),
             'genre' => $genre,
             'path' => $genre ? app(GenreTree::class)->path($genre->id) : null,
@@ -357,7 +351,6 @@ class GenreBrowser extends Component
             // Ziele fürs Verschieben (Hauptgenres und Familien)
             'targets' => $all->where('level', '<', 3)->map(fn ($g) => ['id' => $g->id, 'level' => $g->level, 'path' => app(GenreTree::class)->path($g->id)])->sortBy('path')->values(),
             'linkedArtists' => $genre ? Artist::whereIn('id', DB::table('artist_genre')->where('genre_id', $genre->id)->select('artist_id'))->orderBy('name')->limit(40)->get(['id', 'name', 'image']) : collect(),
-            'mapResults' => $this->mapValue !== null && mb_strlen(trim($this->mapQuery)) >= 2 ? $this->searchGenres($this->mapQuery) : collect(),
         ])->title('Genres – MusicWiz');
     }
 }

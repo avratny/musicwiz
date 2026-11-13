@@ -8,6 +8,7 @@ use App\Models\TagChange;
 use App\Models\Track;
 use App\Support\ApiUi;
 use App\Support\Locations;
+use App\Support\OpenCounts;
 use App\Support\TagEditor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -162,6 +163,7 @@ class ApiController extends Controller
         $reason = trim((string) $request->input('reason')) ?: 'über die Schnittstelle';
         $changed = $editor->update($track, $tags, TagEditor::MANUAL, $reason);
         Log::info('Schnittstelle: Tags geändert', ['track' => $track->id, 'fields' => array_keys($changed)]);
+        OpenCounts::touch();
 
         return $this->json(['changed' => $changed, 'track' => $track->fresh()->makeHidden('tags')]);
     }
@@ -169,6 +171,7 @@ class ApiController extends Controller
     public function revertTrack(Request $request, Track $track, TagEditor $editor): JsonResponse
     {
         $reverted = $editor->revert($track, array_values((array) $request->input('fields', [])));
+        OpenCounts::touch();
 
         return $this->json(['reverted' => $reverted, 'track' => $track->fresh()->makeHidden('tags')]);
     }

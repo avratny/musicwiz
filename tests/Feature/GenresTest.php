@@ -146,11 +146,33 @@ class GenresTest extends TestCase
         app(Scanner::class)->scan('library');
 
         $page = Livewire::test(GenreBrowser::class)->set('tab', 'unmapped')->assertSee('Rock/Pop');
-        $page->call('startMap', 'Rock/Pop')->set('mapQuery', 'rock')->assertSee('Rock')
-            ->call('mapTo', $this->genre('Rock')->id)->assertSee('„Rock/Pop“ → Rock')->assertDontSee('zuordnen …')
+        $page->assertSeeHtml('id="genre-index"')->assertSee('anderes Genre …')->assertSee('+ neues Genre …')
+            ->call('assign', 'Rock/Pop', $this->genre('Rock')->id)->assertSee('„Rock/Pop“ → Rock')->assertDontSee('zuordnen …')
             ->assertSeeHtml('um-done-'.md5('Rock/Pop'))->assertSee('zugeordnet → Rock');
 
         $this->assertTrue(DB::table('artist_genre')->where(['artist_id' => Artist::where('name', 'X')->value('id'), 'genre_id' => $this->genre('Rock')->id])->exists(), 'neu verknüpft');
+    }
+
+    public function test_new_genre_from_an_unmapped_value_is_created_where_chosen_and_linked(): void
+    {
+        $this->mp3('library/X/A/01.mp3', ['TIT2' => 'Eins', 'TPE1' => 'X', 'TCON' => 'Hamburger Schule']);
+        $this->mp3('library/Y/A/01.mp3', ['TIT2' => 'Zwei', 'TPE1' => 'Y', 'TCON' => 'Krautrock-ish']);
+        app(Scanner::class)->scan('library');
+        $rock = $this->genre('Rock');
+        $page = Livewire::test(GenreBrowser::class)->set('tab', 'unmapped');
+
+        // gleicher Name: Genre selbst passt, kein Synonym nötig
+        $page->call('createAndAssign', 'Hamburger Schule', 'Hamburger Schule', $rock->id)->assertSee('neu angelegt → Rock › Hamburger Schule');
+        $new = Genre::where('name', 'Hamburger Schule')->sole();
+        $this->assertSame([$rock->id, 2, 0], [$new->parent_id, $new->level, GenreSynonym::where('genre_id', $new->id)->count()]);
+
+        // anderer Name: der Wert wird Synonym; ohne Elternteil ein neues Hauptgenre
+        $page->call('createAndAssign', 'Krautrock-ish', 'Kosmische Musik', null)->assertSee('neu angelegt → Kosmische Musik');
+        $kosmisch = Genre::where('name', 'Kosmische Musik')->sole();
+        $this->assertSame([null, 1, ['Krautrock-ish']], [$kosmisch->parent_id, $kosmisch->level, GenreSynonym::where('genre_id', $kosmisch->id)->pluck('synonym')->all()]);
+        $this->assertSame([], app(ArtistGenres::class)->unmapped(), 'beide zugeordnet');
+
+        $page->call('createAndAssign', 'X', 'Hamburger Schule', $rock->id)->assertSee('gibt es dort schon');
     }
 
     public function test_too_broad_values_are_removed_or_replaced_by_the_artists_main_genre(): void

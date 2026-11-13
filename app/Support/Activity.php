@@ -28,6 +28,7 @@ class Activity
     public static function finish(string $key, string $message): void
     {
         ActivityRecord::where('key', $key)->update(['running' => false, 'message' => mb_substr($message, 0, 255), 'detail' => null, 'finished_at' => now()]);
+        OpenCounts::touch();   // Badges nach Einlesen, Abgleich, Schreiben … neu rechnen
     }
 
     /** Stand eines Vorgangs */

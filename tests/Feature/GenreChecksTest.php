@@ -150,4 +150,17 @@ class GenreChecksTest extends TestCase
 
         Livewire::test(MiscPage::class)->set('view', 'genre_abweichend')->assertSeeHtml('id="genre-index"')->assertSeeHtml('genrePicker(');
     }
+
+    public function test_new_genre_from_the_dialog_is_created_and_taken(): void
+    {
+        $pop = Genre::whereNull('parent_id')->where('name', 'Pop')->firstOrFail();
+        $page = Livewire::test(MiscPage::class)->set('view', 'genre_abweichend')->assertSee('+ neues Genre …');
+        $key = collect(app(GenreChecks::class)->findings('mismatch'))->keys()->first();
+
+        $page->call('createGenre', $key, null, 'Schwedenpop', $pop->id)->assertSee('„Pop › Schwedenpop“ angelegt und übernommen');
+        $this->assertSame(2, Genre::where('name', 'Schwedenpop')->value('level'));
+        $this->assertSame(['Schwedenpop; Pop'], Track::where('genre', 'like', 'Schwedenpop%')->pluck('genre')->unique()->values()->all());
+
+        $page->call('createGenre', $key, null, 'Schwedenpop', $pop->id)->assertSee('gibt es dort schon');
+    }
 }

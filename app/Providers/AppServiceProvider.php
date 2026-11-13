@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Support\ArtistCredits;
 use App\Support\GenreTree;
 use App\Support\Lookup\Client;
+use App\Support\OpenCounts;
 use App\Support\SortNames;
 use Illuminate\Support\ServiceProvider;
 
@@ -32,5 +33,7 @@ class AppServiceProvider extends ServiceProvider
     {
         // Uploads (Cover, Interpretenbilder) bis 50 MB – passend zu upload_max_filesize im Dockerfile
         config(['livewire.temporary_file_upload.rules' => ['required', 'file', 'max:51200']]);
+        // Badges (offen): nach jeder Aktion in der Oberfläche neu rechnen – auch über /api/ui
+        \Livewire\on('call', fn () => fn () => OpenCounts::touch());
     }
 }

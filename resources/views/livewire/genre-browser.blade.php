@@ -87,12 +87,14 @@
                             </tr>
                             @continue
                         @endif
-                        <tr wire:key="um-{{ md5($u['value']) }}" class="align-top">
+                        {{-- Klick zeigt sofort „wird übernommen“ (busy), bis die Seite zurückkommt --}}
+                        <tr wire:key="um-{{ md5($u['value']) }}" class="align-top transition-opacity" x-data="{ busy: false }"
+                            :class="busy && 'pointer-events-none opacity-40'">
                             <td class="border-b border-zinc-800/70 py-2 pr-3 text-zinc-200">
                                 <div class="flex flex-wrap items-center gap-2">
                                     {{-- ohne Rückfrage: unten unter „Wird entfernt“ zurücknehmbar --}}
-                                    <button class="whitespace-nowrap rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/25" wire:click="ignore(@js($u['value']))"
-                                            wire:loading.attr="disabled" title="Nicht zuordnen, sondern aus den Liedern entfernen – bleibt kein Genre, kommt das Hauptgenre des Interpreten hinein (zurücknehmbar unter „Wird entfernt“)">zu breit – entfernen</button>
+                                    <button class="whitespace-nowrap rounded-full bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200 hover:bg-amber-500/25" wire:click="ignore(@js($u['value']))" @click="busy = true"
+                                            title=""Nicht zuordnen, sondern aus den Liedern entfernen – bleibt kein Genre, kommt das Hauptgenre des Interpreten hinein (zurücknehmbar unter „Wird entfernt“)">zu breit – entfernen</button>
                                     <span>{{ $u['value'] }}</span>
                                 </div>
                             </td>
@@ -102,23 +104,24 @@
                                 <div class="flex flex-wrap gap-1.5">
                                     @forelse ($u['suggestions'] as $sug)
                                         <button class="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs text-accent hover:bg-accent/20" title="{{ $sug['reason'] }} – „{{ $u['value'] }}“ als Synonym hier einhängen"
-                                                wire:click="assign(@js($u['value']), {{ $sug['id'] }})">→ {{ $sug['path'] }}</button>
+                                                wire:click="assign(@js($u['value']), {{ $sug['id'] }})" @click="busy = true">→ {{ $sug['path'] }}</button>
                                     @empty
                                         <span class="text-xs text-zinc-600">keine</span>
                                     @endforelse
                                 </div>
                             </td>
-                            <td class="border-b border-zinc-800/70 py-2 pl-4">
-                                @if ($mapValue === $u['value'])
-                                    <input type="search" wire:model.live.debounce.200ms="mapQuery" placeholder="Genre suchen …" class="field py-1 text-xs" x-init="$el.focus()">
-                                    @foreach ($mapResults as $r)
-                                        <button class="block w-full truncate rounded px-2 py-1 text-left text-xs text-zinc-300 hover:bg-zinc-800" wire:click="mapTo({{ $r['id'] }})">{{ $r['path'] }}</button>
-                                    @endforeach
-                                @else
-                                    <div class="flex items-center gap-3">
-                                        <button class="text-xs font-medium text-accent hover:underline" wire:click="startMap(@js($u['value']))">anderes Genre …</button>
-                                    </div>
-                                @endif
+                            <td class="border-b border-zinc-800/70 py-2 pl-4" x-data="{ pick: false }">
+                                {{-- anderes Genre: dieselbe Volltextsuche wie unter Sonstiges › Genre, ohne Umweg über den Server --}}
+                                <div x-show="pick" x-cloak x-data="genrePicker(null, null, { take: (r) => { busy = true; $wire.assign(@js($u['value']), r.id) } })"
+                                     @keydown="keys($event)" @click.outside="open = false" class="relative">
+                                    <input type="text" x-ref="input" x-model="q" @focus="open = true" @input="open = true; active = 0; place()" @keydown.escape="pick = false"
+                                           x-effect="pick && $nextTick(() => $refs.input.focus())" placeholder="Genre suchen …" autocomplete="off" class="field w-full py-1 text-xs">
+                                    @include('livewire.partials.genre-results')
+                                </div>
+                                <div x-show="!pick" class="flex items-center gap-3">
+                                    <button class="text-xs font-medium text-accent hover:underline" @click="pick = true">anderes Genre …</button>
+                                    <button class="text-xs font-medium text-accent hover:underline" @click="$dispatch('new-genre', { name: @js($u['value']), ctx: { value: @js($u['value']) } })">+ neues Genre …</button>
+                                </div>
                             </td>
                         </tr>
                     @empty
@@ -126,6 +129,14 @@
                     @endforelse
                 </tbody>
             </table>
+            <script type="application/json" id="genre-index">@json($genreIndex)</script>
+
+            @include('livewire.partials.new-genre-dialog', [
+                'submit' => '$wire.createAndAssign(ctx.value, name, parent)',
+                'hint' => "'für „' + ctx.value + '“ – wird angelegt und mit dem Wert verknüpft (heißt es anders, wird der Wert sein Synonym).'",
+            ])
+                </form>
+            </div>
 
             @if ($ignores->isNotEmpty())
                 <div class="mt-8">

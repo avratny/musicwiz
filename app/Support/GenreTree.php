@@ -6,6 +6,7 @@ use App\Models\Genre;
 use App\Models\GenreIgnore;
 use App\Models\GenreSynonym;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
  * Genrebaum: Import, Pfade und die globale Zuordnung eines Genre-Werts (aus Tags oder Diensten) zu einem Knoten –
@@ -22,6 +23,9 @@ class GenreTree
 
     /** @var array<string, true>|null Vergleichsschlüssel zu breiter Werte */
     private ?array $ignored = null;
+
+    /** @var list<array{0: int, 1: string, 2: string, 3: list<string>}>|null Namen und Synonyme mit Schlüssel und Wörtern (für suggest) */
+    private ?array $names = null;
 
     /**
      * Startstand aus der CSV (Hauptgenre, Familie, Style, Ebene, Beatport-Genre, Discogs-Genre, Synonyme). Zeilen, deren
@@ -137,22 +141,21 @@ class GenreTree
         if ($key === '') {
             return [];
         }
-        $names = [];
-        foreach ($this->nodes as $id => $n) {
-            $names[] = [$id, $n['name']];
-        }
-        foreach (GenreSynonym::get(['genre_id', 'synonym']) as $s) {
-            $names[] = [$s->genre_id, $s->synonym];
+        // einmal je Stand vorbereiten – bei 300 Werten auf der Seite sonst 300-mal alles neu
+        if ($this->names === null) {
+            $this->names = [];
+            $all = [...array_map(fn ($id, $n) => [$id, $n['name']], array_keys($this->nodes), $this->nodes),
+                ...GenreSynonym::get(['genre_id', 'synonym'])->map(fn ($s) => [$s->genre_id, $s->synonym])->all()];
+            foreach ($all as [$id, $name]) {
+                if (($k = self::key($name)) !== '') {
+                    $this->names[] = [$id, $name, $k, self::words($name)];
+                }
+            }
         }
         $scores = [];
-        foreach ($names as [$id, $name]) {
-            $k = self::key($name);
-            if ($k === '') {
-                continue;
-            }
+        foreach ($this->names as [$id, $name, $k, $theirs]) {
             $score = 0;
             $reason = '';
-            $theirs = self::words($name);
             $common = array_intersect($words, $theirs);
             $len = max(strlen($k), strlen($key));
             if (strlen($k) >= 5 && strlen($key) >= 5 && levenshtein($k, $key) <= ($len >= 10 ? 2 : 1)) {
@@ -207,9 +210,35 @@ class GenreTree
         return isset($this->nodes[$id]) ? $id : null;
     }
 
+    /**
+     * Neues Genre anlegen – unter $parentId (null = Hauptgenre), höchstens drei Ebenen.
+     *
+     * @throws InvalidArgumentException mit Meldung für die Oberfläche
+     */
+    public function create(string $name, ?int $parentId): Genre
+    {
+        $name = trim(preg_replace('/\s+/u', ' ', $name));
+        $parent = $parentId ? Genre::find($parentId) : null;
+        $problem = match (true) {
+            $name === '' => 'Bitte einen Namen eingeben.',
+            $parentId && ! $parent => 'Übergeordnetes Genre nicht gefunden.',
+            $parent && $parent->level >= 3 => 'Unter einem Style gibt es keine weitere Ebene.',
+            Genre::where('parent_id', $parent?->id)->where('name', $name)->exists() => '„'.$name.'“ gibt es dort schon.',
+            default => null,
+        };
+        if ($problem) {
+            throw new InvalidArgumentException($problem);
+        }
+        $genre = Genre::create(['parent_id' => $parent?->id, 'name' => $name, 'level' => $parent ? $parent->level + 1 : 1,
+            'position' => (int) Genre::where('parent_id', $parent?->id)->max('position') + 1]);
+        $this->forget();
+
+        return $genre;
+    }
+
     public function forget(): void
     {
-        $this->nodes = $this->index = $this->ignored = null;
+        $this->nodes = $this->index = $this->ignored = $this->names = null;
     }
 
     private function load(): void
