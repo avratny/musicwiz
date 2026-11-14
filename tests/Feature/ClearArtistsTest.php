@@ -84,6 +84,33 @@ class ClearArtistsTest extends TestCase
         app(ArtistLookup::class)->run(Artist::where('name', 'a-ha')->sole());
     }
 
+    public function test_lists_are_kept_for_a_while_and_shown_rows_are_checked_fresh(): void
+    {
+        config(['musicwiz.list_cache_seconds' => 120]);
+        $this->musicBrainz();
+        $this->lookUp();
+        $this->assertSame(['a-ha'], $this->names('eindeutig'));
+        $aha = Artist::where('name', 'a-ha')->sole();
+
+        // anderswo bestätigt: steht noch in der gespeicherten Liste, wird aber nicht mehr angezeigt
+        $aha->update(['confirmed' => true]);
+        $this->assertSame([$aha->id], app(ClearArtists::class)->ids('eindeutig'));
+        $this->assertSame([], $this->names('eindeutig'));
+        Livewire::test(ArtistClear::class, ['level' => 'eindeutig'])->assertViewHas('rows', []);
+
+        // Vorgang mit vielen Änderungen: neu gerechnet
+        ClearArtists::forget();
+        $this->assertSame([], app(ClearArtists::class)->ids('eindeutig'));
+
+        // einzeln übernommen: sofort aus der gespeicherten Liste (ohne neu zu rechnen)
+        $aha->update(['confirmed' => false]);
+        ClearArtists::forget();
+        $this->assertSame(['eindeutig' => 1, 'wahrscheinlich' => 0, 'schreibweise' => 0], app(ClearArtists::class)->counts());
+        Livewire::test(ArtistClear::class, ['level' => 'eindeutig'])->call('confirm', $aha->id);
+        $this->assertTrue($aha->fresh()->confirmed);
+        $this->assertSame(0, app(ClearArtists::class)->counts()['eindeutig']);
+    }
+
     public function test_clear_artist_is_confirmed_with_ids_genres_and_image(): void
     {
         $this->musicBrainz();

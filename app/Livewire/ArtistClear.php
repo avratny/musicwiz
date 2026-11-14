@@ -47,7 +47,7 @@ class ArtistClear extends Component
     /** Alle (außer abgewählten) im Hintergrund übernehmen */
     public function confirmAll(ClearArtists $clear): void
     {
-        $ids = array_values(array_diff(array_map(fn ($c) => $c['artist']->id, $clear->candidates($this->level)), $this->skip));
+        $ids = array_values(array_diff($clear->ids($this->level), $this->skip));
         ConfirmClearArtists::start($ids, $this->level);
         $this->say(count($ids).' '.(count($ids) === 1 ? 'Interpret wird' : 'Interpreten werden').' im Hintergrund übernommen – Fortschritt unten.');
         $this->dispatch('activity-started');
@@ -139,20 +139,18 @@ class ArtistClear extends Component
 
     public function render(ClearArtists $clear, MusicBrainzData $musicbrainz)
     {
-        $candidates = $clear->candidates($this->level);
-        $byId = [];
-        foreach (array_slice($candidates, 0, $this->limit) as $c) {
-            $byId[$c['artist']->id] = $c;
-        }
+        // die Liste ist zwischengespeichert, die angezeigten Zeilen werden frisch geprüft
+        $ids = $clear->ids($this->level);
+        $byId = $clear->rows(array_slice($ids, 0, $this->limit), $this->level);
         // feste Reihenfolge: bisherige Zeilen bleiben stehen (Übernommene mit Haken), neue kommen hinten dazu
         $this->order = [...array_values(array_filter($this->order, fn ($id) => isset($byId[$id]) || isset($this->done[$id]))),
             ...array_values(array_diff(array_keys($byId), $this->order))];
 
         return view('livewire.artist-clear', [
             'rows' => array_map(fn ($id) => $byId[$id] ?? ['done' => $this->done[$id], 'id' => $id], $this->order),
-            'total' => count($candidates),
-            'chosen' => count(array_diff(array_map(fn ($c) => $c['artist']->id, $candidates), $this->skip)),
-            'more' => count($candidates) > $this->limit,
+            'total' => count($ids),
+            'chosen' => count(array_diff($ids, $this->skip)),
+            'more' => count($ids) > $this->limit,
             'available' => $musicbrainz->available(),
             'pendingLookup' => LookupArtists::pending()->count(),
             'claudeAvailable' => $this->level === 'schreibweise' && app(SpellingAi::class)->available(),

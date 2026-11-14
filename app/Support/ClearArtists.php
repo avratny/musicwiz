@@ -8,6 +8,7 @@ use App\Models\ArtistSource;
 use App\Support\Lookup\LookupGroups;
 use App\Support\Lookup\RecordingEvidence;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Throwable;
@@ -46,8 +47,6 @@ class ClearArtists
     /** … und so viel Mal so viele Veröffentlichungen bei MusicBrainz wie die zweite */
     private const DOMINANT_RELEASES = 5;
 
-    private ?array $all = null;
-
     /** vorab geladen für viele Interpreten auf einmal (all) – sonst einzeln abgefragt */
     private array $hits = [];
 
@@ -60,7 +59,24 @@ class ClearArtists
     /** Interpreten je Paket beim Vorab-Laden */
     private const CHUNK = 500;
 
+    /**
+     * Die Listen (welcher Interpret in welcher) kosten bei großer Bibliothek Sekunden – sie werden zwischengespeichert
+     * (musicwiz.list_cache_seconds), bis ein eigener Vorgang sie ändert (forget). Angezeigte Zeilen prüft rows() frisch.
+     */
+    private const CACHE = 'clear-artists:';
+
+    private const VERSION = 'clear-artists:version';
+
+    /** @var array<int, string>|null Interpret => Liste, meiste Lieder zuerst */
+    private ?array $index = null;
+
     public function __construct(private LookupGroups $groups, private MusicBrainzData $musicbrainz, private ArtistMatcher $matcher, private ArtistCredits $credits) {}
+
+    /** Listen neu rechnen (nach Vorgängen, die viele Interpreten ändern) */
+    public static function forget(): void
+    {
+        Cache::forever(self::VERSION, (int) Cache::get(self::VERSION, 0) + 1);
+    }
 
     /**
      * Alle Interpreten einer Liste, mit den meisten Liedern zuerst.
@@ -69,18 +85,44 @@ class ClearArtists
      */
     public function candidates(string $level = 'eindeutig'): array
     {
-        return array_values(array_filter($this->all(), fn ($c) => $c['level'] === $level));
+        return array_values($this->rows($this->ids($level), $level));
+    }
+
+    /**
+     * IDs einer Liste, meiste Lieder zuerst (zwischengespeichert)
+     *
+     * @return list<int>
+     */
+    public function ids(string $level): array
+    {
+        return array_keys(array_filter($this->index(), fn ($l) => $l === $level));
+    }
+
+    /**
+     * Volle Zeilen zu diesen IDs, frisch geprüft – wer nicht (mehr) in die Liste passt, fällt weg
+     *
+     * @param  list<int>  $ids
+     * @return array<int, array> ID => Zeile (wie candidates)
+     */
+    public function rows(array $ids, string $level): array
+    {
+        $out = [];
+        foreach (array_chunk($ids, self::CHUNK) as $chunk) {
+            $artists = $this->preload($chunk)->keyBy('id');
+            foreach ($chunk as $id) {
+                if (isset($artists[$id]) && ($c = $this->check($artists[$id])) && $c['level'] === $level) {
+                    $out[$id] = $c;
+                }
+            }
+        }
+
+        return $out;
     }
 
     /** Anzahl je Liste */
     public function counts(): array
     {
-        $out = array_fill_keys(self::LEVELS, 0);
-        foreach ($this->all() as $c) {
-            $out[$c['level']]++;
-        }
-
-        return $out;
+        return array_merge(array_fill_keys(self::LEVELS, 0), array_count_values($this->index()));
     }
 
     /**
@@ -94,7 +136,15 @@ class ClearArtists
         if (! $this->musicbrainz->available()) {
             return [];
         }
-        $sure = array_map(fn ($c) => $c['artist']->id, array_filter($this->all(), fn ($c) => $c['level'] !== 'wahrscheinlich'));
+
+        // inzwischen Geprüfte nie mitliefern (die Liste kann ein paar Minuten alt sein)
+        return array_values(array_diff($this->remember('evidence', fn () => $this->evidence()), DB::table('artist_recording_checks')->pluck('artist_id')->all()));
+    }
+
+    /** @return list<int> */
+    private function evidence(): array
+    {
+        $sure = array_keys(array_filter($this->index(), fn ($l) => $l !== 'wahrscheinlich'));
         $checked = DB::table('artist_recording_checks')->pluck('artist_id')->all();
         $out = [];
         foreach (array_chunk(array_values(array_diff($this->prefilter(), $sure, $checked)), self::CHUNK) as $ids) {
@@ -226,19 +276,50 @@ class ClearArtists
                 report($e);   // Bild nicht erreichbar: bestätigt ist er trotzdem, das Bild lässt sich im Flyout nachholen
             }
         }
-        $this->all = null;
+        // aus der zwischengespeicherten Liste nehmen (die übrigen bleiben, wie sie sind)
+        unset($this->index[$artist->id]);
+        if (($seconds = (int) config('musicwiz.list_cache_seconds')) && ($cached = Cache::get(self::CACHE.'index'))) {
+            unset($cached['value'][$artist->id]);
+            Cache::put(self::CACHE.'index', $cached, now()->addSeconds($seconds));
+        }
 
         return true;
     }
 
-    /** Alle Listen zusammen (einmal je Anfrage gerechnet) */
+    /** @return array<int, string> */
+    private function index(): array
+    {
+        return $this->index ??= $this->remember('index', function () {
+            $items = [];
+            foreach ($this->all() as $c) {
+                $items[$c['artist']->id] = $c['level'];
+            }
+
+            return $items;
+        });
+    }
+
+    private function remember(string $key, \Closure $compute): array
+    {
+        $seconds = (int) config('musicwiz.list_cache_seconds');
+        $version = (int) Cache::get(self::VERSION, 0);
+        $cached = $seconds ? Cache::get(self::CACHE.$key) : null;
+        if ($cached && $cached['version'] === $version && $cached['at'] > now()->timestamp - $seconds) {
+            return $cached['value'];
+        }
+        $value = $compute();
+        if ($seconds) {
+            Cache::put(self::CACHE.$key, ['version' => $version, 'at' => now()->timestamp, 'value' => $value], now()->addSeconds($seconds));
+        }
+
+        return $value;
+    }
+
+    /** Alle Listen zusammen, voll gerechnet */
     private function all(): array
     {
-        if ($this->all !== null) {
-            return $this->all;
-        }
         if (! $this->musicbrainz->available()) {
-            return $this->all = [];
+            return [];
         }
         $out = [];
         $blocked = $this->blocked();
@@ -251,7 +332,7 @@ class ClearArtists
         }
         usort($out, fn ($a, $b) => [$b['tracks'], mb_strtolower($a['artist']->name)] <=> [$a['tracks'], mb_strtolower($b['artist']->name)]);
 
-        return $this->all = $out;
+        return $out;
     }
 
     /**

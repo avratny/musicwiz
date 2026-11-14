@@ -62,6 +62,7 @@ class ConfirmClearArtists implements ShouldQueue
             $done++;
         }
         $stopped = Cache::pull(self::STOP);
+        ClearArtists::forget();   // Umbenennungen und Bestätigungen ändern auch andere Listen (Ähnlich, Kombis)
         Activity::finish(self::KEY, ($stopped ? 'Angehalten – ' : '').$taken.' '.($taken === 1 ? 'Interpret' : 'Interpreten').' übernommen'
             .($done > $taken ? ' ('.($done - $taken).' inzwischen nicht mehr in der Liste)' : ''));
     }

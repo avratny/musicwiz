@@ -36,6 +36,7 @@
         <env name="SORTNAMES_AUTO" value="false"/>
         <env name="FINGERPRINT_INBOX" value="false"/>
         <env name="COUNTS_IN_BACKGROUND" value="false"/>
+        <env name="LIST_CACHE_SECONDS" value="0"/>
         <env name="LOG_CHANNEL" value="testing" force="true"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>

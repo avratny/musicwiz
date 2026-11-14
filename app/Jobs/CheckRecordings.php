@@ -66,6 +66,7 @@ class CheckRecordings implements ShouldQueue
             $done++;
         }
         $stopped = Cache::pull(self::STOP);
+        ClearArtists::forget();   // Belege ändern die Listen
         Activity::finish(self::KEY, ($stopped ? 'Angehalten – ' : '').($message ? $message.' – ' : '').$done.' geprüft, bei '.$found.' eindeutig belegt');
     }
 

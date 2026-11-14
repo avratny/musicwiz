@@ -24,6 +24,9 @@ return [
     // Badges (offene Punkte) nach der Antwort rechnen statt die Seite warten zu lassen – Tests rechnen sofort
     'counts_in_background' => (bool) env('COUNTS_IN_BACKGROUND', true),
 
+    // Interpreten › Eindeutig/Wahrscheinlich/Schreibweise: so lange gilt die gerechnete Liste (Sekunden, 0 = immer neu)
+    'list_cache_seconds' => (int) env('LIST_CACHE_SECONDS', 120),
+
     // nur MP3 und FLAC – andere Formate werden nicht eingelesen
     'audio_extensions' => ['mp3', 'flac'],
 
