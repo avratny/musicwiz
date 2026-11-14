@@ -45,7 +45,7 @@ class ScannerTest extends TestCase
 
         $stats = app(Scanner::class)->scan('library');
 
-        $this->assertSame(['files' => 2, 'read' => 2, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0], $stats);
+        $this->assertSame(['files' => 2, 'read' => 2, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0, 'merged' => 0], $stats);
         $a = Track::where('path', $mp3)->first();
         $this->assertSame(['library', 'Waterloo', 'ABBA', 'Gold', 'ABBA', 1, 19, 1, 2, '1992', 'Pop', 'LIB', true, true, 'MP3'],
             [$a->location, $a->title, $a->artist, $a->album, $a->albumartist, $a->track, $a->track_total, $a->disc, $a->disc_total, $a->year, $a->genre, $a->comment, $a->compilation, $a->has_cover, $a->format]);
@@ -171,6 +171,34 @@ class ScannerTest extends TestCase
         $this->assertStringContainsString('2 aus anderen Bereichen übernommen', Activity::current('scan')['message']);
 
         $this->assertSame(0, app(Scanner::class)->scan('inbox')['removed'], 'in der Inbox fehlt nichts mehr');
+    }
+
+    public function test_stale_entries_are_merged_into_the_entry_in_the_other_area(): void
+    {
+        foreach (range(1, 25) as $i) {
+            $this->mp3("inbox/Hits/$i.mp3", ['TIT2' => "Lied $i", 'TPE1' => 'Bj?rn']);
+        }
+        app(Scanner::class)->scan('inbox');
+        $old = Track::where('title', 'Lied 1')->first();
+        app(TagEditor::class)->update($old, ['artist' => 'Björn']);
+        $old->update(['fingerprint' => 'AQAA-test']);
+        DB::table('lyrics_lookups')->insert(['track_id' => $old->id, 'status' => 'none', 'fetched_at' => now()]);
+
+        // früher: Lib-Eintrag neu angelegt, solange die Inbox-Datei noch da war – danach fehlt sie in der Inbox
+        File::copyDirectory($this->base.'/inbox/Hits', $this->base.'/library/Hits');
+        app(Scanner::class)->scan('library');
+        File::deleteDirectory($this->base.'/inbox/Hits');
+        $this->assertSame(50, Track::count());
+
+        $stats = app(Scanner::class)->scan('inbox');
+
+        $this->assertSame([25, 0, 0], [$stats['merged'], $stats['kept_missing'], $stats['removed']], 'kein „auffällig viele fehlen“');
+        $this->assertSame(['library'], Track::distinct()->pluck('location')->all());
+        $twin = Track::where('title', 'Lied 1')->first();
+        $this->assertSame(['Björn', 'AQAA-test'], [$twin->artist, $twin->fingerprint], 'Änderung von Hand und Fingerabdruck übernommen');
+        $this->assertSame('manual', TagChange::where('track_id', $twin->id)->where('field', 'artist')->value('source'));
+        $this->assertSame($twin->id, DB::table('lyrics_lookups')->value('track_id'));
+        $this->assertStringContainsString('25 veraltete mit dem Eintrag im anderen Bereich zusammengeführt', Activity::current('scan')['message']);
     }
 
     public function test_a_copy_in_another_area_is_a_new_entry(): void

@@ -34,7 +34,7 @@ class Scanner
     /** @var array<string, string> Album-Schlüssel alt => neu der übernommenen Lieder */
     private array $relocatedAlbums = [];
 
-    /** @return array{files: int, read: int, removed: int, errors: int, kept_missing: int, folders: int, moved: int, relocated: int} */
+    /** @return array{files: int, read: int, removed: int, errors: int, kept_missing: int, folders: int, moved: int, relocated: int, merged: int} */
     public function scan(string $location): array
     {
         $root = Locations::root($location);
@@ -68,7 +68,7 @@ class Scanner
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $process->start();
 
-        $stats = ['files' => 0, 'read' => 0, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0];
+        $stats = ['files' => 0, 'read' => 0, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0, 'merged' => 0];
         $batch = [];
         $done = 0;
         $images = [];
@@ -116,7 +116,9 @@ class Scanner
                             $batch = [];
                             Activity::progress('scan', $done);
                         }
-                        $stats = $this->removeMissing($msg['paths'], count($known), $stats);
+                        $missing = $this->mergeIntoTwins($location, $msg['paths']);
+                        $stats['merged'] = count($msg['paths']) - count($missing);
+                        $stats = $this->removeMissing($missing, count($known) - $stats['merged'], $stats);
                         $this->storeImages($location, $images, $msg['images'] ?? []);
                         break;
                 }
@@ -165,6 +167,7 @@ class Scanner
             : $label.': '.number_format($stats['files'], 0, ',', '.').' Lieder, '.$stats['read'].' neu gelesen'
                 .($stats['moved'] ? ', '.$stats['moved'].' umbenannt erkannt' : '')
                 .($stats['relocated'] ? ', '.$stats['relocated'].' aus anderen Bereichen übernommen' : '')
+                .($stats['merged'] ? ', '.$stats['merged'].' veraltete mit dem Eintrag im anderen Bereich zusammengeführt' : '')
                 .($stats['removed'] ? ', '.$stats['removed'].' entfernt' : '')
                 .($stats['folders'] ? ', '.$stats['folders'].' leere Ordner gelöscht' : '')
                 .($stats['errors'] ? ', '.$stats['errors'].' nicht lesbar' : '')
@@ -374,6 +377,60 @@ class Scanner
         }
 
         return $relocated;
+    }
+
+    /**
+     * Fehlende Dateien, die in einem anderen Bereich schon einen eigenen Eintrag haben (außerhalb verschoben und dort
+     * neu angelegt, bevor das Einlesen das erkannte): gleicher Name, gleiche Größe, dort vorhanden, eindeutig. Offene
+     * Änderungen von Hand wandern zum anderen Eintrag (außer er hat das Feld selbst von Hand geändert), Fingerabdruck,
+     * Lautheit und Songtext-Abfrage werden ergänzt, Album-Prüfungen ziehen mit; der veraltete Eintrag wird entfernt.
+     *
+     * @param  list<string>  $paths
+     * @return list<string> die übrigen fehlenden Pfade
+     */
+    private function mergeIntoTwins(string $location, array $paths): array
+    {
+        $others = array_filter(array_keys(Locations::LABELS), fn ($l) => $l !== $location && is_dir(Locations::root($l)));
+        if (! $paths || ! $others) {
+            return $paths;
+        }
+        $editor = app(TagEditor::class);
+        $merged = [];
+        foreach (array_chunk($paths, self::BATCH) as $chunk) {
+            $stale = Track::whereIn('path_hash', array_map('sha1', $chunk))->get();
+            $twins = Track::whereIn('location', $others)->whereIn('size', $stale->pluck('size')->unique())
+                ->whereIn('filename', $stale->pluck('filename')->unique())->get()->groupBy(fn ($t) => $t->filename.'|'.$t->size);
+            $claims = $stale->groupBy(fn ($t) => $t->filename.'|'.$t->size);
+            foreach ($claims as $key => $claimed) {
+                $twin = ($twins[$key] ?? collect())->filter(fn ($t) => is_file($t->path));
+                if ($twin->count() !== 1 || $claimed->count() !== 1) {
+                    continue;
+                }
+                $twin = $twin->first();
+                $old = $claimed->first();
+                DB::transaction(function () use ($old, $twin, $editor) {
+                    $own = TagChange::where('track_id', $twin->id)->where('source', TagEditor::MANUAL)->pluck('field')->all();
+                    $fields = TagChange::where('track_id', $old->id)->where('source', TagEditor::MANUAL)->whereNull('written_at')
+                        ->whereNotIn('field', $own)->distinct()->pluck('field');
+                    if ($fields->isNotEmpty()) {
+                        $editor->update($twin, $fields->mapWithKeys(fn ($f) => [$f => $old->getAttribute($f)])->all(), TagEditor::MANUAL,
+                            'übernommen von '.Locations::LABELS[$old->location].' (dort verschoben)');
+                    }
+                    $twin->update(array_filter(['fingerprint' => $twin->fingerprint ?? $old->fingerprint,
+                        'loudness' => $twin->loudness ?? $old->loudness, 'loudness_peak' => $twin->loudness_peak ?? $old->loudness_peak], fn ($v) => $v !== null));
+                    if (! DB::table('lyrics_lookups')->where('track_id', $twin->id)->exists()) {
+                        DB::table('lyrics_lookups')->where('track_id', $old->id)->update(['track_id' => $twin->id]);
+                    }
+                    $old->delete();
+                });
+                if (! Track::where('album_hash', $old->album_hash)->exists()) {
+                    FileMover::followHash($old->album_hash, $twin->album_hash);
+                }
+                $merged[] = $old->path;
+            }
+        }
+
+        return array_values(array_diff($paths, $merged));
     }
 
     /** Datei-IDs nachtragen (ohne die Dateien neu zu lesen) */
