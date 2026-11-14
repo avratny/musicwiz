@@ -158,6 +158,27 @@ class MusicBrainzData
     }
 
     /**
+     * Wie namesakes(), für viele Namen mit einer Abfrage je Paket
+     *
+     * @param  list<string>  $names
+     * @return array<string, int> Name => Anzahl
+     */
+    public function namesakesMany(array $names): array
+    {
+        $keys = [];
+        foreach (array_unique($names) as $name) {
+            $keys[$name] = mb_substr(ArtistMatcher::key($name), 0, 191);
+        }
+        $counts = [];
+        foreach (array_chunk(array_values(array_unique(array_filter($keys, fn ($k) => $k !== ''))), 1000) as $chunk) {
+            $counts += DB::table('mb_names')->whereIn('name_key', $chunk)->where('alias', false)
+                ->selectRaw('name_key, COUNT(DISTINCT mbid) AS n')->groupBy('name_key')->pluck('n', 'name_key')->all();
+        }
+
+        return array_map(fn ($k) => (int) ($counts[$k] ?? 0), $keys);
+    }
+
+    /**
      * Welcher MusicBrainz-Eintrag ist das? Je Interpret (Name und Schreibweisen) – eindeutig oder gar nicht: zuerst der
      * Name eines Eintrags (Vergleichsschlüssel, also auch ohne Groß/klein: „Beam“ und „BEAM“ sind zwei Kandidaten),
      * sonst eine Schreibweise (MusicBrainz-Aliase: „Puff Daddy“ → Diddy). Gibt es auf einer Stufe mehrere, ist er

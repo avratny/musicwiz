@@ -15,10 +15,14 @@ use Illuminate\Support\Collection;
  */
 class LookupGroups
 {
-    /** @return list<array> */
-    public function for(Artist $artist): array
+    /**
+     * @param  bool  $images  Bilder der Gruppen (für die Anzeige) – ohne geht es bei vielen Interpreten deutlich schneller
+     * @return list<array>
+     */
+    public function for(Artist $artist, bool $images = true): array
     {
-        $sources = $artist->sources()->with(['images', 'aliases'])->get();
+        // vorab geladen (viele Interpreten auf einmal, z. B. ClearArtists) oder einzeln
+        $sources = $artist->relationLoaded('sources') ? $artist->sources : $artist->sources()->with(['images', 'aliases'])->get();
         if ($sources->isEmpty()) {
             return [];
         }
@@ -41,15 +45,17 @@ class LookupGroups
         $groups = array_map(fn ($list) => collect($list)->sortBy(fn ($s) => array_search($s->service, array_keys(ArtistSource::SERVICES), true))->values()->all(), $groups);
         foreach ($groups as $key => $list) {
             $list = collect($list);
-            $out[] = $this->group($key, $list, $artist);
+            $out[] = $this->group($key, $list, $artist, $images);
         }
         usort($out, fn ($a, $b) => [count($b['services']), $b['score']] <=> [count($a['services']), $a['score']]);
 
         return $out;
     }
 
-    private function group(string $key, Collection $list, Artist $artist): array
+    private function group(string $key, Collection $list, Artist $artist, bool $images): array
     {
+        // Daten je Treffer einmal dekodieren (das JSON-Feld wird sonst bei jedem Zugriff neu gelesen)
+        $decoded = $list->map(fn ($s) => (array) $s->data);
         // Schreibweisen der Dienste: die häufigste zuerst
         $spellings = [];
         foreach ($list as $s) {
@@ -58,7 +64,7 @@ class LookupGroups
             }
         }
         uasort($spellings, fn ($a, $b) => count($b) <=> count($a));
-        $data = fn (string $field) => $list->map(fn ($s) => $s->data[$field] ?? null)->filter()->first();
+        $data = fn (string $field) => $decoded->map(fn ($d) => $d[$field] ?? null)->filter()->first();
         $own = $artist->spellings();
         $aliases = [];
         foreach ($list as $s) {
@@ -82,14 +88,14 @@ class LookupGroups
             'disambiguation' => $data('disambiguation'),
             'begin' => $data('begin') ?? $data('formed'),
             'listeners' => $data('listeners'),
-            'releases' => $list->mapWithKeys(fn ($s) => [ArtistSource::SERVICES[$s->service] => $s->data['releases'] ?? null])->filter(fn ($n) => $n !== null)->all(),
-            'genres' => $list->flatMap(fn ($s) => array_merge($s->data['genres'] ?? [], array_filter([$s->data['genre'] ?? null, $s->data['style'] ?? null])))->unique()->take(6)->values()->all(),
+            'releases' => $list->mapWithKeys(fn ($s, $i) => [ArtistSource::SERVICES[$s->service] => $decoded[$i]['releases'] ?? null])->filter(fn ($n) => $n !== null)->all(),
+            'genres' => $decoded->flatMap(fn ($d) => array_merge($d['genres'] ?? [], array_filter([$d['genre'] ?? null, $d['style'] ?? null])))->unique()->take(6)->values()->all(),
             'text' => $data('biography') ?? $data('profile'),
-            'links' => $list->mapWithKeys(fn ($s) => [$s->service => $s->data['url'] ?? null])->filter()->all(),
+            'links' => $list->mapWithKeys(fn ($s, $i) => [$s->service => $decoded[$i]['url'] ?? null])->filter()->all(),
             'ids' => $list->mapWithKeys(fn ($s) => [$s->service => $s->external_id])->all(),
             // Verweise laut MusicBrainz (Spotify/Discogs-IDs) – falls der Dienst selbst nicht gefragt wurde
             'linked' => (array) ($list->firstWhere('service', 'musicbrainz')?->data['links'] ?? []),
-            'images' => $list->flatMap(fn ($s) => $s->images->map(fn ($i) => ['id' => $i->id, 'kind' => $i->kind, 'service' => ArtistSource::SERVICES[$s->service], 'preview' => ArtistPreviews::exists($i),
+            'images' => ! $images ? [] : $list->flatMap(fn ($s) => $s->images->map(fn ($i) => ['id' => $i->id, 'kind' => $i->kind, 'service' => ArtistSource::SERVICES[$s->service], 'preview' => ArtistPreviews::exists($i),
                 // Version in der Adresse: der Browser hält Vorschauen eine Woche – nach neuem Abgleich (gleiche ID, anderes Bild) sonst das alte
                 'version' => substr(md5((string) ($i->preview_url ?: $i->url)), 0, 8)]))
                 ->sortBy(fn ($i) => ['portrait' => 0, 'background' => 1, 'logo' => 2][$i['kind']] ?? 3)->values()->all(),

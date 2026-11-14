@@ -7,6 +7,7 @@ use App\Models\ArtistImage;
 use App\Models\ArtistSource;
 use App\Support\Lookup\LookupGroups;
 use App\Support\Lookup\RecordingEvidence;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Throwable;
@@ -47,6 +48,18 @@ class ClearArtists
 
     private ?array $all = null;
 
+    /** vorab geladen für viele Interpreten auf einmal (all) – sonst einzeln abgefragt */
+    private array $hits = [];
+
+    private array $trackCounts = [];
+
+    private array $mbInfo = [];
+
+    private array $namesakes = [];
+
+    /** Interpreten je Paket beim Vorab-Laden */
+    private const CHUNK = 500;
+
     public function __construct(private LookupGroups $groups, private MusicBrainzData $musicbrainz, private ArtistMatcher $matcher, private ArtistCredits $credits) {}
 
     /**
@@ -84,10 +97,14 @@ class ClearArtists
         $sure = array_map(fn ($c) => $c['artist']->id, array_filter($this->all(), fn ($c) => $c['level'] !== 'wahrscheinlich'));
         $checked = DB::table('artist_recording_checks')->pluck('artist_id')->all();
         $out = [];
-        foreach (Artist::whereIn('id', array_diff($this->prefilter(), $sure, $checked))->get() as $artist) {
-            $mbids = array_filter(array_column($this->strong($this->groups->for($artist)), 'mbid'));
-            if (count($mbids) >= 2 || ($mbids && $this->musicbrainz->namesakes($artist->name) > 1)) {
-                $out[] = $artist->id;
+        foreach (array_chunk(array_values(array_diff($this->prefilter(), $sure, $checked)), self::CHUNK) as $ids) {
+            $artists = $this->preload($ids);
+            $this->namesakes += $this->musicbrainz->namesakesMany($artists->pluck('name')->all());
+            foreach ($artists as $artist) {
+                $mbids = array_filter(array_column($this->strong($this->groups->for($artist, false)), 'mbid'));
+                if (count($mbids) >= 2 || ($mbids && $this->namesakes($artist->name) > 1)) {
+                    $out[] = $artist->id;
+                }
             }
         }
 
@@ -100,7 +117,7 @@ class ClearArtists
         if ($artist->confirmed || ! $this->musicbrainz->available()) {
             return null;
         }
-        $strong = $this->strong($this->groups->for($artist));
+        $strong = $this->strong($this->groups->for($artist, false));
         $withMb = array_values(array_filter($strong, fn ($g) => $g['mbid'] && isset($g['ids']['musicbrainz'])));
         if (! $withMb) {
             return null;
@@ -109,7 +126,7 @@ class ClearArtists
         $sure = false;
         $reason = '';
         // a) Beleg über die Lieder: genau ein MusicBrainz-Eintrag hat unsere Titel
-        $hits = array_keys(array_filter(RecordingEvidence::hits($artist->id) ?? []));
+        $hits = array_keys(array_filter((array_key_exists($artist->id, $this->hits) ? $this->hits[$artist->id] : RecordingEvidence::hits($artist->id)) ?? []));
         if (count($hits) > 1) {
             return null;   // die Titel gibt es bei mehreren Gleichnamigen
         }
@@ -123,15 +140,15 @@ class ClearArtists
             // b) einzige ernsthafte Gruppe, einziger Eintrag dieses Namens
             $pick = $withMb[0];
             $mb = $this->info($pick);
-            if (! $mb || $this->musicbrainz->namesakes($mb->name) !== 1) {
+            if (! $mb || $this->namesakes($mb->name) !== 1) {
                 return null;
             }
             [$sure, $reason] = [true, count(array_diff(array_keys($pick['ids']), ['musicbrainz', 'lastfm'])) >= 2 ? 'dienste' : 'einziger'];
         } elseif (count($strong) >= 2 && $strong[0]['key'] === $withMb[0]['key']) {
             // c) mehrere Gleichnamige, einer klar der Bekannte
             [$first, $second] = [$strong[0], $strong[1]];
-            $r1 = (int) $this->musicbrainz->releases($first['mbid']);
-            $r2 = $second['mbid'] ? (int) $this->musicbrainz->releases($second['mbid']) : 0;
+            $r1 = (int) $this->mb($first['mbid'])?->releases;
+            $r2 = $second['mbid'] ? (int) $this->mb($second['mbid'])?->releases : 0;
             if (count($first['services']) - count($second['services']) < self::DOMINANT_SERVICES || $r1 < self::DOMINANT_RELEASES * max(1, $r2)) {
                 return null;
             }
@@ -150,7 +167,7 @@ class ClearArtists
         if ($rename && (! $sure || (($owner = app(ArtistRegistry::class)->ownerOf($rename)) && $owner->id !== $artist->id))) {
             return null;   // anders geschrieben: nur bei sicherem Treffer, und nur, wenn der Name nicht schon einem anderen gehört
         }
-        $tracks = DB::table('track_artist')->where('artist_id', $artist->id)->distinct()->count('track_id');
+        $tracks = $this->trackCounts[$artist->id] ?? DB::table('track_artist')->where('artist_id', $artist->id)->distinct()->count('track_id');
         if (! $tracks) {
             return null;
         }
@@ -165,7 +182,7 @@ class ClearArtists
             'rival' => $rival,
             'claude' => $rename ? SpellingAi::answer($artist, $rename) : null,
             'genres' => $this->genres($pick),
-            'image' => $artist->imagePath() ? null : $this->image($artist, $pick),
+            'image' => $artist->image && $artist->imagePath() ? null : $this->image($artist, $pick),
             'tracks' => $tracks,
         ];
     }
@@ -225,14 +242,49 @@ class ClearArtists
         }
         $out = [];
         $blocked = $this->blocked();
-        foreach (Artist::whereIn('id', $this->prefilter())->get() as $artist) {
-            if (! isset($blocked[$artist->id]) && ($c = $this->check($artist))) {
-                $out[] = $c;
+        foreach (array_chunk(array_values(array_diff($this->prefilter(), array_keys($blocked))), self::CHUNK) as $ids) {
+            foreach ($this->preload($ids) as $artist) {
+                if ($c = $this->check($artist)) {
+                    $out[] = $c;
+                }
             }
         }
         usort($out, fn ($a, $b) => [$b['tracks'], mb_strtolower($a['artist']->name)] <=> [$a['tracks'], mb_strtolower($b['artist']->name)]);
 
         return $this->all = $out;
+    }
+
+    /**
+     * Ein Paket Interpreten mit allem, was check() braucht – wenige Abfragen statt etwa zehn je Interpret
+     *
+     * @param  list<int>  $ids
+     * @return Collection<int, Artist>
+     */
+    private function preload(array $ids)
+    {
+        $artists = Artist::whereIn('id', $ids)->with(['aliases', 'sources.images', 'sources.aliases'])->get();
+        $hits = DB::table('artist_recording_checks')->whereIn('artist_id', $ids)->pluck('hits', 'artist_id');
+        foreach ($ids as $id) {
+            $this->hits[$id] = isset($hits[$id]) ? (json_decode($hits[$id], true) ?: []) : null;
+        }
+        $this->trackCounts = DB::table('track_artist')->whereIn('artist_id', $ids)->selectRaw('artist_id, COUNT(DISTINCT track_id) AS n')
+            ->groupBy('artist_id')->pluck('n', 'artist_id')->map(fn ($n) => (int) $n)->all() + array_fill_keys($ids, 0);
+        $mbids = $artists->flatMap(fn ($a) => $a->sources->flatMap(fn ($s) => [$s->mbid, $s->service === 'musicbrainz' ? $s->external_id : null]))->filter()->unique()->all();
+        $this->mbInfo = $this->musicbrainz->info($mbids) + array_fill_keys($mbids, null);
+        $this->namesakes = $this->musicbrainz->namesakesMany(array_filter(array_map(fn ($i) => $i?->name, $this->mbInfo)));
+
+        return $artists;
+    }
+
+    /** MusicBrainz-Eintrag (vorab geladen oder einzeln) */
+    private function mb(string $mbid): ?object
+    {
+        return array_key_exists($mbid, $this->mbInfo) ? $this->mbInfo[$mbid] : ($this->mbInfo[$mbid] = $this->musicbrainz->info([$mbid])[$mbid] ?? null);
+    }
+
+    private function namesakes(string $name): int
+    {
+        return $this->namesakes[$name] ??= $this->musicbrainz->namesakes($name);
     }
 
     /** Günstige Vorauswahl in der Datenbank: unbestätigt, abgeglichen, mit mindestens einem MusicBrainz-Treffer */
@@ -253,7 +305,7 @@ class ClearArtists
     {
         $mbid = $group['ids']['musicbrainz'] ?? $group['mbid'];
 
-        return $mbid ? ($this->musicbrainz->info([$mbid])[$mbid] ?? null) : null;
+        return $mbid ? $this->mb($mbid) : null;
     }
 
     /** Interpreten in offenen Ähnlich-Gruppen oder offenen Kombis (erst dort klären) */
@@ -279,7 +331,7 @@ class ClearArtists
     /** Porträt, bevorzugt nach IMAGE_ORDER, dann nach Rang (die Vorschau lädt die Anzeige nach, falls sie noch fehlt) */
     private function image(Artist $artist, array $group): ?ArtistImage
     {
-        $sources = ArtistSource::where('artist_id', $artist->id)->get()
+        $sources = ($artist->relationLoaded('sources') ? $artist->sources : ArtistSource::where('artist_id', $artist->id)->get())
             ->filter(fn ($s) => ($group['ids'][$s->service] ?? null) === $s->external_id && in_array($s->service, self::IMAGE_ORDER, true))
             ->sortBy(fn ($s) => array_search($s->service, self::IMAGE_ORDER, true));
         foreach ($sources as $source) {
