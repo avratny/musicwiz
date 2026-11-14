@@ -11,7 +11,9 @@ use Illuminate\Support\Facades\DB;
  * Leisten zeigen nur, was noch zu bearbeiten ist (Ausgenommenes und Vorgemerktes zählt nicht). Die Prüfungen sind teuer:
  * gerechnet wird nur, wenn sich in der Datenbank etwas geändert hat (Stand aus einer günstigen Abfrage) oder nach einer
  * Aktion in der Oberfläche bzw. einem Hintergrundvorgang (touch – der Stand ist sekundengenau und sieht nicht alles),
- * spätestens nach einigen Minuten.
+ * spätestens nach einigen Minuten. Im Betrieb wartet keine Seite darauf: gezeigt wird der letzte Stand, neu gerechnet
+ * nach der Antwort und je Bereich nur einmal gleichzeitig (bei großer Bibliothek dauert das Minuten). Ändert sich nur
+ * die Datenbank (z. B. während des Abgleichs), höchstens jede Minute.
  */
 class OpenCounts
 {
@@ -27,6 +29,9 @@ class OpenCounts
     ];
 
     private const TTL_MINUTES = 5;
+
+    /** nur der Datenbank-Stand hat sich geändert: frühestens nach so vielen Sekunden neu rechnen */
+    private const STATE_SECONDS = 60;
 
     private const VERSION = 'open-counts:version';
 
@@ -75,7 +80,13 @@ class OpenCounts
     /** Interpreten: Werkzeug => offen („Alle“ = unbestätigt, „Verschieden“ sind getroffene Entscheidungen – ohne Zahl) */
     public function artists(): array
     {
-        return array_diff_key(ArtistTools::counts(), ['' => 0, 'verschieden' => 0]);
+        return array_diff_key($this->artistTools(), ['' => 0, 'verschieden' => 0]);
+    }
+
+    /** Interpreten: alle Werkzeuge samt „Alle“ und „Verschieden“ (zweite Leiste) */
+    public function artistTools(): array
+    {
+        return $this->remember('artist-tools', fn () => ArtistTools::counts());
     }
 
     /** Navigation: je Bereich die Summe der offenen Punkte */
@@ -86,7 +97,40 @@ class OpenCounts
 
     private function remember(string $area, Closure $compute): array
     {
-        return Cache::remember('open-counts:'.$area.':'.Cache::get(self::VERSION, 0).':'.$this->state(), now()->addMinutes(self::TTL_MINUTES), $compute);
+        $version = (int) Cache::get(self::VERSION, 0);
+        $state = $this->state();
+        if (! config('musicwiz.counts_in_background')) {
+            return Cache::remember('open-counts:'.$area.':'.$version.':'.$state, now()->addMinutes(self::TTL_MINUTES), $compute);
+        }
+
+        $key = 'open-counts:'.$area;
+        $lock = Cache::lock($key.':lock', 900);
+        $refresh = function () use ($key, $compute, $version, $state, $lock) {
+            try {
+                set_time_limit(0);
+                $at = now()->timestamp;
+                Cache::forever($key, ['version' => $version, 'state' => $state, 'at' => $at, 'counts' => $compute()]);
+            } finally {
+                $lock->release();
+            }
+        };
+
+        $cached = Cache::get($key);
+        if (! $cached) {
+            // noch nie gerechnet: einmal warten (gleichzeitige Aufrufe warten auf denselben Durchgang)
+            $lock->block(900, function () use ($key, $refresh) {
+                Cache::has($key) ? null : $refresh();
+            });
+
+            return Cache::get($key)['counts'] ?? [];
+        }
+        $age = now()->timestamp - $cached['at'];
+        $stale = $cached['version'] !== $version || $age >= self::TTL_MINUTES * 60 || ($cached['state'] !== $state && $age >= self::STATE_SECONDS);
+        if ($stale && $lock->get()) {
+            defer($refresh, 'open-counts:'.$area);
+        }
+
+        return $cached['counts'];
     }
 
     /** Stand der Datenbank: je Tabelle Anzahl und neuester Eintrag – eine Abfrage */

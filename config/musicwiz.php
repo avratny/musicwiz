@@ -21,6 +21,9 @@ return [
     // Verschieben immer selbst kopieren (wie zwischen Shares) – nur für Tests
     'copy_moves' => false,
 
+    // Badges (offene Punkte) nach der Antwort rechnen statt die Seite warten zu lassen – Tests rechnen sofort
+    'counts_in_background' => (bool) env('COUNTS_IN_BACKGROUND', true),
+
     // nur MP3 und FLAC – andere Formate werden nicht eingelesen
     'audio_extensions' => ['mp3', 'flac'],
 

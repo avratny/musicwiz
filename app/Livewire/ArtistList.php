@@ -14,6 +14,7 @@ use App\Support\ArtistTools;
 use App\Support\GenreTree;
 use App\Support\Lookup\LookupGroups;
 use App\Support\MusicBrainzData;
+use App\Support\OpenCounts;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Livewire\Attributes\Layout;
@@ -293,7 +294,7 @@ class ArtistList extends Component
         if ($this->tool !== '') {
             $titles = ['eindeutig' => 'Eindeutige Interpreten', 'wahrscheinlich' => 'Wahrscheinliche Interpreten', 'schreibweise' => 'Schreibweisen', 'aehnlich' => 'Ähnliche Interpreten', 'kombis' => 'Kombis', 'verschieden' => 'Verschiedene Interpreten', 'sortiernamen' => 'Sortiernamen'];
 
-            return view('livewire.artist-list', ['counts' => ArtistTools::counts(), 'unconfirmed' => ArtistTools::unconfirmed(), 'artist' => null])->title(($titles[$this->tool] ?? 'Interpreten').' – MusicWiz');
+            return view('livewire.artist-list', ['counts' => app(OpenCounts::class)->artistTools(), 'unconfirmed' => ArtistTools::unconfirmed(), 'artist' => null])->title(($titles[$this->tool] ?? 'Interpreten').' – MusicWiz');
         }
 
         $like = '%'.mb_strtolower(str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim($this->q))).'%';
@@ -329,7 +330,7 @@ class ArtistList extends Component
         }
 
         return view('livewire.artist-list', [
-            'counts' => ArtistTools::counts(),
+            'counts' => app(OpenCounts::class)->artistTools(),
             'unconfirmed' => ArtistTools::unconfirmed(),
             'distinctFrom' => $artist ? $this->distinctFrom($artist) : collect(),
             'band' => $artist ? $this->band($artist) : null,
