@@ -34,7 +34,7 @@
                             <button type="button" class="{{ $tile }}" @disabled($l['kind'] === 'new')
                                     @if ($l['kind'] === 'embedded') wire:click="useTrack({{ $l['id'] }})" @elseif ($l['kind'] === 'folder') wire:click="useFolder({{ $l['id'] }})" @endif
                                     title="{{ $l['kind'] === 'new' ? 'bereits gesetzt' : 'Für alle Lieder des Albums übernehmen' }}">
-                                <img src="{{ $l['preview'] }}" loading="lazy" alt="" class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'">
+                                <img src="{{ $l['preview'] }}" loading="lazy" alt="" class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="noCover(this)">
                                 <span class="mt-1 truncate text-[11px] font-medium text-zinc-300">{{ $l['label'].($l['count'] ? ' · '.$l['count'].' '.($l['count'] === 1 ? 'Lied' : 'Lieder') : '') }}</span>
                                 <span @class(['text-[11px] tabular-nums', 'text-red-400' => min($l['width'], $l['height']) < $minSize, 'text-zinc-500' => min($l['width'], $l['height']) >= $minSize])>{{ $l['width'] }}×{{ $l['height'] }} px</span>
                             </button>
@@ -58,7 +58,7 @@
                         <div class="flex flex-wrap gap-2">
                             @foreach ($shownSuggestions as $s)
                                 <button type="button" class="{{ $tile }}" wire:click="useUrl(@js($s['url']))" wire:loading.attr="disabled" title="{{ $s['url'] }}">
-                                    <img src="{{ $s['preview'] }}" loading="lazy" alt="" referrerpolicy="no-referrer" class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'">
+                                    <img src="{{ $s['preview'] }}" loading="lazy" alt="" referrerpolicy="no-referrer" class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="noCover(this)">
                                     <span class="mt-1 truncate text-[11px] font-medium text-zinc-300" title="{{ $s['title'] }}">{{ $s['title'] }}</span>
                                     <span class="truncate text-[11px] text-zinc-500" title="{{ $s['artist'] }}">{{ $s['artist'].($s['year'] ? ' · '.$s['year'] : '') }}</span>
                                     <span class="text-[11px] text-zinc-500">{{ $s['service'] }} · {{ $s['size'] }}</span>

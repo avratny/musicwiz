@@ -7,7 +7,8 @@ const formatTime = (s) => {
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 };
 
-// Cover fehlt: leere Fläche statt kaputtem Bild – bleibt anklickbar (Cover ändern)
+// Cover fehlt: leere Fläche statt kaputtem Bild – bleibt anklickbar (Cover ändern). Nicht per style ausblenden: Livewire
+// setzt beim Neuzeichnen die Attribute zurück, das src bleibt gleich – dann stünde wieder das kaputte Bild da.
 window.noCover = (img) => {
     img.onerror = null;
     img.src = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';

@@ -109,7 +109,7 @@
                     <td class="border-b border-zinc-800/70 py-2 pl-6 pr-2">
                         @if ($a->image)
                             <img src="{{ route('artist.image', [$a->id, 64]) }}?v={{ $a->updated_at?->timestamp }}" loading="lazy" alt="" class="size-10 rounded-full bg-zinc-800 object-cover"
-                                 onerror="this.style.visibility='hidden'">
+                                 onerror="noCover(this)">
                         @else
                             <div class="flex size-10 items-center justify-center rounded-full text-xs font-semibold text-white/90"
                                  style="background: hsl({{ $hue($a->name) }} 35% 30%)">{{ $initials($a->name) }}</div>
@@ -449,7 +449,7 @@
                                     <img src="{{ \App\Support\Covers::url($t, 64) }}" loading="lazy" alt="" class="cover-link size-9 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)"
                                          @click.stop="$dispatch('open-cover-picker', { track: {{ $t->id }} })" title="Cover ändern">
                                 @else
-                                    <img src="{{ \App\Support\Covers::url($t, 64) }}" loading="lazy" alt="" class="size-9 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'">
+                                    <img src="{{ \App\Support\Covers::url($t, 64) }}" loading="lazy" alt="" class="size-9 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)">
                                 @endif
                                 <div class="min-w-0 flex-1">
                                     <div class="truncate text-sm">{{ $t->title ?: $t->filename }}</div>

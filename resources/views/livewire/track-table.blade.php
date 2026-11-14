@@ -110,7 +110,7 @@
                                     @if ($g['loose'])
                                         <svg class="size-full p-4 text-zinc-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
                                     @else
-                                        <img src="{{ \App\Support\Covers::url($g['cover'], 300) }}" loading="lazy" class="size-full object-cover" onerror="this.style.display='none'" alt="">
+                                        <img src="{{ \App\Support\Covers::url($g['cover'], 300) }}" loading="lazy" class="size-full object-cover" onerror="noCover(this)" alt="">
                                     @endif
                                     <button class="absolute bottom-1 right-1 flex size-7 items-center justify-center rounded-full bg-black/60 text-white opacity-0 transition hover:bg-accent hover:text-zinc-950 group-hover:opacity-100"
                                             @click.stop="playFrom($el, 0)" title="Album abspielen">
@@ -250,7 +250,7 @@
                  @mousedown.prevent="startResize($event)" @dblclick="resetWidth()" title="Breite ziehen (Doppelklick: Standard)"></div>
             <div class="flex items-start gap-4 border-b border-zinc-800 p-5">
                 <img src="{{ \App\Support\Covers::url($track, 300) }}" @class(['size-24 shrink-0 rounded-md bg-zinc-800 object-cover shadow-sm', 'cover-link' => $canCover]) alt=""
-                     @if ($canCover) onerror="noCover(this)" @click="$dispatch('open-cover-picker', { track: {{ $track->id }} })" title="Cover ändern" @else onerror="this.style.visibility='hidden'" @endif>
+                     @if ($canCover) onerror="noCover(this)" @click="$dispatch('open-cover-picker', { track: {{ $track->id }} })" title="Cover ändern" @else onerror="noCover(this)" @endif>
                 <div class="min-w-0 flex-1">
                     <div class="truncate font-semibold">{{ $track->title ?: $track->filename }}</div>
                     <div class="truncate text-sm text-zinc-400">{{ $track->artist }}</div>
@@ -361,7 +361,7 @@
                     @foreach ($picked->take(3)->values() as $i => $p)
                         <img src="{{ \App\Support\Covers::url($p, 300) }}" alt=""
                              @class(['absolute size-20 rounded-md bg-zinc-800 object-cover shadow-lg ring-1 ring-zinc-900', 'cover-link' => $canCover]) style="left: {{ $i * 8 }}px; top: {{ $i * 8 }}px; z-index: {{ 3 - $i }}"
-                             @if ($canCover) onerror="noCover(this)" @click="$dispatch('open-cover-picker', { track: {{ $p->id }} })" title="Cover ändern" @else onerror="this.style.visibility='hidden'" @endif>
+                             @if ($canCover) onerror="noCover(this)" @click="$dispatch('open-cover-picker', { track: {{ $p->id }} })" title="Cover ändern" @else onerror="noCover(this)" @endif>
                     @endforeach
                 </div>
                 <div class="min-w-0 flex-1">

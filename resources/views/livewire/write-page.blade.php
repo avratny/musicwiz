@@ -40,7 +40,7 @@
             @php $plan = $plans[$a['hash']] ?? null; @endphp
             <section wire:key="write-{{ $a['hash'] }}" class="rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
             <div class="flex items-center gap-4">
-                <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                 <div class="min-w-0 flex-1">
                     <div class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}</div>
                     <div class="truncate text-sm text-zinc-400">{{ $a['albumartist'] ?: 'Unbekannter Interpret' }}</div>

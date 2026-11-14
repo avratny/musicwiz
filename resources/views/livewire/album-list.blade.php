@@ -131,7 +131,7 @@
             @php $d = ($details['hash'] ?? null) === $a['hash'] ? $details : null; @endphp
             <section wire:key="inc-{{ $a['hash'] }}" @class(['rounded-lg border bg-zinc-900', 'border-accent/50' => $d, 'border-zinc-800' => ! $d])>
                 <div class="flex cursor-pointer items-center gap-4 px-4 py-3 hover:bg-zinc-800/40" wire:click="toggle(@js($a['hash']))">
-                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                     <div class="min-w-0 flex-1">
                         <div class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}</div>
                         <div class="truncate text-sm text-zinc-400">{{ $a['albumartist'] ?: 'Unbekannter Interpret' }}</div>
@@ -301,7 +301,7 @@
         @forelse ($albums as $a)
             <section wire:key="sort-{{ $a['hash'] }}" class="rounded-lg border border-zinc-800 bg-zinc-900">
                 <div class="flex items-center gap-4 border-b border-zinc-800 px-4 py-2.5">
-                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                     <div class="min-w-0 flex-1">
                         <div class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}</div>
                         <div class="truncate text-sm text-zinc-400">{{ $a['albumartist'] ?: 'Unbekannter Interpret' }}</div>
@@ -396,7 +396,7 @@
                 <ul class="divide-y divide-zinc-800/70 text-sm">
                     @foreach ($s['changes'] as $c)
                         <li wire:key="series-{{ $s['key'] }}-{{ $c['hash'] }}" class="flex items-center gap-3 px-4 py-1.5">
-                            <img src="{{ \App\Support\Covers::url($c['cover'], 64) }}" loading="lazy" class="size-8 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                            <img src="{{ \App\Support\Covers::url($c['cover'], 64) }}" loading="lazy" class="size-8 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                             <div class="min-w-0 flex-1">
                                 <div class="truncate"><span class="text-zinc-500 line-through">{{ $c['from'] }}</span> → <span class="font-medium">{{ $c['to'] }}</span></div>
                                 <div class="truncate text-xs text-zinc-500">{{ \App\Support\Locations::LABELS[$c['location']] }} · {{ $c['dir'] }}</div>
@@ -450,7 +450,7 @@
         @forelse ($albums as $a)
             @php $missing = $a['kind'] === 'missing'; @endphp
             <section wire:key="sampler-{{ $a['hash'] }}" class="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
-                <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded-md bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                 <div class="min-w-0 flex-1">
                     <div class="flex items-center gap-2">
                         <span class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}</span>
@@ -527,7 +527,7 @@
                                 @php $isBest = $a['best'] && $a['best'] == $v; $tooSmall = min($v['width'], $v['height']) < $minSize; @endphp
                                 <figure @class(['w-28 rounded-md border p-1.5 text-center', 'border-accent/60 bg-accent/10' => $isBest, 'border-zinc-800' => ! $isBest])>
                                     <img src="{{ match ($v['kind']) { 'folder' => route('folder.image', [$v['image'], 300, 'v' => $v['version']]), 'new' => route('cover.image', [$v['hash'], 300]), default => \App\Support\Covers::url($v['track'], 300, true) } }}" loading="lazy" alt=""
-                                         class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'">
+                                         class="aspect-square w-full rounded bg-zinc-800 object-cover" onerror="noCover(this)">
                                     <figcaption class="mt-1 text-[11px] leading-tight text-zinc-400">
                                         <div class="font-medium text-zinc-300">Motiv {{ $v['motif'] + 1 }}</div>
                                         <div>{{ $v['kind'] === 'folder' ? $v['name'] : ($v['kind'] === 'new' ? 'neu gesetzt' : 'eingebettet').' · '.$fmt($v['count']).' '.($v['count'] === 1 ? 'Lied' : 'Lieder') }}</div>

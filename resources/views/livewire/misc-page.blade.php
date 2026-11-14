@@ -120,7 +120,7 @@
             <p class="text-xs text-zinc-500">Gemessen wird nach EBU R128 (Bezug −18 LUFS) im Hintergrund – jede Datei wird einmal komplett gelesen. Der Album-Wert braucht alle Lieder des Albums; Ordner ohne gemeinsames Album: jedes Lied für sich. Nur in der Datenbank.</p>
             @forelse ($albums as $a)
                 <section wire:key="rg-{{ $a['hash'] }}" class="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
-                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                     <div class="min-w-0 flex-1">
                         <div class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}@if ($a['loose'])<span class="ml-2 text-xs font-normal text-zinc-500">Einzeltitel</span>@endif</div>
                         <div class="truncate text-sm text-zinc-400">{{ $a['albumartist'] ?: 'Unbekannter Interpret' }}</div>
@@ -148,7 +148,7 @@
             @forelse ($groups as $g)
                 <section wire:key="dup-{{ $g['key'] }}" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
                     <div class="flex items-center gap-3 border-b border-zinc-800 px-4 py-2.5">
-                        <img src="{{ \App\Support\Covers::url($g['cover'], 100) }}" loading="lazy" class="size-9 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                        <img src="{{ \App\Support\Covers::url($g['cover'], 100) }}" loading="lazy" class="size-9 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                         <div class="min-w-0 flex-1">
                             <div class="truncate font-medium">{{ $g['title'] }}</div>
                             <div class="truncate text-sm text-zinc-400">{{ $g['artist'] }}</div>
@@ -206,7 +206,7 @@
                 <section wire:key="genre-{{ $check }}-{{ $u['key'] }}" x-data="{ songs: @js($u['songs']) }" class="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
                     <div class="flex items-center gap-4 px-4 py-3">
                         <button class="group relative size-12 shrink-0" @click="$store.player.play(songs, 0)" title="{{ count($u['songs']) === 1 ? 'Anhören' : 'Alle '.count($u['songs']).' Lieder anhören' }}">
-                            <img src="{{ \App\Support\Covers::url($u['cover'], 100) }}" loading="lazy" class="size-12 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                            <img src="{{ \App\Support\Covers::url($u['cover'], 100) }}" loading="lazy" class="size-12 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                             <span class="absolute inset-0 flex items-center justify-center rounded bg-black/50 text-lg text-white opacity-0 group-hover:opacity-100">▶</span>
                         </button>
                         <div class="min-w-0 flex-1">
@@ -373,7 +373,7 @@
                     <div class="flex items-center gap-4 px-4 py-3">
                         <button class="group relative size-12 shrink-0" title="Anhören"
                                 @click="$store.player.play([@js(['id' => $t->id, 'title' => (string) $t->title, 'artist' => (string) $t->artist, 'cover' => $t->id, 'duration' => $t->duration])], 0)">
-                            <img src="{{ \App\Support\Covers::url($t->id, 100) }}" loading="lazy" class="size-12 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                            <img src="{{ \App\Support\Covers::url($t->id, 100) }}" loading="lazy" class="size-12 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                             <span class="absolute inset-0 flex items-center justify-center rounded bg-black/50 text-lg text-white opacity-0 group-hover:opacity-100">▶</span>
                         </button>
                         <div class="min-w-0 flex-1">
@@ -462,7 +462,7 @@
         @elseif ($view === 'jahr')
             @forelse ($albums as $a)
                 <section wire:key="year-{{ $a['hash'] }}" class="flex items-center gap-4 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3">
-                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'" alt="">
+                    <img src="{{ \App\Support\Covers::url($a['cover'], 100) }}" loading="lazy" class="size-12 shrink-0 rounded bg-zinc-800 object-cover" onerror="noCover(this)" alt="">
                     <div class="min-w-0 flex-1">
                         <div class="truncate font-medium">{{ $a['album'] ?: basename($a['dir']) }}</div>
                         <div class="truncate text-sm text-zinc-400">{{ $a['albumartist'] ?: 'Unbekannter Interpret' }}</div>

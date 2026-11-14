@@ -59,7 +59,7 @@
                         <span class="size-2 rounded-full bg-accent" x-show="target === {{ $a->id }}"></span>
                     </span>
                     @if ($a->image)
-                        <img src="{{ route('artist.image', [$a->id, 64]) }}?v={{ $a->updated_at?->timestamp }}" loading="lazy" alt="" class="size-9 shrink-0 rounded-full bg-zinc-800 object-cover" onerror="this.style.visibility='hidden'">
+                        <img src="{{ route('artist.image', [$a->id, 64]) }}?v={{ $a->updated_at?->timestamp }}" loading="lazy" alt="" class="size-9 shrink-0 rounded-full bg-zinc-800 object-cover" onerror="noCover(this)">
                     @else
                         <div class="flex size-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white/90" style="background: hsl({{ $hue($a->name) }} 35% 30%)">{{ $initials($a->name) }}</div>
                     @endif
