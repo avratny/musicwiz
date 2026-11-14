@@ -28,7 +28,13 @@ class Scanner
     /** @var array<int, true> Interpreten der gelesenen Lieder */
     private array $touchedArtists = [];
 
-    /** @return array{files: int, read: int, removed: int, errors: int, kept_missing: int, folders: int, moved: int} */
+    /** aus einem anderen Bereich übernommene Lieder in diesem Durchgang */
+    private int $relocated = 0;
+
+    /** @var array<string, string> Album-Schlüssel alt => neu der übernommenen Lieder */
+    private array $relocatedAlbums = [];
+
+    /** @return array{files: int, read: int, removed: int, errors: int, kept_missing: int, folders: int, moved: int, relocated: int} */
     public function scan(string $location): array
     {
         $root = Locations::root($location);
@@ -37,6 +43,8 @@ class Scanner
         // abgebrochene Datei-Aktionen abgleichen, bevor Fehlendes entfernt wird (sonst gingen Verlauf und ID verloren)
         app(FileMover::class)->recover();
         $artistsBefore = Artist::count();
+        $this->relocated = 0;
+        $this->relocatedAlbums = [];
 
         // älterer Stand des Tag-Lesers bzw. beim letzten Mal nicht lesbar: als geändert melden (mtime -1), damit sie neu
         // gelesen und trotzdem erkannt werden
@@ -60,7 +68,7 @@ class Scanner
         ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         $process->start();
 
-        $stats = ['files' => 0, 'read' => 0, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0];
+        $stats = ['files' => 0, 'read' => 0, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0];
         $batch = [];
         $done = 0;
         $images = [];
@@ -120,6 +128,13 @@ class Scanner
             throw new RuntimeException('Tag-Leser: '.trim($process->getErrorOutput()));
         }
 
+        $stats['relocated'] = $this->relocated;
+        // ganz übernommene Alben: Prüfungen und Vormerkungen ziehen mit
+        foreach ($this->relocatedAlbums as $old => $new) {
+            if (! Track::where('album_hash', $old)->exists()) {
+                FileMover::followHash($old, $new);
+            }
+        }
         $newArtists = Artist::count() - $artistsBefore;
         // erst die Schreibweise bereinigen (doppelte Leerzeichen, Bindestriche …), dann die Namensregeln
         app(TextCleanup::class)->apply();
@@ -149,6 +164,7 @@ class Scanner
             ? $label.': Ordner nicht erreichbar ('.implode(', ', $missingRoots).') – nichts entfernt'
             : $label.': '.number_format($stats['files'], 0, ',', '.').' Lieder, '.$stats['read'].' neu gelesen'
                 .($stats['moved'] ? ', '.$stats['moved'].' umbenannt erkannt' : '')
+                .($stats['relocated'] ? ', '.$stats['relocated'].' aus anderen Bereichen übernommen' : '')
                 .($stats['removed'] ? ', '.$stats['removed'].' entfernt' : '')
                 .($stats['folders'] ? ', '.$stats['folders'].' leere Ordner gelöscht' : '')
                 .($stats['errors'] ? ', '.$stats['errors'].' nicht lesbar' : '')
@@ -188,14 +204,19 @@ class Scanner
         foreach ($results as $r) {
             $rows[sha1($r['path'])] = $this->row($location, $r, $now);
         }
+        $relocated = $sameAudio ? [] : $this->relocate($location, $rows);
         // in der Datenbank bearbeitete Felder behalten (die Datei hat noch den alten Stand)
-        $existing = Track::whereIn('path_hash', array_keys($rows))->get(['id', 'path_hash', 'size', 'loudness', 'loudness_peak', ...array_keys(Track::EDITABLE)])->keyBy('id');
+        $existing = Track::whereIn('path_hash', array_keys($rows))->get(['id', 'path_hash', 'size', 'loudness', 'loudness_peak', 'fingerprint', ...array_keys(Track::EDITABLE)])->keyBy('id');
         // gemessene Lautheit (ReplayGain) behalten, solange die Datei gleich groß ist – sonst neu messen
         $kept = $existing->keyBy('path_hash');
         foreach ($rows as $hash => $row) {
             $same = isset($kept[$hash]) && ($sameAudio || (int) $kept[$hash]->size === (int) $row['size']);
             $rows[$hash]['loudness'] = $same ? $kept[$hash]->loudness : null;
             $rows[$hash]['loudness_peak'] = $same ? $kept[$hash]->loudness_peak : null;
+            // aus einem anderen Bereich übernommen: dieselbe Datei, der Fingerabdruck gilt weiter
+            if (isset($relocated[$hash])) {
+                $rows[$hash]['fingerprint'] ??= $kept[$hash]->fingerprint;
+            }
         }
         // bekanntes Lied gerade nicht lesbar (Datei wird geschrieben, Netz weg): nur den Fehler vermerken, die Tags bleiben –
         // beim nächsten Einlesen wird es wieder gelesen
@@ -312,6 +333,47 @@ class Scanner
         }
 
         return true;
+    }
+
+    /**
+     * Außerhalb in einen anderen Bereich verschoben (z. B. Inbox → Lib, anderes Share – die Datei-ID ändert sich): neue
+     * Datei mit gleichem Namen und gleicher Größe wie genau ein Lied eines anderen Bereichs, dessen Datei fehlt (Bereich
+     * erreichbar) – den Eintrag übernehmen statt neu anlegen. ID, Verlauf und Änderungen bleiben; die Tags kommen danach
+     * wie bei jedem bekannten Lied aus der Datei (in der Datenbank Bearbeitetes bleibt).
+     *
+     * @param  array<string, array>  $rows  path_hash => Zeile
+     * @return array<string, true> path_hash der übernommenen
+     */
+    private function relocate(string $location, array $rows): array
+    {
+        $new = array_diff_key($rows, array_flip(Track::whereIn('path_hash', array_keys($rows))->pluck('path_hash')->all()));
+        $reachable = array_filter(array_keys(Locations::LABELS), fn ($l) => $l !== $location && is_dir(Locations::root($l)));
+        if (! $new || ! $reachable) {
+            return [];
+        }
+        $candidates = Track::whereIn('location', $reachable)->whereIn('size', array_unique(array_column($new, 'size')))
+            ->whereIn('filename', array_unique(array_column($new, 'filename')))->get(['id', 'location', 'path', 'filename', 'size', 'album_hash'])
+            ->groupBy(fn ($t) => $t->filename.'|'.$t->size);
+        $claims = $relocated = [];
+        foreach ($new as $row) {
+            $claims[$row['filename'].'|'.$row['size']][] = $row;
+        }
+        foreach ($claims as $key => $claimed) {
+            $gone = ($candidates[$key] ?? collect())->reject(fn ($t) => is_file($t->path));
+            // nur eindeutig: genau ein verschwundenes Lied und genau eine neue Datei dazu
+            if ($gone->count() !== 1 || count($claimed) !== 1) {
+                continue;
+            }
+            $track = $gone->first();
+            $row = $claimed[0];
+            $this->relocatedAlbums[$track->album_hash] = $row['album_hash'];
+            $track->update(['location' => $location, 'path' => $row['path'], 'path_hash' => $row['path_hash'], 'dir' => $row['dir'],
+                'album_dir' => $row['album_dir'], 'album_hash' => $row['album_hash'], 'filename' => $row['filename'], 'ext' => $row['ext']]);
+            $relocated[$row['path_hash']] = true;
+            $this->relocated++;
+        }
+
+        return $relocated;
     }
 
     /** Datei-IDs nachtragen (ohne die Dateien neu zu lesen) */

@@ -45,7 +45,7 @@ class ScannerTest extends TestCase
 
         $stats = app(Scanner::class)->scan('library');
 
-        $this->assertSame(['files' => 2, 'read' => 2, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0], $stats);
+        $this->assertSame(['files' => 2, 'read' => 2, 'removed' => 0, 'errors' => 0, 'kept_missing' => 0, 'folders' => 0, 'moved' => 0, 'relocated' => 0], $stats);
         $a = Track::where('path', $mp3)->first();
         $this->assertSame(['library', 'Waterloo', 'ABBA', 'Gold', 'ABBA', 1, 19, 1, 2, '1992', 'Pop', 'LIB', true, true, 'MP3'],
             [$a->location, $a->title, $a->artist, $a->album, $a->albumartist, $a->track, $a->track_total, $a->disc, $a->disc_total, $a->year, $a->genre, $a->comment, $a->compilation, $a->has_cover, $a->format]);
@@ -144,6 +144,50 @@ class ScannerTest extends TestCase
         $this->mp3('library/A/1.mp3', ['TIT2' => 'Lied 1']);
         $stats = app(Scanner::class)->scan('library');
         $this->assertSame([29, 0], [$stats['kept_missing'], $stats['removed']], 'auffällig viele fehlen: nicht entfernen');
+    }
+
+    public function test_a_file_moved_to_another_area_outside_keeps_its_entry(): void
+    {
+        $this->mp3('inbox/Hits/01.mp3', ['TIT2' => 'Eins', 'TPE1' => 'ABBA', 'TALB' => 'Hits']);
+        $this->mp3('inbox/Hits/02.mp3', ['TIT2' => 'Zwei', 'TPE1' => 'ABBA', 'TALB' => 'Hits']);
+        app(Scanner::class)->scan('inbox');
+        $track = Track::where('title', 'Eins')->first();
+        app(TagEditor::class)->update($track, ['genre' => 'Pop']);
+        $track->update(['fingerprint' => 'AQAA-test', 'loudness' => -9.5]);
+        $oldAlbum = $track->album_hash;
+        DB::table('album_exemptions')->insert(['album_hash' => $oldAlbum, 'check' => 'incomplete']);
+
+        // auf dem NAS verschoben (anderes Share – hier: anderer Bereich), danach die Lib eingelesen
+        File::moveDirectory($this->base.'/inbox/Hits', $this->base.'/library/Hits');
+        $stats = app(Scanner::class)->scan('library');
+
+        $this->assertSame(2, $stats['relocated']);
+        $this->assertSame(2, Track::count(), 'kein zweiter Eintrag');
+        $track->refresh();
+        $this->assertSame(['library', $this->base.'/library/Hits/01.mp3', 'Pop', 'AQAA-test', -9.5],
+            [$track->location, $track->path, $track->genre, $track->fingerprint, (float) $track->loudness], 'gleiche ID, Änderungen, Fingerabdruck und Lautheit bleiben');
+        $this->assertTrue(TagChange::where('track_id', $track->id)->where('field', 'genre')->exists());
+        $this->assertSame($track->album_hash, DB::table('album_exemptions')->value('album_hash'), 'Ausnahmen des Albums ziehen mit');
+        $this->assertStringContainsString('2 aus anderen Bereichen übernommen', Activity::current('scan')['message']);
+
+        $this->assertSame(0, app(Scanner::class)->scan('inbox')['removed'], 'in der Inbox fehlt nichts mehr');
+    }
+
+    public function test_a_copy_in_another_area_is_a_new_entry(): void
+    {
+        $this->mp3('inbox/Hits/01.mp3', ['TIT2' => 'Eins']);
+        app(Scanner::class)->scan('inbox');
+        File::copyDirectory($this->base.'/inbox/Hits', $this->base.'/library/Hits');
+        $this->assertSame(0, app(Scanner::class)->scan('library')['relocated'], 'Original noch da');
+        $this->assertSame(['inbox', 'library'], Track::orderBy('location')->pluck('location')->all());
+
+        // nicht eindeutig: zwei verschwundene mit gleichem Namen und gleicher Größe
+        $this->mp3('inbox/A/02.mp3', ['TIT2' => 'Zwei']);
+        $this->mp3('inbox/B/02.mp3', ['TIT2' => 'Zwei']);
+        app(Scanner::class)->scan('inbox');
+        File::moveDirectory($this->base.'/inbox/A', $this->base.'/library/A');
+        File::deleteDirectory($this->base.'/inbox/B');
+        $this->assertSame(0, app(Scanner::class)->scan('library')['relocated']);
     }
 
     public function test_fields_edited_in_the_database_survive_a_rescan_of_the_changed_file(): void
