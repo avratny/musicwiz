@@ -1,7 +1,7 @@
 # MusicWiz – Betrieb (z. B. als Stack in Dockge). Das Image baut GitHub Actions bei jedem Push.
 # Werte in der .env des Stacks setzen (siehe README):
 #   MUSIC_SHARE=/mnt/music   INBOX_SHARE=/mnt/inbox   PUID=1000   PGID=1000   MUSICWIZ_PORT=8000
-#   DB_PASSWORD=…   DB_ROOT_PASSWORD=…   MUSICWIZ_TAG=1.0.0-beta
+#   DB_PASSWORD=…   DB_ROOT_PASSWORD=…   MUSICWIZ_TAG=1.0.0-beta   DB_BUFFER_POOL=2G
 x-env: &env
   PUID: ${PUID:-1000}
   PGID: ${PGID:-1000}
@@ -56,6 +56,9 @@ services:
   db:
     image: mariadb:11
     restart: unless-stopped
+    # Zwischenspeicher der Datenbank: Vorgabe von MariaDB sind 128 MB – die Lieder-Tabelle allein ist bei großer
+    # Bibliothek mehrere hundert MB, dann liest jede Abfrage von der Platte. Ruhig größer, wenn der Host RAM hat.
+    command: ["--innodb-buffer-pool-size=${DB_BUFFER_POOL:-2G}"]
     environment:
       MARIADB_DATABASE: musicwiz
       MARIADB_USER: musicwiz

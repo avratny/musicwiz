@@ -45,6 +45,7 @@ Ordner per `.env`: `MUSIC_INBOX`, `MUSIC_LIBRARY`, `MUSIC_BLACKHOLE`, `MUSIC_TRA
 | `MUSIC_SHARE` | Musik-Share auf dem Host → `/music` (darin `library/`, `blackhole/`, `_papierkorb/`, `_artists/`) |
 | `INBOX_SHARE` | Inbox-Share auf dem Host → `/inbox` |
 | `DB_PASSWORD`, `DB_ROOT_PASSWORD` | Passwörter der MariaDB (Daten unter `./db` im Stack-Ordner) |
+| `DB_BUFFER_POOL` | Zwischenspeicher der Datenbank (Vorgabe `2G`; bei großer Bibliothek nicht unter `1G`) |
 | `API_TOKEN` | optional: Token für die Schnittstelle `/api` (z. B. `openssl rand -hex 24`); leer = Schnittstelle ohne Token offen |
 | `PUID`, `PGID`, `PGROUPS` | Besitzer der Musikdateien bzw. zusätzliche Gruppen fürs Share |
 | `MUSIC_LIBRARY`, `MUSIC_BLACKHOLE`, `MUSIC_TRASH`, `MUSIC_INBOX` | andere Ordner im Container (optional) |

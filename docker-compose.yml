@@ -26,6 +26,7 @@ x-app: &app
 services:
   db:
     image: mariadb:11
+    command: ["--innodb-buffer-pool-size=${DB_BUFFER_POOL:-1G}"]
     environment:
       MARIADB_DATABASE: musicwiz
       MARIADB_USER: musicwiz
